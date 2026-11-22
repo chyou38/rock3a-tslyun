@@ -1,5 +1,5 @@
-#!/bin/sh
-# storage-use.sh - 把 Tesla Sentry 的镜像/归档/缓存切换到指定 USB 分区
+﻿#!/bin/sh
+# storage-use.sh - 把 TSL Sentry 的镜像/归档/缓存切换到指定 USB 分区
 # 由 sentry-viewer.py 调用; 调用前已校验目标为 USB 分区且为 ext4
 set -e
 DEV="$1"

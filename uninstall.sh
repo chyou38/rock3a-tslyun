@@ -1,5 +1,5 @@
-#!/bin/sh
-# Tesla Sentry Box (ROCK 3A) - 卸载脚本
+﻿#!/bin/sh
+# TSL Sentry Box (ROCK 3A) - 卸载脚本
 # 用法: sudo ./uninstall.sh [--purge]
 #   默认   停服务 / 恢复 USB 导出 / 删除程序与缓存 / 保留镜像和归档录像数据
 #   --purge 连稀疏镜像、归档区一起删除 (不可恢复!)

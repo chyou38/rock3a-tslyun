@@ -14,7 +14,7 @@ warn() { WARN=$((WARN+1)); [ "$JSON" = "1" ] && echo "{\"item\":\"$1\",\"level\"
 bad()  { FAIL=$((FAIL+1)); [ "$JSON" = "1" ] && echo "{\"item\":\"$1\",\"level\":\"fail\",\"detail\":\"$2\"}" || printf '  \033[31m✗\033[0m %-22s %s\n' "$1" "$2"; }
 sec()  { [ "$JSON" = "1" ] || printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-[ "$JSON" = "1" ] || echo "Tesla Sentry Box (ROCK 3A) 自检  ($(date '+%Y-%m-%d %H:%M:%S'))"
+[ "$JSON" = "1" ] || echo "TSL Sentry Box (ROCK 3A) 自检  ($(date '+%Y-%m-%d %H:%M:%S'))"
 
 # ---------- 1. 平台 ----------
 sec "1. 平台"

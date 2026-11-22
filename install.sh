@@ -1,5 +1,5 @@
 ﻿#!/bin/sh
-# Tesla Sentry Box (ROCK 3A) - 一键安装脚本
+# TSL Sentry Box (ROCK 3A) - 一键安装脚本
 # 用法: sudo ./install.sh [选项]
 #   --size GB        虚拟U盘容量, 默认 64
 #   --port PORT      网页端口, 默认 80
@@ -148,7 +148,7 @@ ls -lh "$IMG"
 # ---------------- 3. 配置 ----------------
 say "写入配置 $CONF ..."
 cat > "$CONF" <<EOF
-# Tesla Sentry Box (ROCK 3A) 配置 (由 install.sh 生成)
+# TSL Sentry Box (ROCK 3A) 配置 (由 install.sh 生成)
 TSF_DIR=$TSF_DIR
 TSF_IMG=$IMG
 TSF_ARCHIVE=$ARCHIVE
@@ -224,7 +224,7 @@ fi
 say "安装 systemd 服务 ..."
 cat > /etc/systemd/system/tesla-gadget.service <<EOF
 [Unit]
-Description=Tesla Sentry virtual USB drive
+Description=TSL Sentry virtual USB drive
 After=local-fs.target
 [Service]
 Type=oneshot
@@ -237,7 +237,7 @@ WantedBy=multi-user.target
 EOF
 cat > /etc/systemd/system/sentry-viewer.service <<EOF
 [Unit]
-Description=Tesla Sentry web viewer
+Description=TSL Sentry web viewer
 After=network.target tesla-gadget.service
 [Service]
 Type=simple
@@ -250,7 +250,7 @@ WantedBy=multi-user.target
 EOF
 cat > /etc/systemd/system/tesla-live.service <<EOF
 [Unit]
-Description=Tesla Sentry live read-only sync (no mount)
+Description=TSL Sentry live read-only sync (no mount)
 After=tesla-gadget.service
 [Service]
 Type=simple

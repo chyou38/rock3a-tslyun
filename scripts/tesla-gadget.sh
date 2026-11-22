@@ -1,4 +1,4 @@
-#!/bin/sh
+﻿#!/bin/sh
 # tesla-gadget.sh - 把镜像文件导出为 USB 虚拟U盘 (mass_storage)
 # 用法: tesla-gadget.sh on|off|status|restore
 #
@@ -42,9 +42,9 @@ ensure_gadget() {
     printf '%s' "0x0200" > "$G/bcdUSB"
     printf '%s' "0x0100" > "$G/bcdDevice"
     printf '%s' "$SERIAL" > "$G/strings/0x409/serialnumber"
-    printf '%s' "Tesla Sentry" > "$G/strings/0x409/manufacturer"
+    printf '%s' "TSL Sentry" > "$G/strings/0x409/manufacturer"
     printf '%s' "TeslaCam Virtual USB" > "$G/strings/0x409/product"
-    printf '%s' "Tesla Sentry Storage" > "$G/configs/$CONF_NAME/strings/0x409/configuration"
+    printf '%s' "TSL Sentry Storage" > "$G/configs/$CONF_NAME/strings/0x409/configuration"
     printf '%s' "250" > "$G/configs/$CONF_NAME/MaxPower"
 }
 

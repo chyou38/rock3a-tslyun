@@ -1,4 +1,12 @@
-# Tesla Sentry Drive · 特斯拉哨兵云盘
+﻿# TSL Sentry Drive · TSL哨兵云盘
+
+> ⚠️ **Legal and risk notice (read first)**
+>
+> This is a personal open-source hardware project under the MIT License. It is **not affiliated with, authorized, sponsored or endorsed by** Tesla, Inc. or its affiliates. “Tesla” and other marks belong to their owners and are used here only to describe compatible hardware.
+>
+> The project is intended solely for personal learning, research and backing up data from devices you own. It must **not** be used for commercial operations, regulatory evasion, privacy violations or any unlawful purpose. Vehicle data access, USB device emulation and Wi-Fi hotspot transmission may be regulated in your jurisdiction; you are responsible for compliance and for any vehicle, data or equipment damage or legal consequences.
+>
+> The software is provided “AS IS”, without any express or implied warranty.
 
 [中文](README.md) | **English**
 
@@ -30,7 +38,7 @@ This repository is maintained for exactly one hardware/OS combination: **Armbian
 | 🔔 Feishu push | Direct message (self only) or group bot webhook: cover card of the trigger frame, or a short clip starting 5 seconds before the trigger, optionally with the driving watermark burned in. Deduplicated, 20-second delay, 3 retries on failure. The export sheet can push too. |
 | 🔐 Login protection | `install.sh` generates a random 10-character password (user `admin`) by default. HMAC-signed cookie valid for 30 days plus HTTP Basic. 8 wrong attempts from one IP within 10 minutes returns 429. Settings → Account lets you change the password or sign out. |
 | 🔄 Online update | Multiple sources raced in parallel with a GitHub API fallback; after download it verifies → backs up → swaps atomically → restarts, with one-click rollback. Settings → Update has an **auto-update** toggle (on by default: upgrades when a new version appears and nobody is watching). |
-| 🎨 Personalization | Custom title icon and name (defaults to 「哨兵一剪梅」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
+| 🎨 Personalization | Custom title icon and name (defaults to 「TSL哨兵云盘」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. |
 
 ---
@@ -114,7 +122,7 @@ OTA, Feishu push and authentication settings are **not** written to this file �
 
 The web **⚙ Personalization** panel has 9 sub-tabs: Files, Lock chime, Wraps, Push, Account, Language, Background, Brand, Update.
 
-- **Brand**: Settings → Brand. Replace the title-bar icon (png/jpg/webp, ≤3MB) and the name (≤24 characters). Changes apply instantly and propagate to the login page; the built-in 「哨兵一剪梅」 icon and name are the defaults and can be restored with one click.
+- **Brand**: Settings → Brand. Replace the title-bar icon (png/jpg/webp, ≤3MB) and the name (≤24 characters). Changes apply instantly and propagate to the login page; the built-in 「TSL哨兵云盘」 icon and name are the defaults and can be restored with one click.
 - **Online update**: Settings → Update compares against the repository's `version.json` and offers one-click upgrade / rollback. Configuration and recordings are never part of an update.
 - **Feishu push**: Settings → Push. Use a self-built app for direct messages (self only) or a group bot webhook; supports cover cards and short clips from the triggering camera. Hit "Send test" first.
 - **Authentication**: credentials live in `/opt/tesla-sentry/auth.conf` (mode 600). Deleting that file and restarting disables auth (only advisable on a trusted LAN).

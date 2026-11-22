@@ -1,5 +1,5 @@
-[Unit]
-Description=Tesla Sentry hotspot auto policy
+﻿[Unit]
+Description=TSL Sentry hotspot auto policy
 After=network.target
 
 [Service]
