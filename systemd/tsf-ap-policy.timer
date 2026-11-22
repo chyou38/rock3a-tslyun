@@ -1,4 +1,4 @@
-﻿[Unit]
+[Unit]
 Description=Run TSL Sentry hotspot auto policy every 20s
 
 [Timer]

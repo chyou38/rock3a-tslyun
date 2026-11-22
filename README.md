@@ -1,4 +1,4 @@
-﻿# TSL哨兵云盘 · TSL Sentry Drive
+# TSL哨兵云盘 · TSL Sentry Drive
 
 > ⚠️ **法律与风险提示（必读）**
 >
@@ -26,7 +26,7 @@
 
 | 能力 | 说明 |
 |---|---|
-| 🗂 虚拟 U 盘 | 默认 64G 稀疏 exFAT 镜像，通过 USB Gadget `mass_storage` 导出；**部署时已预置完整 exFAT 文件系统 + `TeslaCam` 目录**，插车直接显示容量并开始录制，不用再点「格式化 USB 设备」，网卡 / 串口共存 |
+| 🗂 虚拟 U 盘 | **安装时不预建镜像**；部署后打开网页首页「设备与存储」，插入任意容量 USB 硬盘（整盘 ≥8G）→ 选择整块盘 → 拖动虚拟U盘占比 → 输入序列号格式化创建。创建的是稀疏 exFAT 镜像并预置 `TeslaCam` 目录，通过 USB Gadget `mass_storage` 导出；网卡 / 串口共存。也可在安装时用 `--size` 显式预建。 |
 | ⚡ 实时查看 | `tesla-live-sync.py` 每 15 秒**只读解析 exFAT**（不挂载、不断 USB），车机边写网页边看，新片段通常 15–30 秒出现；cron `*/10` 只负责写 Boombox 音频 |
 | 📦 归档与滚动窗口 | 视频落到独立 ext4 归档区，不与车机同时读写镜像；`RecentClips` 跟随车机滚动缓冲只留最近 60 分钟，`SentryClips` / `SavedClips` 的**盒子副本**默认按 14 天 / 12GB 清理（车机 U 盘那份只读不动），`.pruned` 墓碑避免「删除→重抄」死循环 |
 | 🎬 播放 | **默认单路**: 点开事件直接播触发摄像头那一路 (画面下方切换条可选 前视/后视/左B柱/右B柱/全览, 点哪个才加载哪个, 切换保留播放进度)；全览 4 路 2×2 / 6 路 3×2 自适应，250ms 同步校正、统一进度条、0.5–4x；**自动落在触发时刻所在的那一分钟、从触发前 5 秒起播**（片段栏红点标记） |
@@ -79,20 +79,27 @@ sh scripts/tsf-check.sh --json   # 供脚本判定
 
 ## 安装
 
-**1. 部署**（在设备 SSH 里执行）
+**1. 部署**（在设备 SSH 里执行；安装阶段**不创建任何虚拟U盘镜像**）
 
 ```sh
 git clone https://github.com/chyou38/rock3a-tslyun.git
 cd rock3a-tslyun
-sudo ./install.sh                                             # 默认 64G 镜像 + /archive + 端口 80
-sudo ./install.sh --size 120 --port 80 --archive /archive    # 自定义参数 (镜像 ≤128G)
+sudo ./install.sh                                             # 不预建镜像；端口 80、归档 /archive
+sudo ./install.sh --size 120 --port 80 --archive /archive    # 可选：安装时预建 120G 镜像
 ```
 
-安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 建稀疏镜像并**预置 exFAT + `TeslaCam` 目录** → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。
+安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
 
-**2. 插到车上**：插进手套箱 USB 口 → 车机直接识别、显示容量并开始录制。镜像里已预建 `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`，**不再需要点「格式化 USB 设备」**；若车机仍弹出该提示，点确认也无害，只是把同样的结构重建一遍。
+**2. 打开网页，自己创建虚拟U盘**：浏览器访问 `http://<设备IP>`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。首页顶部「设备与存储」会提示「未配置虚拟U盘」：
 
-**3. 打开网页**：`http://<设备IP>`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。视频由 15 秒在线同步落地，不用等定时归档。仓库是公开的，「设置 → 更新」可直接检查并升级，无需令牌。
+1. 插入要用的 USB 硬盘（整块盘容量 ≥8G，U 盘 / 移动硬盘均可，容量不固定）。
+2. 在「选择硬盘」下拉里选中整块盘，拖动「虚拟U盘占比」（10%–90%），下方会实时算出虚拟盘 / 归档区容量。
+3. 点「格式化并创建虚拟U盘」，连续两次确认（第二次输入该盘序列号）。会清空整块盘并创建稀疏 exFAT + `TeslaCam` 目录；盘上有数据请先备份。
+4. 创建完成后页面自动刷新，`tesla-gadget` 会导出这块虚拟盘，状态变为「已挂载」。
+
+虚拟盘超过 128G 时，需要系统里有 `mkfs.exfat`（Debian: `apt install exfatprogs`）；小容量不需要。
+
+**3. 插到车上**：把设备 USB3 OTG 口插进手套箱车机 USB 口，车机识别虚拟盘后开始录制。镜像里已预建 `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`，正常不需要再点「格式化 USB 设备」；若车机仍弹出该提示，点确认也无害。
 
 **卸载**
 
@@ -120,7 +127,7 @@ sudo ./uninstall.sh --purge      # 连镜像和归档一起删（不可恢复）
 
 OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量（如 `TSF_OTA_SOURCES`、`TSF_OTA_REPO`）或网页配置。完整变量表与系统基线见 `docs/SYSTEM.md`。
 
-网页 **⚙ 个性化** 有 9 个子页签：文件、锁车语音、涂装、推送、账号、语言、网页背景、品牌、更新。
+网页 **⚙ 个性化** 有 11 个子页签：网络设置、文件、锁车语音、涂装、推送、账号、语言、网页背景、风扇、品牌、更新。存储盘选择和虚拟U盘创建在**首页「设备与存储」**，不在设置页。
 
 - **品牌**：设置 → 品牌，标题栏左侧的图标（png/jpg/webp，≤3MB）与名称（≤24 字）都能换成自己的，改完立即生效、登录页同步；默认是内置的「TSL哨兵云盘」图标与名称，一键可恢复。
 
@@ -143,7 +150,7 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 
 ## 常见问题
 
-- **车机不认盘 / 提示格式化**：确认 `/sys/class/udc/` 有控制器、`grep exfat /proc/filesystems` 有输出，再跑 `/opt/tesla-sentry/tesla-gadget.sh status`。新部署已预置 exFAT，正常不会再提示；旧版安装留下的全零空盘重装时会自动补写。若 `--size` 超过 128G（车机同款布局的寻址上限），会退回空白盘由车机格式化一次；想手动补写可执行 `python3 /opt/tesla-sentry/mkexfat.py <镜像路径> <容量GB>`（镜像里有数据时它会拒绝覆盖）。
+- **车机不认盘 / 提示格式化**：确认 `/sys/class/udc/` 有控制器、`grep exfat /proc/filesystems` 有输出，再跑 `/opt/tesla-sentry/tesla-gadget.sh status`。首次部署不再预建镜像，先在网页首页「设备与存储」完成选盘创建；创建成功会预置 exFAT + `TeslaCam`，正常不会再提示格式化。旧版安装留下的全零空盘重装时会自动补写。若虚拟盘超过 128G（车机同款布局的寻址上限），需要 `mkfs.exfat`（`apt install exfatprogs`），否则会退回空白盘由车机格式化一次；想手动补写可执行 `python3 /opt/tesla-sentry/mkexfat.py <镜像路径> <容量GB>`（镜像里有数据时它会拒绝覆盖）。
 - **播放黑屏**：视频是 H.265 / HEVC，Windows 用 Edge / Chrome（需 HEVC 解码器）、iPhone Safari 原生支持，部分安卓浏览器不支持。
 - **网页没有事件**：看 `/opt/tesla-sentry/` 下的 `tesla-live.log`、`tesla-sync.log`；先确认顶部同步状态胶囊在线，再核对归档目录与镜像路径。
 

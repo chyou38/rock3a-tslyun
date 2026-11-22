@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # tsf-check.sh - ROCK 3A 部署前自检
 # 用法: sh tsf-check.sh            # 在本机执行 (最好 root)
 #      sh tsf-check.sh --json      # 机器可读输出

@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # tesla-gadget.sh - 把镜像文件导出为 USB 虚拟U盘 (mass_storage)
 # 用法: tesla-gadget.sh on|off|status|restore
 #
@@ -69,13 +69,18 @@ status() {
     echo "gadget : $GADGET (config=$CONF_NAME)"
     echo "udc    : $UDC  state=$(state)"
     echo "lun    : $(cat "$FUNC_DIR/lun.0/file" 2>/dev/null || echo '未挂载')"
-    echo "image  : $IMG ($(du -sh "$IMG" 2>/dev/null | cut -f1) 实际占用)"
+    if [ -f "$IMG" ]; then
+        echo "image  : $IMG ($(du -sh "$IMG" 2>/dev/null | cut -f1) 实际占用)"
+    else
+        echo "image  : 未创建 ($IMG) — 请在网页首页配置存储"
+    fi
     echo "--- gadget 功能 ---"
     ls "$GADGET/configs/$CONF_NAME/" 2>/dev/null | grep -v '^max_speed$'
 }
 
 do_on() {
-    [ -f "$IMG" ] || { echo "ERROR: 镜像不存在: $IMG"; exit 1; }
+    # 首次部署不预建镜像: 服务先保持等待, 等用户在网页里选择硬盘并创建后再导出。
+    [ -f "$IMG" ] || { echo "WAIT: 虚拟U盘未创建: $IMG (请在网页首页配置存储)"; exit 0; }
     if [ -e "$FUNC_DIR" ] && [ "$(cat "$FUNC_DIR/lun.0/file" 2>/dev/null)" = "$IMG" ]; then
         # 功能已存在但 UDC 可能因重启/同步处于解绑状态, 必要时只恢复绑定。
         [ "$(cat "$GADGET/UDC" 2>/dev/null)" = "$UDC" ] || { bind; sleep 1; }

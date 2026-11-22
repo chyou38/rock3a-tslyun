@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """TSL 哨兵视频查看器 - 单文件, 纯标准库, 无依赖
 功能: 多路播放器(4路/6路自适应) / 时间线 / 皮肤上传 / 锁车语音上传(经归档同步写入车机U盘)
 访问: http://<rock3a-ip>/
@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.44"
+APP_VERSION = "2.8.45"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1346,6 +1346,10 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
 .storage-init { background:var(--accent); border:1px solid var(--accent); color:#fff; border-radius:8px;
   padding:7px 14px; font-size:12px; cursor:pointer; margin-top:8px; }
 .storage-format:disabled, .storage-init:disabled { opacity:.45; cursor:not-allowed; }
+.home-storage { padding:0 14px; margin:0 0 12px; }
+.home-storage .storage-card { margin-bottom:0; }
+.storage-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+#storage-body[hidden] { display:none; }
 html[data-style="apple"] .storage-card { border-radius:16px; border-color:transparent; box-shadow:0 4px 18px #0000000a; }
 html[data-style="apple"] .storage-select,
 html[data-style="apple"] .storage-btn,
@@ -1590,6 +1594,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <button class="stortog" id="stortog" onclick="toggleStor()" title="展开归档区、总占用与系统状态" aria-expanded="false" aria-controls="storextra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </nav>
+<div class="home-storage" id="home-storage" style="display:none"></div>
 <nav class="filters" id="filters"></nav>
 <nav class="filters" id="dfilters"></nav>
 <input type="date" id="dpick" class="dpick" onchange="if(this.value) setDate(this.value)">
@@ -1863,10 +1868,16 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div id="usb-hint" class="hint">浏览和管理车机U盘 (特斯拉写入的镜像)。连接后会临时断开车机读取几秒，5 分钟无操作自动恢复。</div>
     <div id="storage-panel" class="storage-card">
       <div class="storage-head">
-        <b style="font-size:13px">设备与存储</b>
-        <button class="storage-btn" onclick="refreshStorage()">刷新</button>
+        <b style="font-size:13px">设备与存储 · 虚拟U盘</b>
+        <div class="storage-actions">
+          <span id="storage-summary" class="storage-meta"></span>
+          <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="false">管理</button>
+          <button class="storage-btn" onclick="refreshStorage()">刷新</button>
+        </div>
       </div>
+      <div id="storage-body" hidden>
       <div id="storage-status" class="hint">正在读取...</div>
+      <div id="storage-firsthint" class="hint" style="margin-top:6px"></div>
       <div id="storage-disks" style="margin-top:8px"></div>
       <div class="storage-alloc">
         <b style="font-size:12.5px">新建存储方案 <span class="storage-danger">(会清空所选硬盘)</span></b>
@@ -1880,7 +1891,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
           <span id="alloc-percent-text" class="storage-percent">50%</span>
         </div>
         <div id="alloc-calc" class="hint storage-calc"></div>
-        <button class="storage-init" onclick="storageInit()">输入序列号并格式化应用</button>
+        <button class="storage-init" onclick="storageInit()">格式化并创建虚拟U盘</button>
+      </div>
       </div>
     </div>
     <div id="arch-hint" class="hint" style="display:none">归档区（外接 U 盘）：查看器视频副本、皮肤和文件中转；文件保存在外接盘，不占用系统盘。</div>
@@ -4703,19 +4715,52 @@ function storageFindDisk(dev) {
   return null;
 }
 function storageSerial(d) { return d ? (d.serial || d.disk.split('/').pop()) : ''; }
+let storageFirst = true;
+let storageReq = 0;
+let storageBusy = false;
+function setStoragePanelOpen(open) {
+  const body = document.getElementById('storage-body');
+  const btn = document.getElementById('storage-toggle');
+  if (body) body.hidden = !open;
+  if (btn) {
+    btn.textContent = open ? '收起' : '管理';
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+}
+function toggleStoragePanel() {
+  const body = document.getElementById('storage-body');
+  if (body) setStoragePanelOpen(body.hidden);
+}
+function storageInitButtonOk(sizeOk) {
+  const btn = document.querySelector('.storage-init');
+  if (!btn) return;
+  const linked = !!(storageData && storageData.host_connected);
+  btn.disabled = linked || !sizeOk;
+  btn.title = linked ? 'OTG 已连接主机, 请先拔出数据线' : (!sizeOk ? '整块硬盘至少 8G, 且虚拟盘与归档区各至少 4G' : '');
+}
 async function refreshStorage() {
+  const req = ++storageReq;
   const st = document.getElementById('storage-status'), box = document.getElementById('storage-disks');
+  if (!st || !box) return;
   let j;
-  try { j = await (await fetch('/api/storage/status')).json(); } catch (e) { st.textContent = '存储状态读取失败'; return; }
+  try { j = await (await fetch('/api/storage/status', {cache:'no-store'})).json(); } catch (e) { if (req === storageReq) st.textContent = '存储状态读取失败'; return; }
+  if (req !== storageReq) return;
   if (!j.ok) { st.textContent = j.msg || '存储状态读取失败'; return; }
   storageData = j;
   const linked = j.host_connected === true;
-  st.innerHTML = '外接存储: ' + (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>') + '<br>' +
+  const config = j.img_configured === true;
+  const summary = document.getElementById('storage-summary');
+  if (summary) summary.textContent = config ? ('虚拟U盘 ' + fmtSz(j.img_size)) : '未配置虚拟U盘';
+  const firsthint = document.getElementById('storage-firsthint');
+  if (firsthint) firsthint.innerHTML = config
+    ? '当前虚拟U盘已配置。更换或重建会清空所选硬盘；日常使用不需要动这里。'
+    : '<b style="color:var(--amber)">还没有创建虚拟U盘。</b> 插入任意容量的 USB 硬盘（整块盘至少 8G），在下方选择硬盘、拖动「虚拟U盘占比」，再输入序列号格式化创建。安装阶段不再默认生成 64G 镜像；盘上有数据请先备份。';
+  st.innerHTML = '存储盘: ' + (!config ? '<span class="storage-warn">未选择 · 请在下方创建</span>' : (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>')) + '<br>' +
     'OTG 连接: ' + (linked ? '<span class="storage-ok">已连接主机</span>' : '<span class="storage-warn">未连接主机</span>') +
     ' <span class="storage-meta">(' + escH(j.udc || '无 UDC') + ' / ' + escH(j.state || '未知') + ' / ' + escH(j.speed || '未知速率') + ')</span><br>' +
-    '虚拟U盘容量: ' + fmtSz(j.img_size) + ' (实际占用 ' + fmtSz(j.img_used) + ')<br>' +
+    '虚拟U盘容量: ' + (!config ? '<span class="storage-warn">未创建</span>' : fmtSz(j.img_size) + ' (实际占用 ' + fmtSz(j.img_used) + ')') + '<br>' +
     '镜像: <span class="storage-meta">' + escH(j.img) + '</span><br>' +
-    '当前存储: ' + escH(j.source || (j.storage_ready ? '未知' : '未挂载')) + ' · 归档: <span class="storage-meta">' + escH(j.archive) + '</span><br>' +
+    '当前存储: ' + escH(j.source || (config ? '未知' : '未配置')) + ' · 归档: <span class="storage-meta">' + escH(j.archive) + '</span><br>' +
     'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b> · 卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
   let h = '';
   for (const d of j.disks || []) {
@@ -4730,7 +4775,7 @@ async function refreshStorage() {
         (p.mount ? '<span class="storage-mount">' + escH(p.mount) + '</span>' : '') + '</div>';
     }
   }
-  box.innerHTML = h || '<div class="hint">未检测到 USB 硬盘</div>';
+  box.innerHTML = h || '<div class="hint">未检测到 USB 硬盘。请插入硬盘后点「刷新」。</div>';
   const sel = document.getElementById('alloc-device'), old = sel.value;
   sel.innerHTML = '';
   for (const d of j.disks || []) {
@@ -4744,38 +4789,62 @@ async function refreshStorage() {
     const current = storageFindPart(j.source);
     if (current) sel.value = current.disk.disk;
   }
+  const home = document.getElementById('home-storage');
+  if (home) home.style.display = '';
   storageAllocCalc();
-  const initBtn = document.querySelector('.storage-init');
-  initBtn.disabled = linked;
-  initBtn.title = linked ? 'OTG 已连接主机, 请先拔出数据线' : '';
+  if (storageFirst) {
+    storageFirst = false;
+    setStoragePanelOpen(!config);
+  }
 }
 function storageAllocCalc() {
-  const pct = +document.getElementById('alloc-percent').value;
-  document.getElementById('alloc-percent-text').textContent = pct + '%';
-  const dev = document.getElementById('alloc-device').value, info = storageFindDisk(dev), out = document.getElementById('alloc-calc');
-  if (!info) { out.textContent = '请选择要分配的 USB 硬盘'; return; }
+  const pctEl = document.getElementById('alloc-percent');
+  const pctText = document.getElementById('alloc-percent-text');
+  const devEl = document.getElementById('alloc-device');
+  const out = document.getElementById('alloc-calc');
+  if (!pctEl || !pctText || !devEl || !out) return;
+  const pct = +pctEl.value;
+  pctText.textContent = pct + '%';
+  const dev = devEl.value, info = storageFindDisk(dev);
+  if (!info) { out.textContent = '请选择要分配的 USB 硬盘'; storageInitButtonOk(false); return; }
   const total = info.size_bytes / 1073741824;
   const v = Math.floor(total * pct / 100), a = Math.floor(total) - v;
-  out.innerHTML = '虚拟U盘: <b>' + v + 'G</b> · 归档区: <b>' + a + 'G</b> (整块硬盘约 ' + total.toFixed(1) + 'G)';
+  const sizeOk = total >= 8 && v >= 4 && a >= 4;
+  out.innerHTML = '虚拟U盘: <b>' + v + 'G</b> · 归档区: <b>' + a + 'G</b> (整块硬盘约 ' + total.toFixed(1) + 'G)' +
+    (sizeOk ? '' : '<br><span style="color:var(--amber)">硬盘太小：整块盘至少 8G，且虚拟盘与归档区各需 4G 以上</span>');
+  storageInitButtonOk(sizeOk);
 }
 async function storageInit() {
+  if (storageBusy) return;
   const dev = document.getElementById('alloc-device').value;
   const pct = +document.getElementById('alloc-percent').value;
   const info = storageFindDisk(dev);
   if (!info) { toast('请选择硬盘'); return; }
+  const total = info.size_bytes / 1073741824;
+  const v = Math.floor(total * pct / 100), a = Math.floor(total) - v;
+  if (total < 8 || v < 4 || a < 4) { toast('❌ 硬盘太小：整块盘至少 8G，且虚拟盘与归档区各需 4G 以上'); return; }
   if (storageData && storageData.host_connected) { toast('❌ OTG 已连接主机, 请先拔出数据线'); return; }
   if (!confirm('第一遍确认：此操作会清空整块硬盘 ' + dev + '，包括全部分区。\n确定要继续吗？')) return;
   const serial = storageSerial(info);
   const c = prompt('第二遍确认：请输入该盘序列号完成最终确认。\n序列号: ' + serial);
   if (c === null) return;
   if (c !== serial) { toast('序列号不一致, 已取消'); return; }
+  storageBusy = true;
+  const btn = document.querySelector('.storage-init');
+  if (btn) btn.disabled = true;
+  let succeeded = false;
   toast('⏳ 正在格式化并创建虚拟U盘, 请稍候...');
   try {
     const j = await (await fetch('/api/storage/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({device: dev, percent: pct, confirm: c}) })).json();
+    succeeded = !!j.ok;
     toast(j.ok ? '✅ ' + j.msg : '❌ ' + j.msg);
     if (j.ok && j.msg.indexOf('刷新') >= 0) setTimeout(() => location.reload(), 4000);
     else refreshStorage();
   } catch (e) { toast('❌ 初始化失败'); }
+  finally {
+    storageBusy = false;
+    if (btn && !succeeded) storageInitButtonOk(total >= 8 && v >= 4 && a >= 4);
+  }
 }
 async function storageUse(dev) {
   if (!confirm('把镜像和归档迁移到 ' + dev + ' ?\n过程中车机U盘会短暂断开, 完成后页面自动刷新。')) return;
@@ -4801,6 +4870,12 @@ async function storageFormat(dev) {
   } catch (e) { toast('❌ 格式化失败'); }
   refreshStorage();
 }
+(function mountStoragePanel() {
+  // 安装时不再预建镜像, 把存储配置卡从设置页移到首页, 首次打开即可直接选盘创建。
+  const panel = document.getElementById('storage-panel');
+  const home = document.getElementById('home-storage');
+  if (panel && home) home.appendChild(panel);
+})();
 refreshStorage();
 function switchArea(a) {
   area = a;
@@ -4809,7 +4884,6 @@ function switchArea(a) {
   document.getElementById('usb-hint').style.display = a === 'usb' ? '' : 'none';
   document.getElementById('arch-hint').style.display = a === 'archive' ? '' : 'none';
   document.getElementById('purge-box').style.display = a === 'usb' ? 'flex' : 'none';
-  document.getElementById('storage-panel').style.display = a === 'usb' ? '' : 'none';
   if (a === 'usb') refreshStorage();
   curDir = a === 'usb' ? '' : '/archive/files';
   refreshFiles();
@@ -5866,8 +5940,9 @@ def bt_remove(mac):
 
 # ---------- 设备连接与物理存储盘管理 ----------
 STORAGE_MNT = "/mnt/tsf-storage"
-STORAGE_USE_SCRIPT = "/opt/tesla-sentry/storage-use.sh"
-STORAGE_INIT_SCRIPT = "/opt/tesla-sentry/storage-init.sh"
+TSF_RUNTIME_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
+STORAGE_USE_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-use.sh")
+STORAGE_INIT_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-init.sh")
 
 
 def storage_ready():
@@ -5978,6 +6053,7 @@ def _otg_info():
 
 def storage_status():
     otg = _otg_info()
+    img_configured = False
     try:
         st = os.stat(IMG)
         img_size, img_used = st.st_size, st.st_blocks * 512
@@ -5990,6 +6066,7 @@ def storage_status():
         gadget_serial = ""
     try:
         with open(IMG, "rb") as f:
+            img_configured = f.read(8)[3:8] == b"EXFAT"
             f.seek(0x64)
             volume_serial = "%08X" % int.from_bytes(f.read(4), "little")
     except OSError:
@@ -5998,6 +6075,7 @@ def storage_status():
             "udc": otg["udc"], "state": otg["state"], "speed": otg["speed"],
             "host_connected": otg["connected"], "attached": usb_attached,
             "img": IMG, "img_size": img_size, "img_used": img_used,
+            "img_configured": img_configured,
             "gadget_serial": gadget_serial, "volume_serial": volume_serial,
             "archive": ARCHIVE, "source": _current_storage_source(), "disks": _usb_disks()}
 
@@ -6070,7 +6148,7 @@ def storage_init(device, percent, confirm):
     virtual_gb = int(total * percent / 100 // gib)
     archive_gb = int(total // gib) - virtual_gb
     if virtual_gb < 4 or archive_gb < 4:
-        return False, "分区太小, 虚拟盘和归档区都至少需要 4G"
+        return False, "磁盘太小, 虚拟盘和归档区都至少需要 4G (整块盘建议 ≥8G)"
     try:
         r = _run_cmd(["sh", STORAGE_INIT_SCRIPT, device, str(virtual_gb), str(archive_gb)], timeout=1800)
     except Exception as e:

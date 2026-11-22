@@ -8,6 +8,7 @@ ARCHIVE_GB="$3"
 MNT=/mnt/tsf-storage
 DATA=$MNT/tsf-data
 CONF=/etc/tesla-sentry.conf
+TSF_DIR=$(cd "$(dirname "$0")" && pwd)
 
 [ -b "$DEV" ] || { echo "不是块设备: $DEV" >&2; exit 1; }
 [ "$SIZE_GB" -ge 4 ] 2>/dev/null || { echo "虚拟U盘容量无效" >&2; exit 1; }
@@ -60,7 +61,7 @@ mkdir -p "$DATA/archive/SentryClips" "$DATA/archive/SavedClips" "$DATA/archive/R
          "$DATA/archive/.skins" "$DATA/archive/boombox-queue" "$DATA/archive/boombox-done" \
          "$DATA/archive/files" "$DATA/cache/thumbs" "$DATA/cache/tel-cache"
 
-sh /opt/tesla-sentry/prepare-teslacam.sh "$DATA/teslacam.img" "$SIZE_GB" /opt/tesla-sentry/mkexfat.py
+sh "$TSF_DIR/prepare-teslacam.sh" "$DATA/teslacam.img" "$SIZE_GB" "$TSF_DIR/mkexfat.py"
 
 sed -i "s|^TSF_IMG=.*|TSF_IMG=$DATA/teslacam.img|; s|^TSF_ARCHIVE=.*|TSF_ARCHIVE=$DATA/archive|; s|^TSF_CACHE=.*|TSF_CACHE=$DATA/cache|; s|^TSF_BOX_MAX_GB=.*|TSF_BOX_MAX_GB=$ARCHIVE_GB|" "$CONF"
 
