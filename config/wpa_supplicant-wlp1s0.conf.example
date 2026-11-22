@@ -1,0 +1,14 @@
+# /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf  (权限 600, 不要提交真实密码)
+# 由独立实例 wpa_supplicant@wlp1s0.service 读取
+country=CN
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={
+    ssid="<YOUR_WIFI_SSID>"
+    psk="<YOUR_WIFI_PASSWORD>"
+    key_mgmt=WPA-PSK
+    # AX200 的 STA 与热点必须同信道, 这里把 STA 锁在 2.4G 全部信道:
+    # 连上后热点就能跟随同一信道并发。5G 信道在这颗卡上无法发射 (no IR)。
+    freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462 2467 2472
+}

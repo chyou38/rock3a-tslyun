@@ -1,0 +1,16 @@
+# /etc/tsf-ap.conf  (权限 600)
+# AP_ENABLE: 0=关闭 / 1=常开 / auto=没 WiFi 且没有线时自动开, 任一网络可用时关
+AP_ENABLE=auto
+
+# 热点名称与密码 (8-63 位), 安装后请立即改掉默认值
+AP_SSID=TeslaSentry
+AP_PSK=<CHANGE_ME_8_TO_63_CHARS>
+
+# 频段: g=2.4G (AX200 只能 2.4G 发射), a=5G (多数 AX200 会报 no IR, 不可用)
+AP_HW_MODE=g
+
+# 信道策略: AP_CH_MODE=auto 跟随已连 WiFi / 自动选空闲; manual 用 AP_CH_MANUAL
+AP_CH_MODE=auto
+AP_CH_MANUAL=6
+AP_CHANNEL=6
+AP_BAND=auto

@@ -1,0 +1,77 @@
+Tesla Sentry Box · ROCK 3A 系统信息原始采集
+采集时间: 2026-11-22 (Asia/Shanghai)
+主机: rock-3a
+
+=== /etc/os-release ===
+PRETTY_NAME="Armbian 26.8.1 trixie"
+NAME="Debian GNU/Linux"
+VERSION_ID="13"
+VERSION="13 (trixie)"
+
+=== uname -a ===
+Linux rock-3a 6.18.44-current-rockchip64 #1 SMP PREEMPT Sun Aug  9 18:25:30 UTC 2026 aarch64 GNU/Linux
+
+=== lscpu ===
+Architecture: aarch64
+CPU(s): 4
+Model name: Cortex-A55
+
+=== free -h ===
+               total        used        free      shared  buff/cache   available
+Mem:           1.9Gi       275Mi       1.3Gi       4.4Mi       394Mi       1.7Gi
+
+=== python3 -V ===
+Python 3.13.5
+
+=== 关键依赖版本 ===
+hostapd          2:2.10-24
+dnsmasq          2.91-1+deb13u2
+dnsmasq-base     2.91-1+deb13u2
+wpasupplicant    2:2.10-24
+iw               6.9-1+b1
+bluez            5.82-1.1+rpt2
+ffmpeg           7:7.1.5-0+deb13u1
+exfatprogs       1.2.9-1+deb13u1
+firmware-iwlwifi 20250410-2
+python3          3.13.5-1
+
+=== 无线/蓝牙硬件 ===
+0000:01:00.0 Network controller [0280]: Intel Corporation Wi-Fi 6 AX200 [8086:2723] (rev 1a)
+Bus 003 Device 003: ID 8087:0029 Intel Corp. AX200 Bluetooth
+
+=== AX200 固件 ===
+/lib/firmware/iwlwifi-cc-a0-59.ucode
+/lib/firmware/iwlwifi-cc-a0-72.ucode
+/lib/firmware/iwlwifi-cc-a0-77.ucode
+
+=== 服务 is-enabled ===
+sentry-viewer            enabled
+tesla-gadget             enabled
+tesla-live               enabled
+pwm-fan-control          enabled
+tsf-hotspot              enabled
+tsf-ap-policy.timer      enabled
+wpa_supplicant@wlp1s0    enabled
+bluetooth                enabled
+hostapd                  disabled
+
+=== 服务 is-active ===
+sentry-viewer            active
+tesla-gadget             active
+tesla-live               active
+pwm-fan-control          active
+tsf-ap-policy.timer      active
+wpa_supplicant@wlp1s0    active
+bluetooth                active
+hostapd                  inactive
+
+=== 网页监听 ===
+0.0.0.0:80 (python3 sentry-viewer.py), 8080 已无监听
+
+=== 热点 ===
+ap0 192.168.50.1/24, dnsmasq 192.168.50.100-200/12h, NAT -> end0
+hostapd: interface=ap0, hw_mode=g, channel=6, country_code=CN, WPA2-PSK
+
+=== 备注 ===
+- SSID / PSK / 账号密码不记录在本文件
+- 完整说明见 docs/SYSTEM.md

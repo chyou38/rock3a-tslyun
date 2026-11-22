@@ -1,0 +1,24 @@
+# /etc/netplan/10-dhcp-all-interfaces.yaml
+# ROCK 3A 有线网卡 DHCP。WiFi 不写在这里: netplan 的 wifis: 不支持 band,
+# 去掉 access-points 又会报 "No access points defined", 所以 STA 交给
+# 独立 wpa_supplicant@wlp1s0 + systemd-networkd 处理。
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    all-lan-interfaces:
+      match:
+        name: lan[0-9]*
+      dhcp4: true
+      dhcp6: true
+      ipv6-privacy: true
+    all-wan-interfaces:
+      match:
+        name: wan[0-9]*
+      dhcp4: true
+      dhcp6: true
+      ipv6-privacy: true
+    end0:
+      dhcp4: true
+      dhcp6: true
+      ipv6-privacy: true
