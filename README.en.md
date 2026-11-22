@@ -84,7 +84,7 @@ The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadg
 
 **2. Plug it into the car**: insert into the glovebox USB port — the head unit recognizes it, shows the capacity and starts recording. The image already contains `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`, so **there is no "Format USB device" step**. If the car still asks, confirming is harmless — it just rebuilds the same structure.
 
-**3. Open the web UI**: `http://<device-ip>` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Video comes from the 15-second live sync, so you don't wait for scheduled archiving.
+**3. Open the web UI**: `http://<device-ip>` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Video comes from the 15-second live sync, so you don't wait for scheduled archiving. The repository is public: Settings → Update can check and upgrade directly without a token.
 
 **Uninstall**
 

@@ -107,9 +107,9 @@ ap0 (192.168.50.1/24, hostapd + dnsmasq, NAT 到 end0)
 
 ## 6. OTA 更新源
 
-`OTA_REPO` 默认 `chyou38/rock3a-tslyun`（私有仓库），可用环境变量 `TSF_OTA_REPO` 覆盖。
+`OTA_REPO` 默认 `chyou38/rock3a-tslyun`（公开仓库），可用环境变量 `TSF_OTA_REPO` 覆盖。
 
-> 私有仓库匿名拉取会 404；盒子要自动更新需在设备上配置可读令牌或部署密钥（不要把令牌写进仓库）。公开仓库则无需任何密钥。
+> 仓库已公开：盒子和其他安装者可直接匿名拉取 `version.json` 与 `sentry-viewer.py`，不需要令牌或部署密钥。
 
 ## 7. 快速自检
 

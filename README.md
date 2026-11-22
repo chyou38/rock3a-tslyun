@@ -84,7 +84,7 @@ sudo ./install.sh --size 120 --port 80 --archive /archive    # 自定义参数 (
 
 **2. 插到车上**：插进手套箱 USB 口 → 车机直接识别、显示容量并开始录制。镜像里已预建 `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`，**不再需要点「格式化 USB 设备」**；若车机仍弹出该提示，点确认也无害，只是把同样的结构重建一遍。
 
-**3. 打开网页**：`http://<设备IP>`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。视频由 15 秒在线同步落地，不用等定时归档。
+**3. 打开网页**：`http://<设备IP>`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。视频由 15 秒在线同步落地，不用等定时归档。仓库是公开的，「设置 → 更新」可直接检查并升级，无需令牌。
 
 **卸载**
 
