@@ -183,7 +183,6 @@ ls -l /opt/tesla-sentry/fonts/     # 应约 17MB
 /etc/init.d/tesla-viewer restart
 ```
 
-更多排障见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)；实现原理（exFAT 只读解析、双链路互斥、SEI 解码、U 盘管理状态机）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
 

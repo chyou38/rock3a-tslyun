@@ -110,7 +110,7 @@ Main config: `/etc/tesla-sentry.conf` (restart services after editing):
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | Free-space fallback cleanup: trigger threshold and target |
 | `TSF_CACHE` | automatic | Thumbnail / telemetry / transcode cache directory |
 
-OTA, Feishu push and authentication settings are **not** written to this file — they use environment variables (such as `TSF_OTA_SOURCES`, `TSF_OTA_REPO`) or the web UI. The full variable table is in section 8 of `docs/COMPATIBILITY.md`.
+OTA, Feishu push and authentication settings are **not** written to this file — they use environment variables (such as `TSF_OTA_SOURCES`, `TSF_OTA_REPO`) or the web UI. The full variable table and system baseline are in `docs/SYSTEM.md`.
 
 The web **⚙ Personalization** panel has 9 sub-tabs: Files, Lock chime, Wraps, Push, Account, Language, Background, Brand, Update.
 
@@ -182,7 +182,6 @@ ls -l /opt/tesla-sentry/fonts/     # should be about 17MB
 /etc/init.d/tesla-viewer restart
 ```
 
-More troubleshooting in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md); design details (read-only exFAT parsing, dual-path mutual exclusion, SEI decoding, drive-management state machine) in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
