@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Tesla Sentry hotspot auto policy every 20s
+
+[Timer]
+OnBootSec=25s
+OnUnitActiveSec=20s
+Unit=tsf-ap-policy.service
+
+[Install]
+WantedBy=timers.target

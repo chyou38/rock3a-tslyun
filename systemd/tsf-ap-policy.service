@@ -1,0 +1,7 @@
+[Unit]
+Description=Tesla Sentry hotspot auto policy
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/tesla-sentry/ap-policy.sh

@@ -1,0 +1,13 @@
+[Unit]
+Description=Tesla Sentry personal hotspot (hostapd+dnsmasq+NAT)
+After=network-online.target systemd-networkd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /opt/tesla-sentry/tsf-ap.sh up
+ExecStop=/bin/sh /opt/tesla-sentry/tsf-ap.sh down
+
+[Install]
+WantedBy=multi-user.target

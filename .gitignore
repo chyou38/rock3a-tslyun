@@ -1,0 +1,25 @@
+# 镜像与运行时数据
+*.img
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+# 设备运行时数据与密钥 (绝不入库)
+auth.conf
+ota-src.json
+settings.json
+health.log
+brand/
+fonts/
+cache/
+preview-cache/
+*.bak-*

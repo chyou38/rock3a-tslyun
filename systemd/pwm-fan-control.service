@@ -1,0 +1,12 @@
+[Unit]
+Description=ROCK 3A PWM fan temperature control (pwm8 m0)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /opt/tesla-sentry/fan-control.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
