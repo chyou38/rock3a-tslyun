@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.47"
+APP_VERSION = "2.8.48"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -7100,11 +7100,14 @@ def thumb_file(fp, ss_t=1.0):
             except OSError:
                 pass
 # ---------- 在线清晰度: 按需转码 + eMMC 缓存 (设备端单任务串行, 防止重转码打崩内核) ----------
-# 源 1280x960 (4:3); 用固定目标码率: 公网 5G 上行只有 ~120KB/s, CRF 模式码率不可控会传不完
-# 8 核 T760 实测: -threads 8 + superfast 比 2 线程快一倍 (20s->10s/分钟片段), 内存峰值充足 (720p 后仍余 ~980MB)
+# 源可為 1280x960(4:3) 或新硬體 2896x1876/1448x938(≈1.54:1)。固定目標碼率: 公網上行慢, CRF 碼率不可控會傳不完。
+# 縮放必须 force_divisible_by=2: 非 4:3 源按比例縮到 640 寬時高為 415(奇數), libx264 yuv420p 會直接報錯,
+# 導致 480p/360p 轉碼永遠失敗、播放器只能一直發 7Mbps 原畫(遠端必卡)。實測見 docs。
+# RK3568 4xA55 實測: 軟解+縮放+編碼 比 rkvdec 硬解+管道搬運更快(硬解全分辨率 NV12 過管道 sys 開銷大),
+# 故遠端檔位走軟解; 縮放用 bilinear 比 lanczos 快 ~23%(60s 前視 80s->62s), 畫質差異在 500kbps 預覽下可忽略。
 RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 500), "720p": (960, 720, 900)}  # 宽,高,kbps
-# 编码参数版本号: 参与缓存 key。v3: 远程默认 360p15, rkvdec+FFmpeg 混合转码; 其它档先降帧再缩放。
-RES_ENC_VER = "3"
+# 编码参数版本号: 参与缓存 key。v4: 修復奇數高度 + 遠端縮放改 bilinear。
+RES_ENC_VER = "4"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
@@ -8735,7 +8738,7 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
                     'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
                     FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
                     "-threads", enc_threads, "-i", fp,
-                    "-vf", "fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos" % (fps, w, h),
+                    "-vf", "fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear" % (fps, w, h),
                     "-c:v", "libx264", "-preset", preset,
                     "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2),
                     "-bufsize", "%dk" % (kbps * 3),

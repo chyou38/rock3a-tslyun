@@ -78,7 +78,7 @@ set +e
 "$FFMPEG" -y -hide_banner -loglevel error \
     -f rawvideo -pixel_format nv12 -video_size "${PW}x${PH}" -framerate "$FPS" -i pipe:0 \
     -i "$SRC" -map 0:v:0 -map '1:a?' \
-    -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos" \
+    -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos" \
     -c:v libx264 -preset ultrafast -threads "${TSF_VPU_ENC_THREADS:-4}" \
     -b:v "${BITRATE}k" -maxrate "${MAXRATE}k" -bufsize "${BUF}k" \
     -c:a copy -movflags +faststart -f mp4 "${FFMPEG_LIMIT[@]}" "$DST"
