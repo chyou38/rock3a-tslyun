@@ -102,6 +102,7 @@ ap0 (192.168.50.1/24, hostapd + dnsmasq, NAT 到 end0)
 ## 5. 网页与登录
 
 - 端口：`TSF_PORT=80`，直接访问 `http://<设备IP>/`，无需加端口
+- mDNS：安装时启用 Avahi，默认广播 `http://tsl.local`（`TSF_MDNS_NAME=tsl`，用 `--mdns NAME` 可改）；换 IP 不影响地址，仅同一局域网有效，标准后缀只有 `.local`
 - 账号：`admin`，密码由 `install.sh` 随机生成写入 `/opt/tesla-sentry/auth.conf`（权限 600，不入库）
 - 认证：HMAC 签名 Cookie 30 天 + HTTP Basic；连错 8 次/10 分钟限流
 

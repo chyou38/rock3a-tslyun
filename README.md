@@ -26,7 +26,7 @@
 
 | 能力 | 说明 |
 |---|---|
-| 🗂 虚拟 U 盘 | **安装时不预建镜像**；部署后打开网页首页「设备与存储」，插入任意容量 USB 硬盘（整盘 ≥8G）→ 选择整块盘 → 拖动虚拟U盘占比 → 输入序列号格式化创建。创建的是稀疏 exFAT 镜像并预置 `TeslaCam` 目录，通过 USB Gadget `mass_storage` 导出；网卡 / 串口共存。也可在安装时用 `--size` 显式预建。 |
+| 🗂 虚拟 U 盘 | **安装时不预建镜像**；部署后打开网页「个性化 → 车机U盘」里的「设备与存储」，插入任意容量 USB 硬盘（整盘 ≥8G）→ 选择整块盘 → 拖动虚拟U盘占比 → 输入序列号格式化创建。创建的是稀疏 exFAT 镜像并预置 `TeslaCam` 目录，通过 USB Gadget `mass_storage` 导出；网卡 / 串口共存。也可在安装时用 `--size` 显式预建。 |
 | ⚡ 实时查看 | `tesla-live-sync.py` 每 15 秒**只读解析 exFAT**（不挂载、不断 USB），车机边写网页边看，新片段通常 15–30 秒出现；cron `*/10` 只负责写 Boombox 音频 |
 | 📦 归档与滚动窗口 | 视频落到独立 ext4 归档区，不与车机同时读写镜像；`RecentClips` 跟随车机滚动缓冲只留最近 60 分钟，`SentryClips` / `SavedClips` 的**盒子副本**默认按 14 天 / 12GB 清理（车机 U 盘那份只读不动），`.pruned` 墓碑避免「删除→重抄」死循环 |
 | 🎬 播放 | **默认单路**: 点开事件直接播触发摄像头那一路 (画面下方切换条可选 前视/后视/左B柱/右B柱/全览, 点哪个才加载哪个, 切换保留播放进度)；全览 4 路 2×2 / 6 路 3×2 自适应，250ms 同步校正、统一进度条、0.5–4x；**自动落在触发时刻所在的那一分钟、从触发前 5 秒起播**（片段栏红点标记） |
@@ -37,6 +37,7 @@
 | 📂 文件管理 | U 盘 / 归档区浏览上传下载，多选批量删除 / 移动 / 复制 / 重命名（realpath 防逃逸）；一键清空 `TeslaCam/` 全部录像（保留目录结构、不动 Boombox / Wraps）；U 盘管理模式 5 分钟无操作自动恢复导出 |
 | 🔔 飞书推送 | 私聊（仅本人）/ 群机器人，触发那一帧封面卡片或触发点前 5 秒短视频，可烧行车信息水印；去重、延迟 20 秒、失败重试 3 次，导出浮层也能直接推送 |
 | 🔐 登录保护 | `install.sh` 默认生成随机 10 位密码（admin），HMAC 签名 cookie 保留 30 天 + HTTP Basic；10 分钟内连错 8 次返回 429；设置 → 账号可改密码 / 退出 |
+| 🌐 内网固定地址 | 安装时尝试启用 Avahi mDNS，在局域网广播 `http://tsl.local`（默认主机名 `tsl`，`--mdns NAME` 可改）；换 IP 不用重新记地址。仅同一局域网有效，标准 mDNS 只支持 `.local` 后缀 |
 | 🔄 在线升级 | 多源并发竞速 + GitHub API 实时兜底，下载后校验 → 备份 → 原子替换 → 自动重启，出问题一键回滚；设置 → 更新里可勾选**自动更新**（默认开启，检测到新版且没人看视频时自动升） |
 | 🎨 个性化 | 标题图标与名称可自定义（默认「TSL哨兵云盘」）、深 / 浅 / 自动主题，4 套界面风格（默认 / Apple / Claude / 像素），10 种界面语言、网页背景换肤、锁车音（`LockChime.wav`）、涂装 `Wraps/` |
 | 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、LUN 被弹出后 cron `*/2` 自动重挂、断电自愈 |
@@ -84,13 +85,14 @@ sh scripts/tsf-check.sh --json   # 供脚本判定
 ```sh
 git clone https://github.com/chyou38/rock3a-tslyun.git
 cd rock3a-tslyun
-sudo ./install.sh                                             # 不预建镜像；端口 80、归档 /archive
+sudo ./install.sh                                             # 不预建镜像；端口 80、归档 /archive、mDNS tsl.local
 sudo ./install.sh --size 120 --port 80 --archive /archive    # 可选：安装时预建 120G 镜像
+sudo ./install.sh --mdns mybox                                # 可选：改用 http://mybox.local
 ```
 
-安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
+安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 尝试安装并启用 Avahi mDNS → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
 
-**2. 打开网页，自己创建虚拟U盘**：浏览器访问 `http://<设备IP>`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。首页顶部「设备与存储」会提示「未配置虚拟U盘」：
+**2. 打开网页，自己创建虚拟U盘**：浏览器访问 `http://<设备IP>` 或 `http://tsl.local`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。打开 **「个性化 → 车机U盘」**，里面的「设备与存储」会提示「未配置虚拟U盘」：
 
 1. 插入要用的 USB 硬盘（整块盘容量 ≥8G，U 盘 / 移动硬盘均可，容量不固定）。
 2. 在「选择硬盘」下拉里选中整块盘，拖动「虚拟U盘占比」（10%–90%），下方会实时算出虚拟盘 / 归档区容量。
@@ -98,6 +100,8 @@ sudo ./install.sh --size 120 --port 80 --archive /archive    # 可选：安装�
 4. 创建完成后页面自动刷新，`tesla-gadget` 会导出这块虚拟盘，状态变为「已挂载」。
 
 虚拟盘超过 128G 时，需要系统里有 `mkfs.exfat`（Debian: `apt install exfatprogs`）；小容量不需要。
+
+**固定访问地址（mDNS）**：安装阶段会尝试安装并启用 Avahi，在局域网广播 `http://tsl.local`（默认主机名 `tsl`，可用 `sudo ./install.sh --mdns mybox` 改成 `http://mybox.local`）。这个地址只依赖 mDNS，不依赖设备 IP，换了网络/租约也不用改地址；手机、Mac、Linux 通常直接可访问，Windows 若解析不了可安装 Bonjour 或继续用 `http://<设备IP>`。标准 mDNS 只支持 `.local` 后缀，`.cot` 等自定义后缀不会被普通客户端当作 mDNS。
 
 **3. 插到车上**：把设备 USB3 OTG 口插进手套箱车机 USB 口，车机识别虚拟盘后开始录制。镜像里已预建 `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`，正常不需要再点「格式化 USB 设备」；若车机仍弹出该提示，点确认也无害。
 
@@ -124,10 +128,11 @@ sudo ./uninstall.sh --purge      # 连镜像和归档一起删（不可恢复）
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `14` / `12` | 盒子侧哨兵 / 手动保存归档的保留天数与单分类上限，0 = 不限 |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | 空间兜底清理的触发阈值与目标 |
 | `TSF_CACHE` | 自动 | 缩略图 / 遥测 / 转码缓存目录 |
+| `TSF_MDNS_NAME` | `tsl` | mDNS 主机名，对应 `http://tsl.local`；改完重启 avahi-daemon |
 
 OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量（如 `TSF_OTA_SOURCES`、`TSF_OTA_REPO`）或网页配置。完整变量表与系统基线见 `docs/SYSTEM.md`。
 
-网页 **⚙ 个性化** 有 11 个子页签：网络设置、文件、锁车语音、涂装、推送、账号、语言、网页背景、风扇、品牌、更新。存储盘选择和虚拟U盘创建在**首页「设备与存储」**，不在设置页。
+网页 **⚙ 个性化** 有 11 个子页签：网络设置、文件、锁车语音、涂装、推送、账号、语言、网页背景、风扇、品牌、更新。存储盘选择和虚拟U盘创建在 **「个性化 → 车机U盘」** 里，不在首页。
 
 - **品牌**：设置 → 品牌，标题栏左侧的图标（png/jpg/webp，≤3MB）与名称（≤24 字）都能换成自己的，改完立即生效、登录页同步；默认是内置的「TSL哨兵云盘」图标与名称，一键可恢复。
 
@@ -150,7 +155,7 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 
 ## 常见问题
 
-- **车机不认盘 / 提示格式化**：确认 `/sys/class/udc/` 有控制器、`grep exfat /proc/filesystems` 有输出，再跑 `/opt/tesla-sentry/tesla-gadget.sh status`。首次部署不再预建镜像，先在网页首页「设备与存储」完成选盘创建；创建成功会预置 exFAT + `TeslaCam`，正常不会再提示格式化。旧版安装留下的全零空盘重装时会自动补写。若虚拟盘超过 128G（车机同款布局的寻址上限），需要 `mkfs.exfat`（`apt install exfatprogs`），否则会退回空白盘由车机格式化一次；想手动补写可执行 `python3 /opt/tesla-sentry/mkexfat.py <镜像路径> <容量GB>`（镜像里有数据时它会拒绝覆盖）。
+- **车机不认盘 / 提示格式化**：确认 `/sys/class/udc/` 有控制器、`grep exfat /proc/filesystems` 有输出，再跑 `/opt/tesla-sentry/tesla-gadget.sh status`。首次部署不再预建镜像，先在网页「个性化 → 车机U盘」完成选盘创建；创建成功会预置 exFAT + `TeslaCam`，正常不会再提示格式化。旧版安装留下的全零空盘重装时会自动补写。若虚拟盘超过 128G（车机同款布局的寻址上限），需要 `mkfs.exfat`（`apt install exfatprogs`），否则会退回空白盘由车机格式化一次；想手动补写可执行 `python3 /opt/tesla-sentry/mkexfat.py <镜像路径> <容量GB>`（镜像里有数据时它会拒绝覆盖）。
 - **播放黑屏**：视频是 H.265 / HEVC，Windows 用 Edge / Chrome（需 HEVC 解码器）、iPhone Safari 原生支持，部分安卓浏览器不支持。
 - **网页没有事件**：看 `/opt/tesla-sentry/` 下的 `tesla-live.log`、`tesla-sync.log`；先确认顶部同步状态胶囊在线，再核对归档目录与镜像路径。
 

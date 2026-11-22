@@ -5,6 +5,7 @@
 #   --port PORT      网页端口, 默认 80
 #   --archive DIR    归档区路径, 默认 /archive
 #   --dir DIR        安装目录, 默认 /opt/tesla-sentry
+#   --mdns NAME      mDNS 主机名 (默认 tsl, 即 http://tsl.local)
 #   -h, --help       显示帮助
 set -e
 
@@ -12,6 +13,7 @@ SIZE_GB=
 PORT=80
 ARCHIVE=/archive
 TSF_DIR=/opt/tesla-sentry
+MDNS_NAME=tsl
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -19,7 +21,8 @@ while [ $# -gt 0 ]; do
         --port)    PORT="$2"; shift 2 ;;
         --archive) ARCHIVE="$2"; shift 2 ;;
         --dir)     TSF_DIR="$2"; shift 2 ;;
-        -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+        --mdns)    MDNS_NAME="$2"; shift 2 ;;
+        -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
         *) echo "未知参数: $1 (用 --help 查看)"; exit 1 ;;
     esac
 done
@@ -29,6 +32,12 @@ CONF=/etc/tesla-sentry.conf
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+case "$MDNS_NAME" in
+    *[!A-Za-z0-9-]*|'') die "mDNS 主机名只能包含字母、数字和短横线: $MDNS_NAME" ;;
+    -*|*-) die "mDNS 主机名不能以短横线开头或结尾" ;;
+esac
+[ "${#MDNS_NAME}" -le 63 ] || die "mDNS 主机名最长 63 个字符"
 
 if [ -n "$SIZE_GB" ]; then
     case "$SIZE_GB" in
@@ -154,7 +163,7 @@ if [ -f "$IMG" ]; then
             sh "$SRC_DIR/scripts/prepare-teslacam.sh" "$IMG" "$IMG_GB" "$SRC_DIR/scripts/mkexfat.py"
             sync
         else
-            say "旧镜像为空且无法判断容量, 跳过补写; 请在网页首页重新选择 USB 硬盘创建"
+            say "旧镜像为空且无法判断容量, 跳过补写; 请在网页「个性化 → 车机U盘」重新选择 USB 硬盘创建"
         fi
     fi
 elif [ -n "$SIZE_GB" ]; then
@@ -163,7 +172,7 @@ elif [ -n "$SIZE_GB" ]; then
     sync
 else
     say "跳过虚拟U盘创建 (未指定 --size)"
-    echo "         装完打开网页 → 首页「设备与存储」→ 插入任意容量 USB 硬盘 → 选择并格式化创建"
+    echo "         装完打开网页 → 「个性化 → 车机U盘」→ 插入任意容量 USB 硬盘 → 选择并格式化创建"
 fi
 if [ -f "$IMG" ]; then
     ls -lh "$IMG"
@@ -186,6 +195,7 @@ TSF_GADGET=$GADGET
 TSF_CACHE=$CACHE_DIR
 TSF_FFMPEG=$FFMPEG
 TSF_FFPROBE=$FFPROBE
+TSF_MDNS_NAME=$MDNS_NAME
 TSF_USB_LOCK=/tmp/tsf-usb.lock
 
 # ---- 归档清理 / 在线同步参数 (改完重启服务生效; 0 = 关闭对应策略) ----
@@ -241,6 +251,48 @@ ttl=2592000
 EOF
     chmod 600 "$AUTH_CONF"
     say "已生成网页登录账号 -> admin / $AUTH_PASS   (已写入 $AUTH_CONF, 请记好)"
+fi
+
+# ---------------- 3.6 mDNS 内网固定域名 ----------------
+# 安装 Avahi 并广告 <MDNS_NAME>.local; 同一局域网内不依赖设备 IP。
+# 注意: .local 是标准 mDNS 后缀; .cot 等自定义后缀不会被普通客户端当作 mDNS。
+MDNS_OK=0
+if ! command -v avahi-daemon >/dev/null 2>&1; then
+    say "安装 Avahi mDNS ..."
+    if command -v apt-get >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils libnss-mdns >/dev/null 2>&1 || true
+    fi
+fi
+if command -v avahi-daemon >/dev/null 2>&1 && [ -f /etc/avahi/avahi-daemon.conf ]; then
+    [ -f /etc/avahi/avahi-daemon.conf.tsf.bak ] || \
+        cp -a /etc/avahi/avahi-daemon.conf /etc/avahi/avahi-daemon.conf.tsf.bak 2>/dev/null || true
+    if grep -q '^[#[:space:]]*host-name=' /etc/avahi/avahi-daemon.conf; then
+        sed -i "s/^[#[:space:]]*host-name=.*/host-name=$MDNS_NAME/" /etc/avahi/avahi-daemon.conf
+    elif grep -q '^\[server\]' /etc/avahi/avahi-daemon.conf; then
+        sed -i "/^\[server\]/a host-name=$MDNS_NAME" /etc/avahi/avahi-daemon.conf
+    else
+        printf '\n[server]\nhost-name=%s\n' "$MDNS_NAME" >> /etc/avahi/avahi-daemon.conf
+    fi
+    if [ -f /etc/nsswitch.conf ] && ! grep -q '^hosts:.*mdns4_minimal' /etc/nsswitch.conf; then
+        [ -f /etc/nsswitch.conf.tsf.bak ] || \
+            cp -a /etc/nsswitch.conf /etc/nsswitch.conf.tsf.bak 2>/dev/null || true
+        if grep -q '^hosts:.*files' /etc/nsswitch.conf; then
+            sed -i '/^hosts:/ s/files/files mdns4_minimal [NOTFOUND=return]/' /etc/nsswitch.conf
+        else
+            sed -i '/^hosts:/ s/^hosts:/hosts: mdns4_minimal [NOTFOUND=return]/' /etc/nsswitch.conf
+        fi
+    fi
+    systemctl enable avahi-daemon >/dev/null 2>&1 || true
+    systemctl restart avahi-daemon >/dev/null 2>&1 || true
+    if systemctl is-active --quiet avahi-daemon; then
+        MDNS_OK=1
+        say "mDNS 已启用: http://${MDNS_NAME}.local (仅同一局域网)"
+    else
+        echo "  [提示] Avahi 未能启动, mDNS 暂不可用; 不影响其它功能"
+    fi
+else
+    echo "  [提示] Avahi 未安装或配置缺失, 跳过 mDNS; 不影响其它功能"
 fi
 
 # ---------------- 4. 服务 ----------------
@@ -355,10 +407,13 @@ if [ -f "$IMG" ]; then
     NEXT_TEXT="把设备插到车上 -> 车机识别已预置的 TeslaCam 盘并开始录制"
 else
     echo "  虚拟U盘    : 未创建（装完后在网页里选择 USB 硬盘创建）"
-    NEXT_TEXT="打开 $URL 并登录 -> 首页「设备与存储」-> 插入任意容量 USB 硬盘 -> 选择整块盘、拖动占比、输入序列号格式化创建"
+    NEXT_TEXT="打开 $URL 并登录 -> 「个性化 → 车机U盘」-> 插入任意容量 USB 硬盘 -> 选择整块盘、拖动占比、输入序列号格式化创建"
 fi
 echo "  归档区      : $ARCHIVE"
 echo "  查看器      : $URL"
+if [ "$MDNS_OK" = "1" ]; then
+    echo "  内网域名    : http://${MDNS_NAME}.local (同一局域网)"
+fi
 if [ -n "$IP" ]; then
     echo "  当前网关    : $IP"
 fi

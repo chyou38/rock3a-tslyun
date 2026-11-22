@@ -26,7 +26,7 @@ This repository is maintained for exactly one hardware/OS combination: **Armbian
 
 | Capability | Details |
 |---|---|
-| 🗂 Virtual USB drive | **The installer does not create an image by default.** After deployment, open the web UI home page → "Device & Storage", insert any USB disk (whole disk ≥8 GB) → select it → set the virtual-drive percentage → enter its serial number to format and create. It creates a sparse exFAT image pre-populated with `TeslaCam` and exports it through USB Gadget `mass_storage`, coexisting with the network interface and serial console. You can still pre-create during install with `--size`. |
+| 🗂 Virtual USB drive | **The installer does not create an image by default.** After deployment, open the web UI → **Personalization → Car USB**, then "Device & Storage"; insert any USB disk (whole disk ≥8 GB) → select it → set the virtual-drive percentage → enter its serial number to format and create. It creates a sparse exFAT image pre-populated with `TeslaCam` and exports it through USB Gadget `mass_storage`, coexisting with the network interface and serial console. You can still pre-create during install with `--size`. |
 | ⚡ Live view | `tesla-live-sync.py` parses exFAT **read-only** every 15 seconds (no mount, no USB disconnect), so the car writes while the web page reads; new clips usually show up within 15–30 seconds. The `*/10` cron job only writes Boombox audio. |
 | 📦 Archive & rolling window | Video lands in a separate ext4 archive, never fighting the car for the image. `RecentClips` follows the car's rolling buffer and keeps only the last 60 minutes; the box-side copies of `SentryClips` / `SavedClips` are pruned by age/size (default 14 days / 12GB) while the drive-side originals stay untouched. `.pruned` tombstones prevent the "delete → re-copy" loop. |
 | 🎬 Playback | **Single camera by default**: opening an event plays the camera that triggered it (a switcher bar below the player offers front / rear / left B-pillar / right B-pillar / grid — only the selected angle loads, and switching keeps your position). Grid view auto-fits 4 angles as 2×2 and 6 as 3×2, with 250ms sync correction, one shared progress bar and 0.5–4x speed. **Playback lands on the minute containing the trigger and starts 5 seconds before it** (marked with a red dot in the clip list). |
@@ -37,6 +37,7 @@ This repository is maintained for exactly one hardware/OS combination: **Armbian
 | 📂 File management | Browse, upload and download on the drive or archive; multi-select batch delete / move / copy / rename (realpath-guarded). One click clears every recording under `TeslaCam/` while keeping the directory structure and leaving Boombox / Wraps alone. Drive management mode reverts to export automatically after 5 minutes idle. |
 | 🔔 Feishu push | Direct message (self only) or group bot webhook: cover card of the trigger frame, or a short clip starting 5 seconds before the trigger, optionally with the driving watermark burned in. Deduplicated, 20-second delay, 3 retries on failure. The export sheet can push too. |
 | 🔐 Login protection | `install.sh` generates a random 10-character password (user `admin`) by default. HMAC-signed cookie valid for 30 days plus HTTP Basic. 8 wrong attempts from one IP within 10 minutes returns 429. Settings → Account lets you change the password or sign out. |
+| 🌐 Fixed LAN address | The installer tries to install and enable Avahi mDNS and advertises `http://tsl.local` on the LAN (default host name `tsl`; change with `--mdns NAME`), so IP changes do not change the address. LAN only; standard mDNS supports only the `.local` suffix. |
 | 🔄 Online update | Multiple sources raced in parallel with a GitHub API fallback; after download it verifies → backs up → swaps atomically → restarts, with one-click rollback. Settings → Update has an **auto-update** toggle (on by default: upgrades when a new version appears and nobody is watching). |
 | 🎨 Personalization | Custom title icon and name (defaults to 「TSL哨兵云盘」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. |
@@ -84,13 +85,14 @@ System versions, package versions, service states and network/hotspot configurat
 ```sh
 git clone https://github.com/chyou38/rock3a-tslyun.git
 cd rock3a-tslyun
-sudo ./install.sh                                             # no image; port 80, archive /archive
+sudo ./install.sh                                             # no image; port 80, archive /archive, mDNS tsl.local
 sudo ./install.sh --size 120 --port 80 --archive /archive    # optional: pre-create a 120G image
+sudo ./install.sh --mdns mybox                                # optional: use http://mybox.local
 ```
 
-The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
+The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → try to install and enable Avahi mDNS → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
 
-**2. Open the web UI and create the virtual drive**: browse to `http://<device-ip>` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. The "Device & Storage" card at the top of the home page shows "No virtual drive configured":
+**2. Open the web UI and create the virtual drive**: browse to `http://<device-ip>` or `http://tsl.local` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Open **Personalization → Car USB**; the "Device & Storage" card inside shows "No virtual drive configured":
 
 1. Plug in the USB disk you want to use (whole disk ≥8 GB; USB stick or portable HDD, any capacity).
 2. Select the whole disk in the "Select disk" list and drag "Virtual drive percentage" (10%–90%); the virtual-drive and archive sizes are calculated live.
@@ -98,6 +100,8 @@ The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadg
 4. The page reloads when done; `tesla-gadget` exports the new image and the status becomes "mounted".
 
 For a virtual drive larger than 128 GB, `mkfs.exfat` must be present (Debian: `apt install exfatprogs`); smaller sizes do not need it.
+
+**Fixed address (mDNS)**: the installer tries to install and enable Avahi and advertises `http://tsl.local` on the LAN (default `tsl`, change with `sudo ./install.sh --mdns mybox` for `http://mybox.local`). It depends on mDNS rather than the device IP, so changing networks or DHCP leases does not change the address. Phones, Macs and Linux usually resolve it directly; on Windows install Bonjour or keep using `http://<device-ip>`. Standard mDNS supports only `.local`; custom suffixes such as `.cot` are not treated as mDNS by ordinary clients.
 
 **3. Plug it into the car**: insert the USB3 OTG port into the glovebox head-unit USB port; the car recognizes the virtual drive and starts recording. The image already contains `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`, so **there is no "Format USB device" step**. If the car still asks, confirming is harmless — it just rebuilds the same structure.
 
@@ -124,10 +128,11 @@ Main config: `/etc/tesla-sentry.conf` (restart services after editing):
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `14` / `12` | Box-side retention for Sentry / saved clips, by age and per-category size cap; 0 = unlimited |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | Free-space fallback cleanup: trigger threshold and target |
 | `TSF_CACHE` | automatic | Thumbnail / telemetry / transcode cache directory |
+| `TSF_MDNS_NAME` | `tsl` | mDNS host name, i.e. `http://tsl.local`; restart avahi-daemon after changing |
 
 OTA, Feishu push and authentication settings are **not** written to this file — they use environment variables (such as `TSF_OTA_SOURCES`, `TSF_OTA_REPO`) or the web UI. The full variable table and system baseline are in `docs/SYSTEM.md`.
 
-The web **⚙ Personalization** panel has 11 sub-tabs: Network, Files, Lock chime, Wraps, Push, Account, Language, Background, Fan, Brand, Update. Disk selection and virtual-drive creation live in the **home-page "Device & Storage" card**, not in Settings.
+The web **⚙ Personalization** panel has 11 sub-tabs: Network, Files, Lock chime, Wraps, Push, Account, Language, Background, Fan, Brand, Update. Disk selection and virtual-drive creation live in **Personalization → Car USB**, not on the home page.
 
 - **Brand**: Settings → Brand. Replace the title-bar icon (png/jpg/webp, ≤3MB) and the name (≤24 characters). Changes apply instantly and propagate to the login page; the built-in 「TSL哨兵云盘」 icon and name are the defaults and can be restored with one click.
 - **Online update**: Settings → Update compares against the repository's `version.json` and offers one-click upgrade / rollback. Configuration and recordings are never part of an update.
@@ -149,7 +154,7 @@ Restart services after changing configuration:
 
 ## FAQ
 
-- **The car doesn't see the drive / asks to format it**: confirm `/sys/class/udc/` has a controller and `grep exfat /proc/filesystems` returns something, then run `/opt/tesla-sentry/tesla-gadget.sh status`. New deployments no longer pre-create an image: create it first via the home-page "Device & Storage" card; a successful creation pre-populates exFAT + `TeslaCam`, so this should not happen. All-zero images left by older installs are patched automatically during reinstall. If the virtual drive exceeds 128 GB (the addressing limit of the car-compatible layout), `mkfs.exfat` is required (`apt install exfatprogs`); otherwise it falls back to a blank image that the car must format once. To write the filesystem manually run `python3 /opt/tesla-sentry/mkexfat.py <image-path> <size-GB>` (it refuses to overwrite an image that already holds data).
+- **The car doesn't see the drive / asks to format it**: confirm `/sys/class/udc/` has a controller and `grep exfat /proc/filesystems` returns something, then run `/opt/tesla-sentry/tesla-gadget.sh status`. New deployments no longer pre-create an image: create it first via **Personalization → Car USB**; a successful creation pre-populates exFAT + `TeslaCam`, so this should not happen. All-zero images left by older installs are patched automatically during reinstall. If the virtual drive exceeds 128 GB (the addressing limit of the car-compatible layout), `mkfs.exfat` is required (`apt install exfatprogs`); otherwise it falls back to a blank image that the car must format once. To write the filesystem manually run `python3 /opt/tesla-sentry/mkexfat.py <image-path> <size-GB>` (it refuses to overwrite an image that already holds data).
 - **Black video**: the clips are H.265 / HEVC. Use Edge / Chrome on Windows (with an HEVC decoder) or Safari on iPhone; some Android browsers cannot play them.
 - **No events in the web UI**: check `tesla-live.log` and `tesla-sync.log` under `/opt/tesla-sentry/`. Confirm the sync-status chip at the top is online, then verify the archive and image paths.
 

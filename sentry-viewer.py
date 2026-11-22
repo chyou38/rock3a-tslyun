@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.45"
+APP_VERSION = "2.8.47"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1346,8 +1346,6 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
 .storage-init { background:var(--accent); border:1px solid var(--accent); color:#fff; border-radius:8px;
   padding:7px 14px; font-size:12px; cursor:pointer; margin-top:8px; }
 .storage-format:disabled, .storage-init:disabled { opacity:.45; cursor:not-allowed; }
-.home-storage { padding:0 14px; margin:0 0 12px; }
-.home-storage .storage-card { margin-bottom:0; }
 .storage-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
 #storage-body[hidden] { display:none; }
 html[data-style="apple"] .storage-card { border-radius:16px; border-color:transparent; box-shadow:0 4px 18px #0000000a; }
@@ -1594,7 +1592,6 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <button class="stortog" id="stortog" onclick="toggleStor()" title="展开归档区、总占用与系统状态" aria-expanded="false" aria-controls="storextra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </nav>
-<div class="home-storage" id="home-storage" style="display:none"></div>
 <nav class="filters" id="filters"></nav>
 <nav class="filters" id="dfilters"></nav>
 <input type="date" id="dpick" class="dpick" onchange="if(this.value) setDate(this.value)">
@@ -4789,8 +4786,6 @@ async function refreshStorage() {
     const current = storageFindPart(j.source);
     if (current) sel.value = current.disk.disk;
   }
-  const home = document.getElementById('home-storage');
-  if (home) home.style.display = '';
   storageAllocCalc();
   if (storageFirst) {
     storageFirst = false;
@@ -4870,12 +4865,6 @@ async function storageFormat(dev) {
   } catch (e) { toast('❌ 格式化失败'); }
   refreshStorage();
 }
-(function mountStoragePanel() {
-  // 安装时不再预建镜像, 把存储配置卡从设置页移到首页, 首次打开即可直接选盘创建。
-  const panel = document.getElementById('storage-panel');
-  const home = document.getElementById('home-storage');
-  if (panel && home) home.appendChild(panel);
-})();
 refreshStorage();
 function switchArea(a) {
   area = a;
