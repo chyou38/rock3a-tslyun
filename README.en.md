@@ -33,8 +33,6 @@ This repository is maintained for exactly one hardware/OS combination: **Armbian
 | 🎨 Personalization | Custom title icon and name (defaults to 「哨兵一剪梅」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. |
 
-> 📢 **Changelog**: highlights of the major releases after 2.3 (instant playback / thermals / no-format first setup / export watermark / security & OTA) are in [docs/RELEASE-NOTES.md](docs/RELEASE-NOTES.md).
-
 ---
 
 ## Supported device (ROCK 3A only)
