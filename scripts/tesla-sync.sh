@@ -63,11 +63,9 @@ find_gadget() {
 GADGET=$(find_gadget) || { echo "ERROR: gadget not found"; exit 1; }
 UDC=$(ls /sys/class/udc/ 2>/dev/null | head -1)
 
-# losetup: 优先系统自带, 兼容 busybox 精简系统
+# losetup: 用系统自带 (util-linux)
 if [ -n "$TSF_LOSETUP" ]; then BB="$TSF_LOSETUP"
-elif command -v losetup >/dev/null 2>&1; then BB=$(command -v losetup)
-elif [ -x /opt/mu300/busybox-bin/losetup ]; then BB=/opt/mu300/busybox-bin/losetup
-else BB="busybox losetup"; fi
+else BB="$(command -v losetup 2>/dev/null || echo losetup)"; fi
 
 restore() {
     [ -n "$UDC" ] || return 0

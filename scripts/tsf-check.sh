@@ -1,5 +1,5 @@
-#!/bin/sh
-# tsf-check.sh - 部署前自检: 判断这台设备能不能跑 Tesla Sentry F50
+﻿#!/bin/sh
+# tsf-check.sh - ROCK 3A 部署前自检
 # 用法: sh tsf-check.sh            # 在本机执行 (最好 root)
 #      sh tsf-check.sh --json      # 机器可读输出
 #
@@ -14,7 +14,7 @@ warn() { WARN=$((WARN+1)); [ "$JSON" = "1" ] && echo "{\"item\":\"$1\",\"level\"
 bad()  { FAIL=$((FAIL+1)); [ "$JSON" = "1" ] && echo "{\"item\":\"$1\",\"level\":\"fail\",\"detail\":\"$2\"}" || printf '  \033[31m✗\033[0m %-22s %s\n' "$1" "$2"; }
 sec()  { [ "$JSON" = "1" ] || printf '\n\033[1m%s\033[0m\n' "$1"; }
 
-[ "$JSON" = "1" ] || echo "Tesla Sentry F50 部署自检  ($(date '+%Y-%m-%d %H:%M:%S'))"
+[ "$JSON" = "1" ] || echo "Tesla Sentry Box (ROCK 3A) 自检  ($(date '+%Y-%m-%d %H:%M:%S'))"
 
 # ---------- 1. 平台 ----------
 sec "1. 平台"
@@ -23,6 +23,12 @@ if uname -s 2>/dev/null | grep -qi linux; then
 else
     bad "操作系统" "$(uname -s) — 必须是 Linux (Windows/macOS 无法做 USB 设备)"
 fi
+
+MODEL=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
+case "$MODEL" in
+    *"ROCK 3A"*) ok "主板" "$MODEL" ;;
+    *) bad "主板" "${MODEL:-未知} — 本仓库仅适配 Radxa ROCK 3A (RK3568)" ;;
+esac
 
 [ "$(id -u)" = "0" ] && ok "权限" "root" || warn "权限" "非 root — 挂载镜像/操作 configfs 会失败, 请用 root 运行"
 
@@ -85,7 +91,7 @@ else
 fi
 
 LOSETUP_BIN=""
-for c in "$(command -v losetup 2>/dev/null)" /sbin/losetup /usr/sbin/losetup /opt/mu300/busybox-bin/losetup; do
+for c in "$(command -v losetup 2>/dev/null)" /sbin/losetup /usr/sbin/losetup; do
     [ -n "$c" ] && [ -x "$c" ] && { LOSETUP_BIN="$c"; break; }
 done
 if [ -n "$LOSETUP_BIN" ]; then
@@ -115,22 +121,14 @@ fi
 
 if command -v ffmpeg >/dev/null 2>&1; then
     ok "ffmpeg" "$(ffmpeg -version 2>/dev/null | head -1 | cut -c1-40)"
-elif [ -x /opt/mu300/ffmpeg/ffmpeg ]; then
-    ok "ffmpeg" "/opt/mu300/ffmpeg/ffmpeg"
 else
     warn "ffmpeg" "未安装 — 列表缩略图缺失, 其它功能正常"
 fi
 
-if [ -f /etc/rc.common ] && [ -x /sbin/procd ]; then
-    ok "init 系统" "OpenWrt procd (install.sh 直接支持)"
-elif [ -d /etc/systemd/system ]; then
-    ok "init 系统" "systemd (install.sh 直接支持)"
-elif [ -x /sbin/openrc ] || command -v rc-service >/dev/null 2>&1; then
-    warn "init 系统" "OpenRC — install.sh 走通用 rc.local 分支"
-elif [ -x /sbin/init ] && ls -l /sbin/init 2>/dev/null | grep -q busybox; then
-    warn "init 系统" "BusyBox init — 走通用 rc.local 分支"
+if [ -d /etc/systemd/system ]; then
+    ok "init 系统" "systemd"
 else
-    warn "init 系统" "未识别 — 走通用 rc.local 分支, 可手动调 tsf-start.sh"
+    bad "init 系统" "非 systemd — 本仓库仅适配 Armbian/Debian 13 systemd"
 fi
 
 if [ -d /etc/crontabs ] || [ -f /etc/crontab ] || command -v systemctl >/dev/null 2>&1; then

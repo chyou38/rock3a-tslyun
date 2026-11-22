@@ -3,7 +3,7 @@
 > 日期：2026-11-21
 > 设备：ROCK 3A（RK3568，4×Cortex-A55 @1.992GHz，2GB RAM）
 > 系统：Armbian Debian 13，内核 6.18.44-current-rockchip64（mainline）
-> 项目：tesla-sentry-f50（/opt/tesla-sentry，SSH 别名 teslausb）
+> 项目：rock3a-tslyun（/opt/tesla-sentry，SSH 别名 teslausb）
 > 状态：仅方案，未对盒子做任何变更
 
 ---

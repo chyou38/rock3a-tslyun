@@ -2,17 +2,15 @@
 
 **中文** | [English](README.en.md)
 
-**虚拟哨兵 U 盘 · 多路同步回放 · SEI 行车遥测 · 水印导出 —— 跑在任意 USB Gadget 设备上。**
+**虚拟哨兵 U 盘 · 多路同步回放 · SEI 行车遥测 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
 [![零第三方依赖](https://img.shields.io/badge/deps-%E9%9B%B6%E7%AC%AC%E4%B8%89%E6%96%B9%E5%BA%93-brightgreen.svg)](#功能)
 
-拿一台小 Linux 设备（随身 WiFi / 开发板 / OpenWrt 路由器）顶替原车 U 盘插进手套箱：车机照常录制，手机连盒子 WiFi 打开网页就能回看 4 / 6 路同步画面、逐帧读视频码流里的 SEI 遥测（挡位 / 车速 / 油门 / 刹车 / 方向盘 / 转向灯 / AP / 坐标），并导出带行车信息水印的视频。
+把 Radxa ROCK 3A（RK3568，2GB）顶替原车 U 盘插进手套箱：车机照常录制，手机连盒子 WiFi 打开网页就能回看 4 / 6 路同步画面、逐帧读视频码流里的 SEI 遥测（挡位 / 车速 / 油门 / 刹车 / 方向盘 / 转向灯 / AP / 坐标），并导出带行车信息水印的视频。
 
-没有 USB Device 模式的机器（多数 x86 / NAS / 软路由）也能用：把 `TeslaCam/` 拷进本机，跑 `TSF_ARCHIVE=/path python3 sentry-viewer.py` 就是纯网页查看器。按设备能力分 **A 完整部署 / B 半自动归档 / C 仅网页** 三档，见[支持设备](#支持设备)。
-
-仓库最初参考机型是**中兴 F50 存储版**（全功能实测），项目本身不绑机型 · [部署速览图](docs/overview.png)
+本仓库只维护这一套硬件与系统：**Armbian 26.8.1 trixie（Debian 13）/ 内核 6.18.44-current-rockchip64 / Intel AX200 无线网卡**。其他型号的开发板、路由器或 NAS 未适配，装不上或功能不可用，不在支持范围。
 
 ---
 
@@ -39,17 +37,28 @@
 
 ---
 
-## 支持设备
+## 适配设备（仅 ROCK 3A）
 
-| 档位 | 需要什么 | 能做什么 | 典型设备 |
-|---|---|---|---|
-| **A 完整部署** | USB Device(Gadget) + 内核 exFAT + root | 虚拟 U 盘 + 车机无感实时同步 + 全部网页功能 | 中兴 F50、随身 WiFi、开发板 |
-| **B 半自动** | 任意 Linux + 存储 | 手动把 `TeslaCam/` 拷进归档区，网页功能照常 | NAS、软路由、旧笔记本 |
-| **C 仅网页** | Python 3.7+ | 归档目录已存在（NFS / SMB 也行），只当浏览前端 | 任何机器，含 x86 |
+本仓库只针对 **Radxa ROCK 3A（RK3568）** 维护和验证；其他型号的开发板、路由器或 NAS 未适配，装不上或功能不可用，不在支持范围。
 
-**已实测**：中兴 F50 存储版（紫光展锐 T760 / aarch64 / 1.4G RAM / eMMC 256G，OpenWrt 25.12.5、内核 7.2.9、`25100000.dwc3`）完整跑通，车机为 2022 Model Y（4 路摄像头）。树莓派 Zero 2 W 等 OTG 开发板推断可行但需自检；x86 / NAS 只能跑 B / C 档。
+| 项目 | 本机实测 |
+|---|---|
+| 主板 | Radxa ROCK 3A（RK3568，4× Cortex-A55） |
+| 内存 | 2GB（可用 1.9GiB） |
+| 系统盘 | eMMC 58.3GB（`mmcblk0`，根分区 57.6GB） |
+| 数据盘 | USB 478GB（`sda1`，挂 `/mnt/tsf-storage`，存镜像与归档） |
+| 系统 | Armbian 26.8.1 trixie（Debian 13） |
+| 内核 | 6.18.44-current-rockchip64（aarch64） |
+| 无线网卡 | Intel Wi-Fi 6 AX200（`8086:2723`，iwlwifi，固件 `iwlwifi-cc-a0-77`） |
+| 蓝牙 | AX200 集成（`8087:0029`，hci0） |
+| 有线网卡 | `end0` 千兆，DHCP |
+| 风扇 | 板载 3-pin PWM（`pwm8 m0`，需 `rock3a-pwm8-fan` overlay） |
+| USB | USB3 OTG 口做 Gadget，接车机 |
 
-**档位 A 硬门槛**：`/sys/class/udc/` 非空、configfs + `USB_F_MASS_STORAGE`、内核 exFAT、loop / losetup、root，且车机 USB 口能供电。建议 ≥32G 存储（镜像 + 归档各占一部分）、Python 3.7+（查看器零第三方依赖）；ffmpeg 只影响缩略图与转码，缺失不阻塞安装。
+**已使用**：USB3 OTG（车机）、`end0`（有线）、AX200（WiFi STA + 2.4G 热点）、蓝牙、PWM 风扇座、eMMC（系统）、USB 数据盘（镜像/归档）。
+**未使用**：HDMI、USB Host、M.2、音频等接口本方案不依赖，保持空闲。
+
+**硬门槛**：`/sys/class/udc/` 非空、configfs + `USB_F_MASS_STORAGE`、内核 exFAT、loop / losetup、root，且车机 USB 口能供电。系统必须是 Debian 13 / Armbian systemd；Python 3.7+（查看器零第三方依赖）；ffmpeg 只影响缩略图与转码，缺失不阻塞安装。
 
 装之前先自检（只读、不改系统）：
 
@@ -58,7 +67,7 @@ sh scripts/tsf-check.sh          # 逐项检查 UDC / configfs / exFAT / Python 
 sh scripts/tsf-check.sh --json   # 供脚本判定
 ```
 
-完整设备清单、各系统适配度与功能降级矩阵见 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)。ROCK 3A + Intel AX200 的实测系统版本、依赖版本、服务清单与网络/热点配置见 [docs/SYSTEM.md](docs/SYSTEM.md)。
+系统版本、依赖版本、服务启停表与网络/热点配置详见 [docs/SYSTEM.md](docs/SYSTEM.md)。
 
 ---
 
@@ -73,7 +82,7 @@ sudo ./install.sh                                             # 默认 64G 镜�
 sudo ./install.sh --size 120 --port 80 --archive /archive    # 自定义参数 (镜像 ≤128G)
 ```
 
-安装会：检查内核 gadget / exFAT / Python → 建稀疏镜像并**预置 exFAT + `TeslaCam` 目录** → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 注册 `tesla-gadget` / `tesla-viewer` / `tesla-live` 三个服务（OpenWrt procd、systemd 或 rc.local）与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。
+安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 建稀疏镜像并**预置 exFAT + `TeslaCam` 目录** → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。
 
 **2. 插到车上**：插进手套箱 USB 口 → 车机直接识别、显示容量并开始录制。镜像里已预建 `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`，**不再需要点「格式化 USB 设备」**；若车机仍弹出该提示，点确认也无害，只是把同样的结构重建一遍。
 
@@ -103,7 +112,7 @@ sudo ./uninstall.sh --purge      # 连镜像和归档一起删（不可恢复）
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | 空间兜底清理的触发阈值与目标 |
 | `TSF_CACHE` | 自动 | 缩略图 / 遥测 / 转码缓存目录 |
 
-OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量（如 `TSF_OTA_SOURCES`、`TSF_OTA_REPO`）或网页配置。完整变量表见 `docs/COMPATIBILITY.md` 第 8 节。
+OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量（如 `TSF_OTA_SOURCES`、`TSF_OTA_REPO`）或网页配置。完整变量表与系统基线见 `docs/SYSTEM.md`。
 
 网页 **⚙ 个性化** 有 9 个子页签：文件、锁车语音、涂装、推送、账号、语言、网页背景、品牌、更新。
 

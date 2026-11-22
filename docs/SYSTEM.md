@@ -6,15 +6,21 @@
 
 | 项目 | 实测值 |
 |---|---|
-| 主板 | Radxa ROCK 3A（RK3568，4× Cortex-A55） |
-| 内存 | 1.9 GiB 可用（2 GB 板载） |
-| 存储 | eMMC / microSD（系统）+ 虚拟 U 盘镜像（稀疏 exFAT） |
-| 无线网卡 | Intel Wi-Fi 6 AX200，`8086:2723`，驱动 `iwlwifi`，固件 `iwlwifi-cc-a0-77.ucode` |
+| 主板型号 | `Radxa ROCK 3A`（设备树 `model`；`compatible` = `radxa,rock3a` / `rockchip,rk3568`） |
+| 处理器 | RK3568，4× Cortex-A55（aarch64） |
+| 内存 | 2GB（1.9GiB 可用） |
+| 系统盘 | eMMC 58.3GB（`mmcblk0`，根分区 57.6GB，已用约 2.5GB） |
+| 数据盘 | USB 478GB（`sda1`，挂 `/mnt/tsf-storage`，存虚拟 U 盘镜像与归档） |
+| 无线网卡 | Intel Wi-Fi 6 AX200（PCIe `8086:2723`，驱动 `iwlwifi`，固件 `iwlwifi-cc-a0-77.ucode`） |
 | 蓝牙 | AX200 集成，USB `8087:0029`，控制器 `hci0` |
+| 有线网卡 | `end0` 千兆，DHCP |
 | 风扇 | ROCK 3A 3-pin PWM 风扇座（`pwm8 m0`，需 `rock3a-pwm8-fan` overlay） |
 | USB | USB3 OTG 口用于 Gadget（mass_storage）导出虚拟 U 盘 |
 
-> 换卡说明：原 MT7922 已拆除。`/etc/modprobe.d/tsf-blacklist-mt7921e.conf` 会屏蔽 `mt7921e/mt7921s/mt7921u/mt7922/mt76/mt76_connac_lib`，并已 `apt purge firmware-mediatek`，避免旧驱动残留导致换卡后系统卡死。
+**已使用接口**：USB3 OTG（接车机）、`end0`（有线网络）、AX200（WiFi STA + 2.4G 热点）、蓝牙、PWM 风扇座、eMMC（系统盘）、USB 数据盘（镜像/归档）。
+**未使用接口**：HDMI、USB Host、M.2、音频等本方案不依赖，保持空闲。
+
+> MAC 地址等唯一标识不写入仓库。换卡说明：原 MT7922 已拆除。`/etc/modprobe.d/tsf-blacklist-mt7921e.conf` 会屏蔽 `mt7921e/mt7921s/mt7921u/mt7922/mt76/mt76_connac_lib`，并已 `apt purge firmware-mediatek`，避免旧驱动残留导致换卡后系统卡死。
 
 ## 2. 系统与内核
 

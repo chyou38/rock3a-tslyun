@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Tesla 哨兵视频查看器 - 单文件, 纯标准库, 无依赖
 功能: 多路播放器(4路/6路自适应) / 时间线 / 皮肤上传 / 锁车语音上传(经归档同步写入车机U盘)
-访问: http://<f50-ip>/
+访问: http://<rock3a-ip>/
 """
 import base64
 import datetime
@@ -36,8 +36,7 @@ except ImportError:
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ---- 配置加载兜底 ----
-# OpenWrt procd 不会把 init.d 脚本里 export 的变量传给服务进程 (实测 /proc/PID/environ 为空),
-# 而 systemd 的 EnvironmentFile 会全量注入 —— 两边行为不一致会让"照 README 改 conf 不生效"。
+# systemd 的 EnvironmentFile 会注入 conf; 为兼容手动启动 (无 EnvironmentFile),
 # 在读取任何 TSF_* 之前, 把 conf 里尚未出现在环境变量中的项补进 os.environ。
 # 优先级: 显式环境变量 > /etc/tesla-sentry.conf > 代码默认值; 空值按"用默认"处理。
 def _load_conf(path="/etc/tesla-sentry.conf"):
@@ -57,7 +56,7 @@ def _load_conf(path="/etc/tesla-sentry.conf"):
 
 _load_conf()
 
-# 路径/端口优先取环境变量 (缺失时已由 _load_conf 从 conf 补齐), 便于装到非 F50 设备上时改归档区、端口等
+# 路径/端口优先取环境变量 (缺失时已由 _load_conf 从 conf 补齐), 便于改归档区、端口等
 ARCHIVE = os.environ.get("TSF_ARCHIVE", "/archive")
 SKIN_DIR = os.path.join(ARCHIVE, ".skins")
 AUDIO_Q = os.path.join(ARCHIVE, "boombox-queue")
@@ -5065,11 +5064,7 @@ def safe_archive_path(p):
 IMG = os.environ.get("TSF_IMG", "/root/teslacam.img")
 MNT = os.environ.get("TSF_MNT", "/tmp/teslamnt")
 LOOPDEV = os.environ.get("TSF_LOOP", "/dev/loop3")
-LOSETUP = os.environ.get("TSF_LOSETUP") or (
-    "/opt/mu300/busybox-bin/losetup"
-    if os.path.exists("/opt/mu300/busybox-bin/losetup")
-    else "losetup"  # 通用发行版走 PATH (util-linux)
-)
+LOSETUP = os.environ.get("TSF_LOSETUP") or "losetup"
 GADGET_DIR = os.environ.get("TSF_GADGET", "/sys/kernel/config/usb_gadget/g1")
 USB_AUTO_DETACH = 300  # 秒, 无操作自动恢复导出
 # 跨进程 U 盘互斥: 网页挂载(排他) / tesla-sync.sh(排他) / usb-selfheal.sh(排他) /
@@ -6971,11 +6966,9 @@ def active_skin():
 
 
 # ---------------- 多路合成导出 (ffmpeg) ----------------
-FFMPEG_BIN = os.environ.get("TSF_FFMPEG") or (
-    "/opt/mu300/ffmpeg/ffmpeg" if os.path.exists("/opt/mu300/ffmpeg/ffmpeg") else "ffmpeg")
-FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or (
-    "/opt/mu300/ffmpeg/ffprobe" if os.path.exists("/opt/mu300/ffmpeg/ffprobe") else "ffprobe")
-STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/mu300") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
+FFMPEG_BIN = os.environ.get("TSF_FFMPEG") or "ffmpeg"
+FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or "ffprobe"
+STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
 STITCH_JOBS = {}
 STITCH_LOCK = threading.Lock()
 # 视频流并发上限: 事件多的时候浏览器会一口气请求上百个预览, 不限流会拖死设备
@@ -6986,7 +6979,7 @@ MEDIA_ACTIVE = [0]        # 正在推送的视频流数量: 自动升级要等�
 PLAYBACK_SESSIONS = {}
 PLAYBACK_LOCK = threading.Lock()
 PLAYBACK_TTL = 30
-THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/mu300") + "/thumbs"
+THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/thumbs"
 THUMB_SEM = threading.BoundedSemaphore(2)
 THUMB_W = 400
 
@@ -7045,7 +7038,7 @@ def thumb_file(fp, ss_t=1.0):
 RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 500), "720p": (960, 720, 900)}  # 宽,高,kbps
 # 编码参数版本号: 参与缓存 key。v3: 远程默认 360p15, rkvdec+FFmpeg 混合转码; 其它档先降帧再缩放。
 RES_ENC_VER = "3"
-RES_DIR = os.environ.get("TSF_CACHE", "/opt/mu300") + "/res-cache"
+RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
 PREVIEW_MAX = 512 * 1024 * 1024
@@ -7573,8 +7566,8 @@ def _post_json(url, payload, timeout=12, headers=None):
 
 def _tls12():
     """给飞书 API 用的 SSLContext: 强制 TLS 1.2。
-    实测在 F50 的 4G 链路上 TLS 1.3 会随机丢/坏记录 (SSLV3_ALERT_BAD_RECORD_MAC, 约 1/3 概率),
-    同一请求降到 TLS 1.2 后 100% 成功, 所以对飞书固定用 1.2。"""
+    实测国内移动网络下 TLS 1.3 偶发丢/坏记录 (SSLV3_ALERT_BAD_RECORD_MAC),
+    同一请求降到 TLS 1.2 后稳定, 所以对飞书固定用 1.2。"""
     global _TLS_CTX
     if _TLS_CTX is None:
         c = ssl.create_default_context()
@@ -7798,7 +7791,7 @@ def _font_reset():
 
 
 def _wm_fontconf():
-    """给 ffmpeg 自带的 fontconfig 一个最小配置 (OpenWrt 上没有 /etc/fonts/fonts.conf,
+    """给 ffmpeg 自带的 fontconfig 一个最小配置 (精简系统上没有 /etc/fonts/fonts.conf,
     会导致 libass 的字体选择整个失效, 连矢量图形都不画)。返回配置文件路径。
     目录按实际字体位置写, FONT_DIR 不可写时退到 /tmp。"""
     d = _font_dir()
@@ -9081,7 +9074,7 @@ def _stitch_worker(job_id, paths, out_path, total):
 
 def start_stitch(cat, name, cams):
     """创建合成任务, 返回 (job_id, 错误信息)"""
-    # 本机 (F50) 整个系统跑在 loop 镜像上, 实测 ffmpeg 多路 1080p 解码+编码会触发
+    # 本机系统盘 IO 与内存有限, 实测 ffmpeg 多路 1080p 解码+编码会触发
     # 内核 soft/hard lockup -> panic=5 自动重启, 已用 2/4 路真实素材复现两次。
     # 前端默认走浏览器本机合成, 这里仅保留 TSF_STITCH=1 的实验开关。
     if os.environ.get("TSF_STITCH", "0") != "1":
@@ -9388,7 +9381,7 @@ def start_export(cat, name, cams, wm=True, q="720p", files=None):
 #   1 version, 2 gear(0P/1D/2R/3N), 3 frame_seq, 4 speed_mps, 5 油门%,
 #   6 方向盘角度, 7/8 左右转向灯, 9 刹车, 10 AP状态, 11/12 经纬度,
 #   13 航向, 14/15/16 三轴加速度
-TEL_DIR = os.environ.get("TSF_CACHE", "/opt/mu300") + "/tel-cache"
+TEL_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/tel-cache"
 TEL_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TEL_CONN", "1")))
 
 

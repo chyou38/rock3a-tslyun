@@ -13,9 +13,7 @@
 #
 # 可用环境变量覆盖: TSF_IMG / TSF_GADGET / TSF_LOOP / TSF_MNT
 
-BB=/opt/mu300/busybox-bin
-LOSETUP=$BB/losetup
-[ -x "$LOSETUP" ] || LOSETUP=losetup
+LOSETUP="${TSF_LOSETUP:-losetup}"
 
 find_gadget() {
     for d in /sys/kernel/config/usb_gadget/*/; do

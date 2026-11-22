@@ -1,5 +1,5 @@
-#!/bin/sh
-# Tesla Sentry F50 - 一键安装脚本
+﻿#!/bin/sh
+# Tesla Sentry Box (ROCK 3A) - 一键安装脚本
 # 用法: sudo ./install.sh [选项]
 #   --size GB        虚拟U盘容量, 默认 64
 #   --port PORT      网页端口, 默认 80
@@ -35,8 +35,14 @@ die() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 SRC_DIR=$(cd "$(dirname "$0")" && pwd)
 [ -f "$SRC_DIR/sentry-viewer.py" ] || die "找不到 sentry-viewer.py, 请在项目根目录运行"
 
+MODEL=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
+case "$MODEL" in
+    *"ROCK 3A"*) ;;
+    *) die "本脚本仅适配 Radxa ROCK 3A (RK3568), 当前主板: ${MODEL:-未知}" ;;
+esac
+
 PYTHON=$(command -v python3 || true)
-[ -n "$PYTHON" ] || die "需要 python3 (OpenWrt: opkg install python3-light)"
+[ -n "$PYTHON" ] || die "需要 python3 (apt install python3)"
 
 say "检查 USB Gadget 支持..."
 GADGET=""
@@ -73,15 +79,15 @@ if [ "$FREE_MB" != "?" ]; then
     fi
 fi
 
-# 缓存目录 (缩略图/遥测/合成临时文件): F50 沿用 /opt/mu300, 其它设备放安装目录下
-if [ -d /opt/mu300 ]; then CACHE_DIR=/opt/mu300; else CACHE_DIR="$TSF_DIR/cache"; fi
+# 缓存目录 (缩略图/遥测/合成临时文件): 固定在安装目录下
+CACHE_DIR="$TSF_DIR/cache"
 mkdir -p "$CACHE_DIR/thumbs" "$CACHE_DIR/tel-cache" 2>/dev/null || true
 
 # ffmpeg 探测: 缩略图与部分导出功能依赖, 缺了只是没有缩略图
-FFMPEG="$(command -v ffmpeg 2>/dev/null || echo /opt/mu300/ffmpeg/ffmpeg)"
-FFPROBE="$(command -v ffprobe 2>/dev/null || echo /opt/mu300/ffmpeg/ffprobe)"
+FFMPEG="$(command -v ffmpeg 2>/dev/null || true)"
+FFPROBE="$(command -v ffprobe 2>/dev/null || true)"
 if [ -x "$FFMPEG" ]; then say "ffmpeg: $FFMPEG"
-else echo "  [提示] 未找到 ffmpeg, 列表缩略图会缺失 (装一个即可: opkg/apt install ffmpeg)"; fi
+else echo "  [提示] 未找到 ffmpeg, 列表缩略图会缺失 (装一个即可: apt install ffmpeg)"; fi
 
 # ---------------- 1. 目录与文件 ----------------
 say "安装到 $TSF_DIR ..."
@@ -142,7 +148,7 @@ ls -lh "$IMG"
 # ---------------- 3. 配置 ----------------
 say "写入配置 $CONF ..."
 cat > "$CONF" <<EOF
-# Tesla Sentry F50 配置 (由 install.sh 生成)
+# Tesla Sentry Box (ROCK 3A) 配置 (由 install.sh 生成)
 TSF_DIR=$TSF_DIR
 TSF_IMG=$IMG
 TSF_ARCHIVE=$ARCHIVE
@@ -159,8 +165,7 @@ TSF_FFPROBE=$FFPROBE
 TSF_USB_LOCK=/tmp/tsf-usb.lock
 
 # ---- 归档清理 / 在线同步参数 (改完重启服务生效; 0 = 关闭对应策略) ----
-# 这些参数以前没写进 conf, OpenWrt 启动脚本又只导出固定变量,
-# 导致在 F50 上照 README 改清理窗口/保留天数完全不生效。
+# 这些参数写进 conf, 由程序启动时自行读取; 改完重启服务生效。
 TSF_RECENT_ROLL_MIN=60
 TSF_RECENT_KEEP_MIN=60
 # 归档默认按容量滚动: 剩余低于额度 10% 时从最旧事件删到剩余 15%。
@@ -215,76 +220,9 @@ EOF
 fi
 
 # ---------------- 4. 服务 ----------------
-if [ -f /etc/rc.common ]; then
-    say "安装 OpenWrt procd 服务 ..."
-    cat > /etc/init.d/tesla-gadget <<'EOF'
-#!/bin/sh /etc/rc.common
-START=99
-USE_PROCD=1
-start_service() {
-    set -a; [ -f /etc/tesla-sentry.conf ] && . /etc/tesla-sentry.conf; set +a
-    setsid /bin/sh "$TSF_DIR/tesla-gadget.sh" on </dev/null >/dev/null 2>&1 &
-}
-stop_service() {
-    set -a; [ -f /etc/tesla-sentry.conf ] && . /etc/tesla-sentry.conf; set +a
-    setsid /bin/sh "$TSF_DIR/tesla-gadget.sh" off </dev/null >/dev/null 2>&1 &
-}
-EOF
-    cat > /etc/init.d/tesla-viewer <<EOF
-#!/bin/sh /etc/rc.common
-START=99
-USE_PROCD=1
-start_service() {
-    # set -a 兼容会继承 shell 环境的 init; procd 不继承 export,
-    # 程序启动时会自己读 conf 补齐, 因此自定义清理/同步参数在 F50 上也能生效。
-    set -a; [ -f $CONF ] && . $CONF; set +a
-    procd_open_instance
-    procd_set_param command $PYTHON "\$TSF_DIR/sentry-viewer.py"
-    procd_set_param respawn 3600 5 0
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_close_instance
-}
-EOF
-    # 旧版服务名统一成 tesla-viewer, 避免两个 procd 实例抢 80
-    if [ -f /etc/init.d/sentry-viewer ]; then
-        /etc/init.d/sentry-viewer disable 2>/dev/null || true
-        rm -f /etc/init.d/sentry-viewer
-    fi
-    chmod +x /etc/init.d/tesla-gadget /etc/init.d/tesla-viewer
-    /etc/init.d/tesla-gadget enable
-    /etc/init.d/tesla-viewer enable
-
-    # 车机在线只读同步 (不挂载镜像, 车机无感, 新片段秒级进网页)
-    cat > /etc/init.d/tesla-live <<EOF
-#!/bin/sh /etc/rc.common
-START=99
-USE_PROCD=1
-start_service() {
-    set -a; [ -f $CONF ] && . $CONF; set +a
-    procd_open_instance
-    procd_set_param command $PYTHON "\$TSF_DIR/tesla-live-sync.py"
-    procd_set_param respawn 3600 5 0
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_close_instance
-}
-EOF
-    chmod +x /etc/init.d/tesla-live
-    /etc/init.d/tesla-live enable
-
-    # 归档定时任务 + U盘自愈(主机 eject 后自动重新导出)
-    mkdir -p /etc/crontabs
-    touch /etc/crontabs/root
-    sed -i '/tesla-sync.sh/d;/usb-selfheal.sh/d' /etc/crontabs/root 2>/dev/null || true
-    echo "*/10 * * * * /bin/sh $TSF_DIR/tesla-sync.sh >/dev/null 2>&1" >> /etc/crontabs/root
-    echo "*/2 * * * * /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1" >> /etc/crontabs/root
-    /etc/init.d/cron enable 2>/dev/null || true
-    /etc/init.d/cron restart 2>/dev/null || true
-
-elif [ -d /etc/systemd/system ]; then
-    say "安装 systemd 服务 ..."
-    cat > /etc/systemd/system/tesla-gadget.service <<EOF
+[ -d /etc/systemd/system ] || die "本脚本仅支持 systemd (Armbian / Debian 13); 其他 init 系统未适配"
+say "安装 systemd 服务 ..."
+cat > /etc/systemd/system/tesla-gadget.service <<EOF
 [Unit]
 Description=Tesla Sentry virtual USB drive
 After=local-fs.target
@@ -297,7 +235,7 @@ ExecStop=/bin/sh $TSF_DIR/tesla-gadget.sh off
 [Install]
 WantedBy=multi-user.target
 EOF
-    cat > /etc/systemd/system/sentry-viewer.service <<EOF
+cat > /etc/systemd/system/sentry-viewer.service <<EOF
 [Unit]
 Description=Tesla Sentry web viewer
 After=network.target tesla-gadget.service
@@ -310,7 +248,7 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-    cat > /etc/systemd/system/tesla-live.service <<EOF
+cat > /etc/systemd/system/tesla-live.service <<EOF
 [Unit]
 Description=Tesla Sentry live read-only sync (no mount)
 After=tesla-gadget.service
@@ -323,71 +261,21 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-    # 个人热点 / 自动策略 / 风扇温控 (unit 内路径按实际安装目录替换)
-    for u in tsf-hotspot.service tsf-ap-policy.service tsf-ap-policy.timer pwm-fan-control.service; do
-        sed "s|/opt/tesla-sentry|$TSF_DIR|g" "$SRC_DIR/systemd/$u" > "/etc/systemd/system/$u"
-    done
-    # hostapd 只在热点需要时由 tsf-ap.sh 拉起, 禁止开机抢跑 (旧版曾因此反复重启)
-    systemctl disable --now hostapd.service >/dev/null 2>&1 || true
-    command -v hostapd >/dev/null 2>&1 || \
-        echo "  [提示] 未安装 hostapd, 个人热点不可用 (apt install hostapd dnsmasq)"
-    mkdir -p /etc/cron.d
-    cat > /etc/cron.d/tesla-sentry <<EOF
+# 个人热点 / 自动策略 / 风扇温控 (unit 内路径按实际安装目录替换)
+for u in tsf-hotspot.service tsf-ap-policy.service tsf-ap-policy.timer pwm-fan-control.service; do
+    sed "s|/opt/tesla-sentry|$TSF_DIR|g" "$SRC_DIR/systemd/$u" > "/etc/systemd/system/$u"
+done
+# hostapd 只在热点需要时由 tsf-ap.sh 拉起, 禁止开机抢跑 (旧版曾因此反复重启)
+systemctl disable --now hostapd.service >/dev/null 2>&1 || true
+command -v hostapd >/dev/null 2>&1 || echo "  [提示] 未安装 hostapd, 个人热点不可用 (apt install hostapd dnsmasq)"
+mkdir -p /etc/cron.d
+cat > /etc/cron.d/tesla-sentry <<EOF
 */10 * * * * root /bin/sh $TSF_DIR/tesla-sync.sh >/dev/null 2>&1
 */2 * * * * root /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1
 EOF
-    systemctl daemon-reload
-    systemctl enable tesla-gadget.service sentry-viewer.service tesla-live.service \
-        pwm-fan-control.service tsf-ap-policy.timer >/dev/null 2>&1
-else
-    # 通用分支: OpenRC / BusyBox init / runit / s6 等, 用 rc.local 拉起 + crontab 定时
-    say "未识别的 init 系统, 安装为通用启动脚本 (rc.local + crontab) ..."
-    cat > "$TSF_DIR/tsf-start.sh" <<EOF
-#!/bin/sh
-# 通用启动入口 (rc.local / 手动 / supervisor 均可调用)
-set -a; [ -f $CONF ] && . $CONF; set +a
-sh "\$TSF_DIR/tesla-gadget.sh" on >/dev/null 2>&1
-pgrep -f tesla-live-sync.py >/dev/null 2>&1 || setsid $PYTHON "\$TSF_DIR/tesla-live-sync.py" </dev/null >>"\$TSF_DIR/tesla-live.log" 2>&1 &
-sleep 1
-pgrep -f sentry-viewer.py >/dev/null 2>&1 || setsid $PYTHON "\$TSF_DIR/sentry-viewer.py" </dev/null >>"\$TSF_DIR/sentry-viewer.log" 2>&1 &
-EOF
-    chmod +x "$TSF_DIR/tsf-start.sh"
-
-    # rc.local
-    if [ -f /etc/rc.local ]; then
-        grep -q 'tsf-start.sh' /etc/rc.local || \
-            sed -i "/^exit 0/i $TSF_DIR/tsf-start.sh" /etc/rc.local
-    else
-        cat > /etc/rc.local <<EOF
-#!/bin/sh -e
-$TSF_DIR/tsf-start.sh
-exit 0
-EOF
-        chmod +x /etc/rc.local
-    fi
-
-    # 定时任务: BusyBox crontab (/etc/crontabs/root) 优先, 否则系统 /etc/crontab
-    if [ -d /etc/crontabs ]; then
-        CRONF=/etc/crontabs/root
-        touch "$CRONF"
-        sed -i '/tesla-sync.sh/d;/usb-selfheal.sh/d' "$CRONF" 2>/dev/null || true
-        echo "*/10 * * * * /bin/sh $TSF_DIR/tesla-sync.sh >/dev/null 2>&1" >> "$CRONF"
-        echo "*/2 * * * * /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1" >> "$CRONF"
-        (rc-service cron restart || /etc/init.d/cron restart) >/dev/null 2>&1 || true
-    elif [ -f /etc/crontab ]; then
-        sed -i '/tesla-sync.sh/d;/usb-selfheal.sh/d' /etc/crontab 2>/dev/null || true
-        echo "*/10 * * * * root /bin/sh $TSF_DIR/tesla-sync.sh >/dev/null 2>&1" >> /etc/crontab
-        echo "*/2 * * * * root /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1" >> /etc/crontab
-        (rc-service crond restart || service cron restart) >/dev/null 2>&1 || true
-    else
-        echo "  [提示] 没有找到 cron, 请自行把下面两行加到定时任务:"
-        echo "    */10 * * * * /bin/sh $TSF_DIR/tesla-sync.sh"
-        echo "    */2  * * * * /bin/sh $TSF_DIR/usb-selfheal.sh"
-    fi
-    echo "  [提示] 已写入 /etc/rc.local 与 crontab; 若系统用 OpenRC/runit," \
-         "可把 $TSF_DIR/tsf-start.sh 包一层 service 以获得开机自启与守护"
-fi
-
+systemctl daemon-reload
+systemctl enable tesla-gadget.service sentry-viewer.service tesla-live.service \
+    pwm-fan-control.service tsf-ap-policy.timer >/dev/null 2>&1
 # ---------------- 5. 启动 ----------------
 say "启动虚拟U盘 ..."
 sh "$TSF_DIR/tesla-gadget.sh" on || echo "  [警告] 虚拟U盘启动失败, 见 $TSF_DIR/tesla-gadget.log"
@@ -417,20 +305,12 @@ if ! ls "$TSF_DIR"/fonts/*.ttf "$TSF_DIR"/fonts/*.otf >/dev/null 2>&1; then
 fi
 
 say "启动查看器 ..."
-if [ -f /etc/rc.common ]; then
-    /etc/init.d/tesla-viewer restart >/dev/null 2>&1 || true
-elif [ -d /etc/systemd/system ]; then
-    systemctl restart sentry-viewer.service || true
-fi
+systemctl restart sentry-viewer.service || true
 
 say "启动实时同步 (车机无感读取) ..."
-if [ -f /etc/rc.common ]; then
-    /etc/init.d/tesla-live restart >/dev/null 2>&1 || true
-elif [ -d /etc/systemd/system ]; then
-    systemctl restart tesla-live.service || true
-else
-    sh "$TSF_DIR/tsf-start.sh"    # 通用分支: 一次拉起全部
-fi
+systemctl restart tesla-live.service || true
+systemctl restart pwm-fan-control.service || true
+systemctl restart tsf-ap-policy.timer || true
 sleep 2
 
 IP=$(ip route 2>/dev/null | awk '/default/{print $3; exit}')
@@ -438,7 +318,11 @@ say "完成!"
 echo
 echo "  虚拟U盘镜像 : $IMG ($(du -sh "$IMG" 2>/dev/null | cut -f1) 实际占用)"
 echo "  归档区      : $ARCHIVE"
-echo "  查看器      : http://<设备IP>:$PORT"
+if [ "$PORT" = "80" ]; then
+    echo "  查看器      : http://<设备IP>"
+else
+    echo "  查看器      : http://<设备IP>:$PORT"
+fi
 [ -n "$IP" ] && echo "  当前网关    : $IP"
 echo
 echo "  下一步: 把设备插到车上 -> 车机提示格式化USB -> 确认 -> 哨兵正常录制"

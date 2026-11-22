@@ -2,17 +2,15 @@
 
 [中文](README.md) | **English**
 
-**A virtual Sentry USB drive · multi-camera synchronized playback · SEI driving telemetry · watermarked export — running on any USB Gadget device.**
+**A virtual Sentry USB drive · multi-camera synchronized playback · SEI driving telemetry · watermarked export — for Radxa ROCK 3A (RK3568) only.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
 [![Zero third-party deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](#features)
 
-Plug a small Linux box (travel router / dev board / OpenWrt router) into the glovebox USB port instead of the factory USB drive: the car keeps recording as usual, and you open a web page over the box's Wi-Fi to review 4 / 6 synchronized camera angles, read the SEI telemetry embedded in the video bitstream frame by frame (gear / speed / accelerator / brake / steering angle / turn signals / Autopilot / GPS), and export clips with a driving-info watermark burned in.
+Plug a Radxa ROCK 3A (RK3568, 2GB) into the glovebox USB port instead of the factory USB drive: the car keeps recording as usual, and you open a web page over the box's Wi-Fi to review 4 / 6 synchronized camera angles, read the SEI telemetry embedded in the video bitstream frame by frame (gear / speed / accelerator / brake / steering angle / turn signals / Autopilot / GPS), and export clips with a driving-info watermark burned in.
 
-No USB Device mode? That works too — most x86 boxes, NAS and software routers can run it: copy `TeslaCam/` onto the machine and start `TSF_ARCHIVE=/path python3 sentry-viewer.py` for a pure web viewer. Capabilities fall into three tiers — **A full deployment / B semi-automatic archiving / C viewer only** — see [Supported devices](#supported-devices).
-
-The repository name comes from the reference device, the **ZTE F50 storage edition** (fully tested end to end). The project itself is not tied to that model · [deployment overview](docs/overview.png)
+This repository is maintained for exactly one hardware/OS combination: **Armbian 26.8.1 trixie (Debian 13) / kernel 6.18.44-current-rockchip64 / Intel AX200 Wi-Fi card**. Other boards, routers or NAS devices are not adapted; they will not install or will lack features, and are out of scope.
 
 ---
 
@@ -39,17 +37,28 @@ The repository name comes from the reference device, the **ZTE F50 storage editi
 
 ---
 
-## Supported devices
+## Supported device (ROCK 3A only)
 
-| Tier | Requirements | What you get | Typical hardware |
-|---|---|---|---|
-| **A · Full** | USB Device (Gadget) + kernel exFAT + root | Virtual USB drive + transparent live sync + every web feature | ZTE F50, travel routers, dev boards |
-| **B · Semi-automatic** | Any Linux + storage | Copy `TeslaCam/` into the archive yourself; web features work as usual | NAS, software routers, old laptops |
-| **C · Viewer only** | Python 3.7+ | Point it at an existing archive (NFS / SMB is fine) and use it as a front end | Any machine, x86 included |
+This repository is maintained and verified for the **Radxa ROCK 3A (RK3568)** only. Other boards, routers or NAS devices are not adapted; they will not install or will lack features, and are out of scope.
 
-**Verified**: ZTE F50 storage edition (Unisoc T760 / aarch64 / 1.4G RAM / 256G eMMC, OpenWrt 25.12.5, kernel 7.2.9, `25100000.dwc3`) runs the full stack, with a 2022 Model Y (4 cameras) as the head unit. OTG boards such as the Raspberry Pi Zero 2 W are expected to work but need a self-check; x86 / NAS can only run tiers B and C.
+| Item | Measured on this unit |
+|---|---|
+| Board | Radxa ROCK 3A (RK3568, 4× Cortex-A55) |
+| RAM | 2GB (1.9GiB usable) |
+| System storage | 58.3GB eMMC (`mmcblk0`, 57.6GB root partition) |
+| Data storage | 478GB USB drive (`sda1`, mounted at `/mnt/tsf-storage`, holds image + archive) |
+| OS | Armbian 26.8.1 trixie (Debian 13) |
+| Kernel | 6.18.44-current-rockchip64 (aarch64) |
+| Wi-Fi card | Intel Wi-Fi 6 AX200 (`8086:2723`, iwlwifi, firmware `iwlwifi-cc-a0-77`) |
+| Bluetooth | AX200 integrated (`8087:0029`, hci0) |
+| Ethernet | `end0` gigabit, DHCP |
+| Fan | On-board 3-pin PWM (`pwm8 m0`, needs the `rock3a-pwm8-fan` overlay) |
+| USB | USB3 OTG port as Gadget, connected to the car |
 
-**Tier A hard requirements**: `/sys/class/udc/` non-empty, configfs + `USB_F_MASS_STORAGE`, kernel exFAT, loop / losetup, root, and a car USB port that can supply power. Recommend ≥32G storage (image plus archive), Python 3.7+ (the viewer has zero third-party dependencies). ffmpeg only affects thumbnails and transcoding — missing it does not block installation.
+**Used**: USB3 OTG (car), `end0` (Ethernet), AX200 (Wi-Fi STA + 2.4G hotspot), Bluetooth, PWM fan header, eMMC (system), USB data drive (image/archive).
+**Unused**: HDMI, USB host ports, M.2 and audio are not required and stay idle.
+
+**Hard requirements**: non-empty `/sys/class/udc/`, configfs + `USB_F_MASS_STORAGE`, kernel exFAT, loop / losetup, root, and a car USB port that can supply power. Debian 13 / Armbian systemd is required. Python 3.7+ (the viewer has zero third-party dependencies). ffmpeg only affects thumbnails and transcoding — missing it does not block installation.
 
 Check before installing (read-only, changes nothing):
 
@@ -58,7 +67,7 @@ sh scripts/tsf-check.sh          # item-by-item UDC / configfs / exFAT / Python 
 sh scripts/tsf-check.sh --json   # machine-readable, for scripts
 ```
 
-Full device list, per-OS compatibility and the feature-degradation matrix are in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+System versions, package versions, service states and network/hotspot configuration are documented in [docs/SYSTEM.md](docs/SYSTEM.md).
 
 ---
 
@@ -68,16 +77,16 @@ Full device list, per-OS compatibility and the feature-degradation matrix are in
 
 ```sh
 git clone https://github.com/chyou38/rock3a-tslyun.git
-cd tesla-sentry-f50
+cd rock3a-tslyun
 sudo ./install.sh                                             # 64G image + /archive + port 80
 sudo ./install.sh --size 120 --port 80 --archive /archive    # custom options (image ≤128G)
 ```
 
-The installer will: check kernel gadget / exFAT / Python → create the sparse image and **pre-populate exFAT + the `TeslaCam` directory** → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → register the `tesla-gadget` / `tesla-viewer` / `tesla-live` services (OpenWrt procd, systemd or rc.local) plus two cron jobs → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts.
+The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → create the sparse image and **pre-populate exFAT + the `TeslaCam` directory** → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts.
 
 **2. Plug it into the car**: insert into the glovebox USB port — the head unit recognizes it, shows the capacity and starts recording. The image already contains `TeslaCam/{RecentClips,SavedClips,SentryClips,EncryptedClips}`, so **there is no "Format USB device" step**. If the car still asks, confirming is harmless — it just rebuilds the same structure.
 
-**3. Open the web UI**: `http://<device-ip>:80` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Video comes from the 15-second live sync, so you don't wait for scheduled archiving.
+**3. Open the web UI**: `http://<device-ip>` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Video comes from the 15-second live sync, so you don't wait for scheduled archiving.
 
 **Uninstall**
 
