@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.49"
+APP_VERSION = "2.8.50"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -746,6 +746,15 @@ def load_settings():
                 d["archive_low_water_pct"] = max(0, min(int(j.get("archive_low_water_pct", 10) or 0), 50))
             except (TypeError, ValueError):
                 d["archive_low_water_pct"] = 10
+            # 预缓冲策略: 播放停止后恢复分钟数与预解码秒数 (之前没读回, 保存后又被默认值盖掉)
+            try:
+                d["prewarm_resume_min"] = max(1, min(int(j.get("prewarm_resume_min") or 2), 1440))
+            except (TypeError, ValueError):
+                d["prewarm_resume_min"] = 2
+            try:
+                d["preview_sec"] = max(5, min(int(j.get("preview_sec") or 30), 120))
+            except (TypeError, ValueError):
+                d["preview_sec"] = 30
             st = str(j.get("ui_style") or "")
             if st in ("default", "apple", "claude", "pixel"):
                 d["ui_style"] = st
@@ -977,6 +986,7 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .arc-clean-head b { font-size:12.5px; color:var(--text); }
 .arc-clean-row { display:flex; align-items:center; gap:8px; margin-top:7px; flex-wrap:wrap; }
 .arc-select { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 8px; font-size:12px; outline:none; }
+.arc-input { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 8px; font-size:12px; outline:none; width:78px; }
 .arc-btn { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer; }
 .arc-btn:hover { border-color:var(--muted2); }
 .arc-btn-danger { background:#e8443f; border-color:#e8443f; color:#fff; }
@@ -1935,13 +1945,16 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <div class="arc-clean-head"><b>预缓冲</b><span class="hint" id="pw-policy-state">—</span></div>
         <div class="arc-clean-row">
           <span class="hint">播放停止后恢复</span>
-          <select id="pw-resume" class="arc-select">
-            <option value="10">10 分钟</option>
-            <option value="20">20 分钟</option>
-            <option value="30">30 分钟</option>
-          </select>
+          <input id="pw-resume" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric">
+          <span class="hint">分钟（1–1440，可自行填写）</span>
           <button class="arc-btn" onclick="savePrewarmPolicy()">保存</button>
           <button class="arc-btn" onclick="prewarmNow()">立即预缓冲</button>
+        </div>
+        <div class="arc-clean-row">
+          <span class="hint">预解码时长</span>
+          <input id="pw-prev" class="arc-input" type="number" min="5" max="120" step="1" inputmode="numeric">
+          <span class="hint">秒</span>
+          <button class="arc-btn" onclick="savePrewarmPolicy()">确定</button>
         </div>
         <div class="hint">播放视频时自动暂停列表缩略图与 10 秒预缓冲，停止播放后按所选时间恢复。</div>
       </div>
@@ -3162,6 +3175,8 @@ async function loadPrewarmPolicy() {
     const j = await (await fetch('/api/prewarm_policy', {cache: 'no-store'})).json();
     const sel = document.getElementById('pw-resume');
     if (sel) sel.value = String(j.resume_min || 10);
+    const pv = document.getElementById('pw-prev');
+    if (pv) pv.value = String(j.preview_sec || 60);
     const st = document.getElementById('pw-policy-state');
     if (st) st.textContent = j.paused
       ? ('已暂停 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复')
@@ -3169,11 +3184,18 @@ async function loadPrewarmPolicy() {
   } catch (e) {}
 }
 async function savePrewarmPolicy() {
-  const mins = parseInt(document.getElementById('pw-resume').value || '10', 10);
+  let mins = parseInt(document.getElementById('pw-resume').value || '2', 10);
+  if (!mins || mins < 1) mins = 1;
+  if (mins > 1440) mins = 1440;
+  document.getElementById('pw-resume').value = String(mins);
+  let psec = parseInt((document.getElementById('pw-prev') || {}).value || '60', 10);
+  if (!psec || psec < 5) psec = 5;
+  if (psec > 120) psec = 120;
+  if (document.getElementById('pw-prev')) document.getElementById('pw-prev').value = String(psec);
   try {
     const j = await (await fetch('/api/prewarm_policy', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins})})).json();
-    toast(j.ok ? ('✅ 已保存：停止播放 ' + mins + ' 分钟后恢复预缓冲') : '❌ 保存失败');
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins, preview_sec: psec})})).json();
+    toast(j.ok ? ('✅ 已保存：预解码 ' + psec + ' 秒 · 停止播放 ' + mins + ' 分钟后恢复') : '❌ 保存失败');
     loadPrewarmPolicy();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -3238,7 +3260,7 @@ function waitVariantMulti(vid, baseUrl, cl) {
   };
   setTimeout(tick, 400);
 }
-const PREV_SEC = 15;   // 预缓冲秒数, 与后端 PREVIEW_SECONDS 一致
+const PREV_SEC = __PREVIEW_SEC__;   // 预解码秒数, 由服务端设置注入
 function renderClip() {
   const ev = cur;
   const seekTo = pendSeek;   // 本次渲染消费掉定位点, 之后换语言等重渲染不会又跳一次
@@ -3266,7 +3288,8 @@ function renderClip() {
     cell.dataset.cam = v.cam || '';
     const vid = document.createElement('video');
     /* 画质按用户选择: 先拿同档位的 15 秒预缓冲秒开, 播到 14 秒无缝切完整档;
-       预缓冲没命中时后端先给原画, 后台转目标档 */
+       预缓冲没命中时后端先给原画 + 后台马上转, 这里轮询到预览就原地热切,
+       不再出现「选了 360p 却整段放原画」 */
     vid._baseUrl = v.url;
     vid._fullUrl = qUrl(v.url);
     let vsrc = vid._fullUrl;
@@ -3274,8 +3297,29 @@ function renderClip() {
       vsrc += (vsrc.indexOf('?') >= 0 ? '&' : '?') + 'preview=' + PREV_SEC;
       vid._wantPreview = true;
       vid.addEventListener('loadedmetadata', () => {
-        if (vid.duration && vid.duration <= PREV_SEC + 1.5) vid._preview = true;
-        else vid._wantPreview = false;
+        if (!vid.duration) return;
+        if (vid.duration <= PREV_SEC + 1.5) { vid._preview = true; return; }
+        vid._wantPreview = false;   // 拿到的是原画: 预览还没转好, 轮询等它
+        const qAt = curQ;
+        let tries = 0;
+        const hot = () => {
+          if (!vid.isConnected || vid._preview || curQ !== qAt) return;
+          if (++tries > 40) return;                       // 最多等 60 秒, 之后保持原画
+          variantStateOf(vid, (d) => {
+            if (!vid.isConnected || vid._preview || curQ !== qAt) return;
+            if (!(d && d.ok && d.preview)) { setTimeout(hot, 1500); return; }
+            const sep = vid._fullUrl.indexOf('?') >= 0 ? '&' : '?';
+            const keep = vid.currentTime || 0;
+            const wasPlaying = !vid.paused;
+            vid._preview = true; vid._wantPreview = true;
+            vid.src = vid._fullUrl + sep + 'preview=' + d.preview;
+            vid.addEventListener('loadedmetadata', () => {
+              try { vid.currentTime = Math.min(keep, Math.max(0, (vid.duration || 0) - 0.2)); } catch (e) {}
+              if (wasPlaying) tryPlay(vid);
+            }, { once: true });
+          });
+        };
+        setTimeout(hot, 1000);
       });
     }
     vid.src = vsrc;
@@ -4220,6 +4264,18 @@ function swapToFull(v, ct) {
     tryPlay(v);
   }, { once: true });
 }
+function swapToPreview(v, sec, ct) {
+  /* 换到更长的预解码档: 保持进度续播, 避免短档播完就循环 */
+  v.loop = false;
+  v._preview = true;
+  v._wantPreview = true;
+  const sep = v._fullUrl.indexOf('?') >= 0 ? '&' : '?';
+  v.src = v._fullUrl + sep + 'preview=' + sec;
+  v.addEventListener('loadedmetadata', () => {
+    try { v.currentTime = Math.min(ct, Math.max(0, (v.duration || 0) - 0.2)); } catch (e) {}
+    tryPlay(v);
+  }, { once: true });
+}
 /* 从 15 秒预缓冲切到完整档: 先确认完整档真的转好了再切, 免得掉回 4K 原画在公网上卡死。
    等待期间让预缓冲循环播放, 画面不黑不冻。 */
 function switchPreviewVideos(target) {
@@ -4233,8 +4289,10 @@ function switchPreviewVideos(target) {
       variantStateOf(v, (d) => {
         if (!d || !d.ok) { swapToFull(v, ct); return; }
         if (d.full) { swapToFull(v, ct); return; }
+        /* 完整档没好, 但后台已经补出更长的预解码档: 先换长的续播, 不再原地循环短档 */
+        if (d.preview && d.preview > (v.duration || 0) + 2) { swapToPreview(v, d.preview, ct); return; }
         if (tries === 0) v.loop = true;     // 等完整档期间循环预缓冲
-        if (tries < 6) { setTimeout(() => goFull(tries + 1), 1500); return; }
+        if (tries < 20) { setTimeout(() => goFull(tries + 1), 1500); return; }
         swapToFull(v, ct);
       });
     };
@@ -7563,12 +7621,29 @@ PLAY_HOLD_SECONDS = 600
 _PREWARM_MIN_CACHE = {"ts": 0, "v": 10}
 
 
+_PREVIEW_SEC_CACHE = {"ts": 0, "v": 30}
+
+
+def preview_seconds():
+    """预解码时长: 设置项 preview_sec, 5-120 秒, 预缓冲与点播共用同一个值, 避免档位错位。"""
+    if time.time() - _PREVIEW_SEC_CACHE["ts"] < 10:
+        return _PREVIEW_SEC_CACHE["v"]
+    try:
+        v = int(load_settings().get("preview_sec", PREVIEW_SECONDS) or PREVIEW_SECONDS)
+    except (TypeError, ValueError, OSError):
+        v = PREVIEW_SECONDS
+    v = max(5, min(v, 120))
+    _PREVIEW_SEC_CACHE["ts"] = time.time()
+    _PREVIEW_SEC_CACHE["v"] = v
+    return v
+
+
 def prewarm_resume_min():
-    """播放停止后多少分钟恢复后台预缓冲: 10/20/30, 默认 10。"""
+    """播放停止后多少分钟恢复后台预缓冲: 默认 2 (清缓存重建期尽快补齐; 播放中仍立即让路)"""
     if time.time() - _PREWARM_MIN_CACHE["ts"] < 10:
         return _PREWARM_MIN_CACHE["v"]
     try:
-        v = int(load_settings().get("prewarm_resume_min", 10) or 10)
+        v = int(load_settings().get("prewarm_resume_min", 2) or 2)
     except (TypeError, ValueError):
         v = 10
     v = max(1, min(v, 30))
@@ -7647,7 +7722,7 @@ def thumb_file(fp, ss_t=1.0):
 # 導致 480p/360p 轉碼永遠失敗、播放器只能一直發 7Mbps 原畫(遠端必卡)。實測見 docs。
 # RK3568 4xA55 實測: 軟解+縮放+編碼 比 rkvdec 硬解+管道搬運更快(硬解全分辨率 NV12 過管道 sys 開銷大),
 # 故遠端檔位走軟解; 縮放用 bilinear 比 lanczos 快 ~23%(60s 前視 80s->62s), 畫質差異在 500kbps 預覽下可忽略。
-RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 500), "720p": (960, 720, 900)}  # 宽,高,kbps
+RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 900), "720p": (960, 720, 1500)}  # 宽,高,kbps
 # 播放帧率: 用户要求流畅优先(2026-11-23), 360p/480p 从 15 提到 24, 与 720p 一致。
 # 实测 360p 10s 预缓冲 15→24fps 仅慢 6% (4.73s→5.03s), 代价可忽略。
 # 帧率参与缓存 key: 改帧率自动换 key, 旧缓存由 _variant_play 兜底读取, 后台逐步升级。
@@ -9202,15 +9277,42 @@ def _variant_ready(fp, qv, seconds=0):
 
 def _variant_play(fp, qv, seconds=0):
     """播放读取: 新帧率缓存优先, 没有就兜底旧帧率缓存, 升级期点开不等待。
+    带指纹(.meta)的缓存必须档位/尺寸对得上才认, 防止张冠李戴的缓存被当成目标档播出去。
     后台预缓冲/按需转码仍按新 key 判定缺失, 逐步把旧档升级掉。"""
+    exp_w = RES_SCALE.get(qv, (0,))[0]
     for leg in (False, True):
         p = _variant_path(fp, qv, seconds, legacy=leg)
         try:
-            if p and os.path.getsize(p) > 0:
-                return p
+            if not p or os.path.getsize(p) <= 0:
+                continue
+            m = _read_meta(p)
+            if m and (m.get("qv") != qv or (exp_w and int(m.get("w") or 0) > exp_w + 4)):
+                continue        # 档位或尺寸不符: 当没建过, 让调用方重建
+            return p
         except OSError:
             pass
     return ""
+
+
+def _read_meta(p):
+    try:
+        with open(p + ".meta", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_meta(p, qv, seconds, fps):
+    """记录实际产物指纹: 档位/秒数/宽高/帧率。宽高现算, 容错不阻断转码。"""
+    try:
+        sz = probe_size(p)
+        dur = probe_duration(p) or 0
+        with open(p + ".meta", "w", encoding="utf-8") as f:
+            json.dump({"qv": qv, "sec": seconds, "fps": fps,
+                       "w": sz[0] if sz else 0, "h": sz[1] if sz else 0,
+                       "dur": round(dur, 2)}, f)
+    except OSError:
+        pass
 
 
 def _variant_drop_legacy(fp, qv, seconds=0):
@@ -9351,6 +9453,7 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
             if rc == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                 os.replace(tmp, out)
                 _variant_drop_legacy(fp, qv, seconds)
+                _write_meta(out, qv, seconds, fps)
                 if seconds:
                     try:
                         with open(out + ".src", "w", encoding="utf-8") as sf:
@@ -9547,8 +9650,8 @@ _PREWARM_PICK_LOCK = threading.Lock()
 # 其次手动保存, 最后行车记录。白天预缓冲与夜间硬解补档共用此顺序。
 CAT_PRIO = {"SentryClips": 0, "SavedClips": 1, "RecentClips": 2}
 LIVE_HOT = {}                           # fp -> 最近一次实时预览请求时间; 120s 无请求自动过期
-PREVIEW_SECONDS = 15      # 播放时按需生成的预览长度(用户要求 15 秒)
-PREWARM_SEC = 10          # 后台全量预缓冲沿用 10 秒: 已有 800+ 缓存不重转, 播放时长的预览会按需补
+PREVIEW_SECONDS = 30     # 预解码默认 30 秒, 设置里可改 5-120
+PREWARM_SEC = 30         # 后台预解码沿用同一目标长度, 旧 10/15 秒档仍兜底可播
 
 
 def _preview_pick(qs=None, skip=None):
@@ -9591,7 +9694,7 @@ def _preview_pick(qs=None, skip=None):
                         continue
                     if time.time() - mt < 120:
                         continue
-                    if _variant_ready(fp, qv, PREWARM_SEC):
+                    if _variant_ready(fp, qv, preview_seconds()):
                         continue
                     rank = 0 if fp in LIVE_HOT else CAT_PRIO.get(cat, 3)
                     if best is None or (rank, -mt) < (best[0], -best[1]):
@@ -9647,12 +9750,12 @@ def prewarm_loop():
 
             threading.Thread(target=_watch_play, daemon=True).start()
             try:
-                get_variant(fp, qv, slot=False, seconds=PREWARM_SEC, cancel=job_cancel)
+                get_variant(fp, qv, slot=False, seconds=preview_seconds(), cancel=job_cancel)
                 if job_cancel.is_set():
                     time.sleep(5)
-                elif _variant_ready(fp, qv, PREWARM_SEC):
+                elif _variant_ready(fp, qv, preview_seconds()):
                     PREWARM["done"] += 1
-                    PREWARM["last"] = "%s/%s · %s · 10s" % (cat, name, qv)
+                    PREWARM["last"] = "%s/%s · %s · %ds" % (cat, name, qv, preview_seconds())
                     PREWARM["skip"].pop((fp, qv), None)
                 else:
                     PREWARM["skip"][(fp, qv)] = PREWARM["skip"].get((fp, qv), 0) + 1
@@ -9769,6 +9872,7 @@ def _hw_preview(fp, qv, seconds, cancel):
             except OSError:
                 pass
             _variant_drop_legacy(fp, qv, seconds)
+            _write_meta(outp, qv, seconds, fps)
             return True
         return False
     finally:
@@ -9824,17 +9928,17 @@ def night_hw_loop():
             try:
                 hw_ok = False
                 try:
-                    hw_ok = _hw_preview(fp, qv, PREWARM_SEC, job_cancel)
+                    hw_ok = _hw_preview(fp, qv, preview_seconds(), job_cancel)
                 except Exception:
                     hw_ok = False
                 if not hw_ok and not job_cancel.is_set():
                     # 硬解不可用/失败: 回退软解, 保证补档进度
-                    get_variant(fp, qv, slot=False, seconds=PREWARM_SEC, cancel=job_cancel)
+                    get_variant(fp, qv, slot=False, seconds=preview_seconds(), cancel=job_cancel)
                 if job_cancel.is_set():
                     time.sleep(5)
-                elif _variant_ready(fp, qv, PREWARM_SEC):
+                elif _variant_ready(fp, qv, preview_seconds()):
                     NIGHT_HW["done"] += 1
-                    NIGHT_HW["last"] = "%s/%s · %s · 10s · %s" % (cat, name, qv, "硬解" if hw_ok else "软解")
+                    NIGHT_HW["last"] = "%s/%s · %s · %ds · %s" % (cat, name, qv, preview_seconds(), "硬解" if hw_ok else "软解")
                     NIGHT_HW["skip"].pop((fp, qv), None)
                 else:
                     NIGHT_HW["skip"][(fp, qv)] = NIGHT_HW["skip"].get((fp, qv), 0) + 1
@@ -11316,7 +11420,8 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             html = (HTML.replace("__CAT_NAMES__", json.dumps(CAT_NAMES, ensure_ascii=False))
                     .replace("__I18N__", I18N_JS).replace("__LANGS__", LANG_JS)
-                    .replace("__APP_VER__", APP_VERSION))
+                    .replace("__APP_VER__", APP_VERSION)
+                    .replace("__PREVIEW_SEC__", str(preview_seconds())))
             self._send(200, html.encode())
             return
         elif path == "/api/fan":
@@ -11531,17 +11636,18 @@ class Handler(BaseHTTPRequestHandler):
             ok = bool(fp) and fp.startswith(ARCHIVE) and os.path.isfile(fp)
             if ok and qv in RES_SCALE:
                 pv = 0
-                for sec in (PREVIEW_SECONDS, 10):
+                for sec in (preview_seconds(), 15, 10):
                     if _variant_play(fp, qv, sec):
                         pv = sec
                         break
                 self._json({"ok": True, "full": bool(_variant_play(fp, qv)),
-                            "preview": pv, "sec": PREVIEW_SECONDS})
+                            "preview": pv, "sec": preview_seconds()})
             else:
-                self._json({"ok": False, "full": False, "preview": 0, "sec": PREVIEW_SECONDS})
+                self._json({"ok": False, "full": False, "preview": 0, "sec": preview_seconds()})
         elif path == "/api/prewarm_policy":
             remain = max(0, prewarm_resume_min() * 60 - (time.time() - PLAY_HOLD["ts"]))
             self._json({"resume_min": prewarm_resume_min(),
+                        "preview_sec": preview_seconds(),
                         "paused": play_hold_active(), "remain": int(remain),
                         "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
                         "last": PREWARM["last"], "qs": PREWARM_QS,
@@ -11751,7 +11857,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         # 长的预览优先, 已缓存的短预览兜底, 免得重建全部缓存
                         hit = 0
-                        for sec in (want_preview_sec, PREVIEW_SECONDS, 10):
+                        for sec in (want_preview_sec, preview_seconds(), 15, 10):
                             pp = _variant_play(src, qv, sec) if sec else ""
                             if pp:
                                 hit = sec
@@ -11759,10 +11865,33 @@ class Handler(BaseHTTPRequestHandler):
                         if hit:
                             fp = pp
                             variant_note = "preview%d" % hit
+                            if want_preview_sec > hit:
+                                # 已用短档顶上: 把长档排到空闲时补(不抢正在播放的 CPU)
+                                spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec,
+                                              wait_for=(src, qv, hit), urgent=False)
                         else:
-                            spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec, urgent=True)
-                            # 不阻塞: 预览还没好就先给原画, 保证点开立刻有画面; 后台继续转
-                            variant_note = "orig"
+                            # 目标档还没转好时, 先用已缓存的低档预览顶上, 不让用户干看原画
+                            alt = ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ())
+                            for fq in alt:
+                                for sec in (want_preview_sec, preview_seconds(), 15, 10):
+                                    pp = _variant_play(src, fq, sec) if sec else ""
+                                    if pp:
+                                        break
+                                if pp:
+                                    fp = pp
+                                    variant_note = "%s_p%d" % (fq, sec)
+                                    break
+                            if not variant_note:
+                                variant_note = "orig"
+                            # 先建 15 秒短档保证尽快有画面, 长档等短档建好后空闲补
+                            short = 15 if want_preview_sec > 15 else want_preview_sec
+                            if short < want_preview_sec:
+                                spawn_variant(src, qv, owner=sid or None, seconds=short, urgent=True)
+                                spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec,
+                                              wait_for=(src, qv, short), urgent=False)
+                            else:
+                                spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec, urgent=True)
+                            # 不阻塞: 目标档后台转, 已缓存的低档先顶上; 转好后前端热切换到目标档
                     # 真的在播放(带 sid)就顺带把完整档也排上, 但要等预览先转完, 不抢 CPU
                     if sid and not _variant_ready(src, qv):
                         spawn_variant(src, qv, owner=sid,
@@ -11947,12 +12076,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "msg": "参数错误"}, 400)
                 return
             try:
-                mins = max(1, min(int(body.get("resume_min", 10) or 10), 30))
+                mins = max(1, min(int(body.get("resume_min", 10) or 10), 1440))
             except (TypeError, ValueError):
                 mins = 10
-            save_settings({"prewarm_resume_min": mins})
+            try:
+                psec = max(5, min(int(body.get("preview_sec", preview_seconds()) or preview_seconds()), 120))
+            except (TypeError, ValueError):
+                psec = preview_seconds()
+            save_settings({"prewarm_resume_min": mins, "preview_sec": psec})
             _PREWARM_MIN_CACHE["ts"] = 0   # 立刻生效, 不等缓存
-            self._json({"ok": True, "resume_min": mins, "msg": "已保存"})
+            _PREVIEW_SEC_CACHE["ts"] = 0
+            self._json({"ok": True, "resume_min": mins, "preview_sec": psec, "msg": "已保存"})
             return
         if p == "/api/uptest":
             # 上行测速: 收下浏览器发来的随机字节, 回包让前端算耗时
