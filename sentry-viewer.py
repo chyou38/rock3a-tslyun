@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.48"
+APP_VERSION = "2.8.49"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -728,13 +728,24 @@ BRAND_LOGO_B64 = (
 
 
 def load_settings():
-    d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": ""}
+    d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
+         "archive_retention_days": 0, "archive_low_water_pct": 10}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
         if isinstance(j, dict):
             if "auto_update" in j:
                 d["auto_update"] = bool(j["auto_update"])
+            # 归档自动清理: 保留天数, 0=永不; 非法值一律当 0
+            try:
+                d["archive_retention_days"] = max(0, min(int(j.get("archive_retention_days") or 0), 3650))
+            except (TypeError, ValueError):
+                d["archive_retention_days"] = 0
+            # 归档区剩余低于该百分比时从最旧一天开始清理; 0=关闭
+            try:
+                d["archive_low_water_pct"] = max(0, min(int(j.get("archive_low_water_pct", 10) or 0), 50))
+            except (TypeError, ValueError):
+                d["archive_low_water_pct"] = 10
             st = str(j.get("ui_style") or "")
             if st in ("default", "apple", "claude", "pixel"):
                 d["ui_style"] = st
@@ -958,6 +969,17 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
    (行距刻意压紧, 收起时约 40px, 手机首屏别占太多) */
 .storwrap { padding:8px 16px 0; }
 .storcard { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:8px 13px 9px; box-shadow:var(--shadow); }
+.pwwrap { margin:0 0 10px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:8px 13px 9px; box-shadow:var(--shadow); }
+#mainusage { margin:8px 16px 0; }
+/* 归档自动清理: 与占用/进度同卡, 用细线分隔 */
+.arc-clean { margin-top:9px; padding-top:9px; border-top:1px solid var(--line2); }
+.arc-clean-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.arc-clean-head b { font-size:12.5px; color:var(--text); }
+.arc-clean-row { display:flex; align-items:center; gap:8px; margin-top:7px; flex-wrap:wrap; }
+.arc-select { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 8px; font-size:12px; outline:none; }
+.arc-btn { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer; }
+.arc-btn:hover { border-color:var(--muted2); }
+.arc-btn-danger { background:#e8443f; border-color:#e8443f; color:#fff; }
 .storrow { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:4px; }
 .storrow + .storbar { margin-bottom:7px; }
 .storbar:last-child { margin-bottom:0; }
@@ -1139,6 +1161,10 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .vcell .cload { position:absolute; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px; color:#c6cdd4; background:rgba(10,13,18,.6); pointer-events:none; }
 .vcell .cload.err { color:#ff6b66; }
 .vcell .cload .spin { width:14px; height:14px; border:2px solid #3a4450; border-top-color:#10b981; border-radius:50%; animation:cspin .8s linear infinite; }
+/* 调试: 每格左上角的播放详细信息 (档位/分辨率/帧率/缓冲/丢帧/网速) */
+.vcell .vdbg { position:absolute; left:6px; top:6px; max-width:calc(100% - 12px); font-size:10.5px; line-height:1.45;
+  color:#dbe6f0; background:rgba(10,13,18,.76); border:1px solid rgba(255,255,255,.14); border-radius:6px;
+  padding:3px 6px; pointer-events:none; white-space:normal; font-variant-numeric:tabular-nums; z-index:4; }
 @keyframes cspin { to { transform:rotate(360deg); } }
 .infocard { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:14px 16px 10px; max-width:980px; width:100%; margin:0 auto; box-shadow:var(--shadow); }
 .ic-top { display:flex; align-items:center; gap:10px; }
@@ -1578,8 +1604,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <header><h1><img class="blogo" id="blogo" src="/api/brand/logo" alt=""><span id="bname">TSL哨兵云盘</span></h1><span class="sub" id="stat"></span>
 <span id="live" title="车机在线只读同步状态" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:4px 10px;white-space:nowrap"><span id="livedot" style="width:7px;height:7px;border-radius:50%;background:#5f6b76"></span><span id="livetxt">同步状态</span></span>
 <nav class="tabs" id="tabs"></nav><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
-<nav class="storwrap" id="storwrap" style="display:none">
-  <div class="storcard" id="storcard">
+<nav class="storwrap" id="storwrap">
+  <div class="storcard open" id="storcard">
 <div class="storrow"><span class="storlab">虚拟U盘</span><span class="storval" id="storvusb"></span></div>
 <div class="storbar"><i id="storvusbbar"></i></div>
 <div class="storextra" id="storextra">
@@ -1721,6 +1747,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <button class="stab" id="st-skin" onclick="stab('skin')"><svg class="ic"><use href="#i-image"/></svg>网页背景</button>
     <button class="stab" id="st-fan" onclick="stab('fan')"><svg class="ic"><use href="#i-gear"/></svg>风扇设置</button>
     <button class="stab" id="st-brand" onclick="stab('brand')"><svg class="ic"><use href="#i-brand"/></svg>品牌</button>
+    <button class="stab" id="st-debug" onclick="stab('debug')"><svg class="ic"><use href="#i-gear"/></svg>杂项设置</button>
     <button class="stab" id="st-update" onclick="stab('update')"><svg class="ic"><use href="#i-refresh"/></svg>更新</button>
   </div>
   <div id="tab-net" style="display:none">
@@ -1893,6 +1920,61 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       </div>
     </div>
     <div id="arch-hint" class="hint" style="display:none">归档区（外接 U 盘）：查看器视频副本、皮肤和文件中转；文件保存在外接盘，不占用系统盘。</div>
+    <div class="pwwrap" id="pwwrap" style="display:none">
+      <div class="storrow"><span class="storlab">系统盘（eMMC）占用</span><span class="storval" id="pwsys">读取中…</span></div>
+      <div class="storbar"><i id="pwsysbar"></i></div>
+      <div class="storrow"><span class="storlab">预缓冲占用（30G 额度）</span><span class="storval" id="pwcach">读取中…</span></div>
+      <div class="storbar"><i id="pwcachbar"></i></div>
+      <div class="storrow"><span class="storlab">归档区占用</span><span class="storval" id="pwarc">读取中…</span></div>
+      <div class="storbar"><i id="pwarcbar"></i></div>
+      <div class="storrow"><span class="storlab">视频 10 秒预缓冲</span><span class="storval" id="pwprev">读取中…</span></div>
+      <div class="storbar"><i id="pwprevbar"></i></div>
+      <div class="storrow"><span class="storlab">列表缩略图</span><span class="storval" id="pwthumb">读取中…</span></div>
+      <div class="storbar"><i id="pwthumbbar"></i></div>
+      <div class="arc-clean">
+        <div class="arc-clean-head"><b>预缓冲</b><span class="hint" id="pw-policy-state">—</span></div>
+        <div class="arc-clean-row">
+          <span class="hint">播放停止后恢复</span>
+          <select id="pw-resume" class="arc-select">
+            <option value="10">10 分钟</option>
+            <option value="20">20 分钟</option>
+            <option value="30">30 分钟</option>
+          </select>
+          <button class="arc-btn" onclick="savePrewarmPolicy()">保存</button>
+          <button class="arc-btn" onclick="prewarmNow()">立即预缓冲</button>
+        </div>
+        <div class="hint">播放视频时自动暂停列表缩略图与 10 秒预缓冲，停止播放后按所选时间恢复。</div>
+      </div>
+      <div class="arc-clean">
+        <div class="arc-clean-head"><b>归档自动清理</b><span class="hint" id="arc-clean-last">尚未清理</span></div>
+        <div class="arc-clean-row">
+          <span class="hint">保留</span>
+          <select id="arc-ret" class="arc-select">
+            <option value="0">永不清理</option>
+            <option value="7">7 天</option>
+            <option value="14">14 天</option>
+            <option value="30">30 天</option>
+            <option value="60">60 天</option>
+            <option value="90">90 天</option>
+            <option value="180">180 天</option>
+          </select>
+          <button class="arc-btn" onclick="saveArchiveRetention()">保存</button>
+          <button class="arc-btn arc-btn-danger" onclick="archiveCleanupNow()">立即清理一次</button>
+        </div>
+        <div class="arc-clean-row">
+          <span class="hint">剩余低于</span>
+          <select id="arc-water" class="arc-select">
+            <option value="0">关闭</option>
+            <option value="10">10%</option>
+            <option value="15">15%</option>
+            <option value="20">20%</option>
+            <option value="30">30%</option>
+          </select>
+          <span class="hint">新归档一条就清最旧一条</span>
+        </div>
+        <div class="hint" id="arc-clean-msg"></div>
+      </div>
+    </div>
     <div id="purge-box" class="fm-purge">
       <button onclick="purgeTeslaCam()"><svg class="ic"><use href="#i-trash"/></svg>清空 TeslaCam 全部录像</button>
       <span class="hint">仅删除 TeslaCam/ 内所有视频与事件文件夹，保留目录结构；Boombox、Wraps 等其他根目录不受影响。需先连接 U 盘。</span>
@@ -1972,6 +2054,32 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint" style="margin-top:12px"><span>用户名</span>: <b id="pw-user">admin</b></div>
     <div class="hint">要改用户名请编辑设备上 /opt/tesla-sentry/auth.conf 的 user=</div>
     <div class="updbtns" style="margin-top:16px"><button class="mini logout" onclick="doLogout()">退出登录</button></div>
+  </div>
+  <div id="tab-debug" style="display:none">
+    <div class="updrow"><span class="updk">默认画质</span>
+      <select id="qmode" class="arc-select" onchange="setQMode(this.value)">
+        <option value="auto">按网络自动</option>
+        <option value="orig">固定 原画</option>
+        <option value="720p">固定 720p</option>
+        <option value="480p">固定 480p</option>
+        <option value="360p">固定 360p</option>
+      </select>
+    </div>
+    <div class="hint" id="qmode-state">—</div>
+    <div class="hint" style="color:#8b96a3">自动模式: 局域网(192.168/10.x 等)打开就是原画, 公网或 Tailscale 打开就是 360p。</div>
+    <div class="updrow"><span class="updk">视频播放详细信息</span>
+      <label class="updauto" style="margin:0" title="开启后每个视频格左上角叠加显示实际播放参数"><span>显示</span>
+        <input type="checkbox" id="dbg-play" onchange="setDbgPlay(this.checked)">
+      </label>
+    </div>
+    <div class="hint">开启后每个视频格左上角显示: 实际档位、分辨率、实时帧率、缓冲秒数、丢帧数、播放进度、当前网速(浏览器上报)。关闭立即隐藏。</div>
+    <div class="updrow"><span class="updk">当前选择的档位</span><b id="dbg-q">—</b></div>
+    <div class="updrow"><span class="updk">网络类型</span><b id="dbg-net-kind">—</b>
+      <button class="mini" id="speedbtn" onclick="speedTestBoth()">测试上下行</button>
+    </div>
+    <div class="hint" id="speed-result">—</div>
+    <div class="hint" id="dbg-net">—</div>
+    <div class="hint" style="color:#8b96a3">提示: 档位完全按你选的处理, 多路不再自动降档; 6 路同时开高画质会占满上行, 想省流量可手动选 360p。</div>
   </div>
   <div id="tab-update" style="display:none">
     <div class="updrow"><span class="updk">当前版本</span><b id="upd-cur">—</b></div>
@@ -2150,19 +2258,182 @@ if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListen
    非局域网首次打开默认 360p, 由设备生成低码率缓存后传输。
    两种网络分别记住手动选择, VPN/域名访问不可靠时不强行改档, 仍可由用户切换。 */
 const Q_LIST = [['orig', '原画'], ['720p', '720p'], ['480p', '480p'], ['360p', '360p']];
-const isLanNet = /^(100\.96\.|192\.168\.|10\.|127\.)/.test(location.hostname) || location.hostname === 'localhost';
+const _host = location.hostname;
+/* 局域网直连(192.168/10.x/172.16-31/本机) 默认原画; Tailscale(100.64-127) 等远程一律默认 360p */
+const isLanNet = _host === 'localhost' || /^127\./.test(_host) || /^192\.168\./.test(_host)
+  || /^10\./.test(_host) || /^172\.(1[6-9]|2\d|3[01])\./.test(_host);
 const Q_NET_MODE = isLanNet ? 'lan' : 'wan';
 const Q_STORE_KEY = 'tsfq4-' + Q_NET_MODE;
-let curQ = localStorage.getItem(Q_STORE_KEY) || (isLanNet ? 'orig' : '360p');
+/* 默认画质策略: auto=按网络(局域网原画/公网360p), 也可以固定某一档 */
+const Q_MODE_KEY = 'tsfq_mode';
+let qMode = localStorage.getItem(Q_MODE_KEY) || 'auto';
+const Q_MODE_DEFAULT = {auto: (isLanNet ? 'orig' : '360p')};
+let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAULT.auto : qMode);
+/* 旧版本可能把已下线的 240p 存进浏览器, 这里兜底纠正回可用档位, 避免请求不存在的档 */
+if (!Q_LIST.some(x => x[0] === curQ)) { curQ = isLanNet ? 'orig' : '360p'; localStorage.setItem(Q_STORE_KEY, curQ); }
+/* 档位完全按用户选择走, 多路不再偷偷降档; 想省流量自己选 360p */
+let multiMode = false;
+function effQ() { return curQ; }
+/* 当前访问走的是哪条链路: 本机 / 局域网 / 远程(Tailscale) / 远程 */
+function netKind() {
+  const h = location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1') return '本机';
+  if (/^192\.168\./.test(h) || /^10\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return '局域网';
+  const m = h.match(/^100\.(\d+)\./);
+  if (m) { const n = +m[1]; if (n >= 64 && n <= 127) return '远程 Tailscale'; }
+  return '远程';
+}
+/* 调试开关: 每个视频格左上角叠加播放详细信息, 存在本机浏览器 */
+const DBG_KEY = 'tsf_dbg_play';
+let dbgPlay = localStorage.getItem(DBG_KEY) === '1';
+function dbgLoad() {
+  const cb = document.getElementById('dbg-play');
+  if (cb) cb.checked = dbgPlay;
+  const q = document.getElementById('dbg-q');
+  if (q) q.textContent = qName(curQ);
+  const qm = document.getElementById('qmode');
+  if (qm) qm.value = qMode;
+  const qs = document.getElementById('qmode-state');
+  if (qs) qs.textContent = qModeLabel();
+  const k = document.getElementById('dbg-net-kind');
+  if (k) {
+    const kn = netKindSrv === 'lan' ? '局域网' : (netKindSrv === 'tailscale' ? '远程 Tailscale' : (netKindSrv ? '公网' : '检测中'));
+    k.textContent = kn;
+  }
+  const n = document.getElementById('dbg-net');
+  if (n) {
+    const c = navigator.connection || {};
+    n.textContent = '访问地址 ' + location.hostname + ' · 类型 ' + (c.effectiveType || '—')
+      + ' · 实测下行 ' + (netSpeed ? netSpeed.toFixed(1) + 'Mbps' : '测速中…') + (c.rtt ? ' · RTT ' + c.rtt + 'ms' : '');
+  }
+}
+function setDbgPlay(on) {
+  dbgPlay = !!on;
+  localStorage.setItem(DBG_KEY, on ? '1' : '0');
+  document.querySelectorAll('.vdbg').forEach(d => { d.style.display = on ? '' : 'none'; });
+  if (on) measureSpeed();
+  toast(on ? '已开启视频播放详细信息' : '已关闭视频播放详细信息');
+}
+/* 真实下行测速: 从盒子拉 512KB 实测, 不用浏览器那个不准的估算值 */
+let netSpeed = 0, netSpeedBusy = false;
+async function measureSpeed() {
+  if (netSpeedBusy) return;
+  netSpeedBusy = true;
+  try {
+    const t0 = performance.now();
+    const r = await fetch('/api/speedtest?bytes=524288&t=' + Date.now(), {cache: 'no-store'});
+    const b = await r.arrayBuffer();
+    const dt = (performance.now() - t0) / 1000;
+    if (dt > 0.01) netSpeed = (b.byteLength * 8 / 1e6) / dt;
+  } catch (e) {}
+  netSpeedBusy = false;
+  dbgLoad();
+}
+setInterval(() => { if (dbgPlay) measureSpeed(); }, 60000);
+/* 持续测速: 在 sec 秒内不停拉数据, 用总字节/总耗时算平均 Mbps */
+async function measureSpeedTimed(sec, onTick) {
+  const t0 = performance.now();
+  let bytes = 0;
+  while (performance.now() - t0 < sec * 1000) {
+    try {
+      const r = await fetch('/api/speedtest?bytes=524288&t=' + Date.now(), {cache: 'no-store'});
+      const b = await r.arrayBuffer();
+      bytes += b.byteLength;
+    } catch (e) { break; }
+    if (bytes > 300 * 1024 * 1024) break;
+    if (onTick) onTick((performance.now() - t0) / 1000);
+  }
+  const dt = (performance.now() - t0) / 1000;
+  return (dt > 0.05 && bytes) ? (bytes * 8 / 1e6) / dt : 0;
+}
+/* 上行测速: 在 sec 秒内不停往盒子发小块, 按总字节/总耗时算上行 Mbps */
+async function measureUpTimed(sec, onTick) {
+  const n = 262144;
+  const buf = new Uint8Array(n);
+  for (let i = 0; i < n; i += 8) buf[i] = (i * 2654435761) & 255;
+  const t0 = performance.now();
+  let bytes = 0;
+  while (performance.now() - t0 < sec * 1000) {
+    try {
+      const r = await fetch('/api/uptest?t=' + Date.now(), {
+        method: 'POST', cache: 'no-store',
+        headers: {'Content-Type': 'application/octet-stream'}, body: buf
+      });
+      if (!r.ok) break;
+      await r.text();
+      bytes += n;
+    } catch (e) { break; }
+    if (onTick) onTick((performance.now() - t0) / 1000);
+  }
+  const dt = (performance.now() - t0) / 1000;
+  return (dt > 0.05 && bytes) ? (bytes * 8 / 1e6) / dt : 0;
+}
+/* 一键测速: 下行 5 秒 + 上行 5 秒, 共 10 秒后出最终结果 */
+async function speedTestBoth() {
+  const btn = document.getElementById('speedbtn');
+  const out = document.getElementById('speed-result');
+  if (btn) { btn.disabled = true; btn.textContent = '测速中…'; }
+  netSpeedBusy = true;   // 期间不让 60 秒定时器抢带宽
+  const tick = (label) => (s) => {
+    if (out) out.textContent = label + ' ' + s.toFixed(1) + 's / 5s';
+  };
+  if (out) out.textContent = '下行测速中 0.0s / 5s';
+  let down = 0, up = 0;
+  try { down = await measureSpeedTimed(5, tick('下行测速中')); } catch (e) {}
+  if (down) netSpeed = down;
+  if (out) out.textContent = '上行测速中 0.0s / 5s';
+  try { up = await measureUpTimed(5, tick('上行测速中')); } catch (e) {}
+  if (out) out.textContent = '下行 ' + (down ? down.toFixed(1) : '—') + ' Mbps · 上行 '
+    + (up ? up.toFixed(1) : '—') + ' Mbps（各测 5 秒）';
+  if (btn) { btn.disabled = false; btn.textContent = '测试上下行'; }
+  netSpeedBusy = false;
+  dbgLoad();
+}
 /* 已提前提交过后台转码的 (分类+画质+事件列表) 组合, 避免 10 秒轮询重复 POST */
 let prekicked = new Set();
 /* 苹果设备: 合成改走设备端 (Safari 的 MediaRecorder 只能出 webm, 微信不认) */
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-if (!Q_LIST.some(x => x[0] === curQ)) curQ = isLanNet ? 'orig' : '360p';
+if (!Q_LIST.some(x => x[0] === curQ)) curQ = (qMode === 'auto' ? (isLanNet ? 'orig' : '360p') : qMode);
+if (!Q_LIST.some(x => x[0] === curQ)) curQ = 'orig';
+/* 服务端按来源 IP 判断局域网/公网, 自动模式据此选默认档 */
+let netKindSrv = '';
+function applyNetDefault(kind) {
+  netKindSrv = kind || '';
+  if (qMode !== 'auto') return;
+  const want = kind === 'lan' ? 'orig' : '360p';
+  if (want !== curQ) {
+    curQ = want;
+    try { localStorage.setItem(Q_STORE_KEY, want); } catch (e) {}
+    renderQSel();
+    if (cur) renderClip();
+  }
+}
+async function probeNetKind() {
+  try {
+    const j = await (await fetch('/api/net_kind', {cache: 'no-store'})).json();
+    applyNetDefault(j.kind);
+    dbgLoad();
+  } catch (e) {}
+}
+/* 设置页里手动选择默认画质策略 */
+function setQMode(mode) {
+  qMode = mode;
+  try { localStorage.setItem(Q_MODE_KEY, mode); } catch (e) {}
+  if (mode === 'auto') probeNetKind();
+  else if (Q_LIST.some(x => x[0] === mode)) setQuality(mode);
+  toast('✅ 默认画质: ' + (mode === 'auto' ? '按网络自动选择' : qName(mode)));
+  dbgLoad();
+}
+function qModeLabel() {
+  if (qMode !== 'auto') return '固定 ' + qName(qMode);
+  return '按网络自动 · ' + (netKindSrv === 'lan' ? '局域网 → 原画' : (netKindSrv ? '公网 → 360p' : '检测中…'));
+}
+function qName(q) { return q === 'orig' ? '原画' : q; }
 function qUrl(u) {
-  if (curQ === 'orig') return u;
-  let x = u + '?q=' + curQ;
+  const q = effQ();
+  if (q === 'orig') return u;
+  let x = u + '?q=' + q;
   if (playbackSid) x += '&sid=' + encodeURIComponent(playbackSid);
   return x;
 }
@@ -2175,7 +2446,7 @@ function sendPlaybackBeat() {
   if (!playbackSid) return;
   try {
     fetch('/api/playback/beat', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({sid: playbackSid, q: curQ, paths: playbackPaths()}), keepalive: true}).catch(() => {});
+      body: JSON.stringify({sid: playbackSid, q: effQ(), paths: playbackPaths()}), keepalive: true}).catch(() => {});
   } catch (e) {}
 }
 function startPlaybackSession() {
@@ -2454,6 +2725,7 @@ async function refreshLive() {
       el.style.width = pct.toFixed(1) + '%';
       el.style.background = storColor(pct);
     };
+    /* 归档首页恢复存储卡: 归档区占用/总占用/温度·CPU·内存; 虚拟U盘行已隐藏, 只留在「车机U盘」子页 */
     sw.style.display = '';
     // 虚拟U盘: 卷内实际写入 / 镜像标称容量
     // (img_real 是镜像在宿主盘上的预分配占用, 几乎等于标称容量, 永远 100% 不直观)
@@ -2464,6 +2736,11 @@ async function refreshLive() {
     // 归档区: 已归档 / 用户分配额度; 未设额度才回退到已归档+盘剩余
     const arcTot = dk.arc_total > 0 ? dk.arc_total : (dk.arc_used || 0) + (dk.arc_free || 0);
     tset('storarc', dk.arc_used, arcTot, 'storarcbar');
+    /* 归档区子页的占用卡: 与顶部存储卡同源, 只展示归档区/整盘占用 */
+    if (document.getElementById('pwarc')) tset('pwarc', dk.arc_used, arcTot, 'pwarcbar');
+    if (document.getElementById('pwtot')) tset('pwtot', dk.disk_used, dk.disk_total, 'pwtotbar');
+    if (document.getElementById('muarc')) tset('muarc', dk.arc_used, arcTot, 'muarcbar');
+    if (document.getElementById('mutot')) tset('mutot', dk.disk_used, dk.disk_total, 'mutotbar');
     const ia = document.getElementById('storarc');
     if (ia) ia.title = t('归档已用 / 分配额度；物理盘容量与剩余空间请看总占用');
     // 总占用: 整盘已用 / 整盘容量 (三行统一按 storColor 的占用比例取色)
@@ -2820,24 +3097,161 @@ function openPlayer(ev) {
 let kicked = new Set();
 function kickGroup(ix) {
   const c = curClips[ix];
-  if (!c || curQ === 'orig') return;
-  const tag = curQ + ' ' + c.key + ' ' + camSel;
+  const q = effQ();                 // 多路时自动压到最高 360p
+  if (!c || q === 'orig') return;
+  const tag = q + ' ' + c.key + ' ' + camSel;
   if (kicked.has(tag)) return;
   kicked.add(tag);
-  /* 单路模式只预转被选中的那一路, 其他方位等用户点按钮再说 */
-  const vids = camSel === 'all' ? camSort(c.vids)
+  /* 6 路全览时只预转前 2 路: 一次把六路全塞进转码队列会占满 4 核, 连正在播的画面都跟着卡;
+     其余几路等播放时按需转, 谁先看谁先转。 */
+  const vids = camSel === 'all' ? camSort(c.vids).slice(0, 2)
                                 : c.vids.filter(v => (v.cam || '') === camSel);
   const paths = vids.map(v => v.url);
   if (!paths.length) return;
   try { fetch('/api/kick', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({paths: paths, q: curQ, sid: playbackSid})}).catch(() => {}); } catch (e) {}
+    body: JSON.stringify({paths: paths, q: q, sid: playbackSid})}).catch(() => {}); } catch (e) {}
 }
+/* 归档页进度: 系统盘占用 + 10 秒预缓冲(360p/480p/720p) + 列表缩略图 */
+async function pollPrewarm() {
+  try {
+    const r = await fetch('/api/prewarm_stats', {cache: 'no-store'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const fsz = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + 'GB' : Math.round(n / 1048576) + 'MB';
+    const pp = d.preview_total ? Math.min(100, Math.round(d.preview_done * 100 / d.preview_total)) : 0;
+    const tp = d.thumb_total ? Math.min(100, Math.round(d.thumb_done * 100 / d.thumb_total)) : 0;
+    const sp = d.sys_total ? Math.min(100, Math.round(d.sys_used * 100 / d.sys_total)) : 0;
+    const cp = d.cache_limit ? Math.min(100, Math.round(d.cache_used * 100 / d.cache_limit)) : 0;
+    const pv = document.getElementById('pwprev'), pb = document.getElementById('pwprevbar');
+    const tv = document.getElementById('pwthumb'), tb = document.getElementById('pwthumbbar');
+    const sv = document.getElementById('pwsys'), sb = document.getElementById('pwsysbar');
+    const cv = document.getElementById('pwcach'), cb = document.getElementById('pwcachbar');
+    if (pv) pv.textContent = d.preview_done + ' / ' + d.preview_total + ' · ' + pp + '%';
+    if (pb) pb.style.width = pp + '%';
+    if (tv) tv.textContent = d.thumb_done + ' / ' + d.thumb_total + ' · ' + tp + '%';
+    if (tb) tb.style.width = tp + '%';
+    if (sv) sv.textContent = fsz(d.sys_used) + ' / ' + fsz(d.sys_total) + ' · ' + sp + '%';
+    if (sb) { sb.style.width = sp + '%'; sb.style.background = storColor(sp); }
+    if (cv) cv.textContent = fsz(d.cache_used) + ' / ' + fsz(d.cache_limit) + ' · ' + cp + '%';
+    if (cb) { cb.style.width = cp + '%'; cb.style.background = storColor(cp); }
+  } catch (e) {}
+}
+setInterval(pollPrewarm, 5000);
+pollPrewarm();
+probeNetKind();   // 让服务端判断当前是局域网还是公网, 自动模式下据此选默认画质
+if (dbgPlay) measureSpeed();   // 开了播放详情就马上测一次下行
+/* 归档自动清理: 设置保留天数 + 立即清理; 数据来自 settings.json */
+async function loadArchiveRetention() {
+  try {
+    const d = await (await fetch('/api/archive_retention', {cache: 'no-store'})).json();
+    const sel = document.getElementById('arc-ret');
+    if (sel) sel.value = String(d.days || 0);
+    const wat = document.getElementById('arc-water');
+    if (wat) wat.value = String(d.low_water_pct == null ? 10 : d.low_water_pct);
+    const last = document.getElementById('arc-clean-last');
+    if (last) last.textContent = d.last ? ('上次清理 ' + new Date(d.last * 1000).toLocaleString()) : '尚未清理';
+    const msg = document.getElementById('arc-clean-msg');
+    if (msg) msg.textContent = (d.free_pct != null ? ('归档区剩余 ' + d.free_pct + '% · ') : '') +
+      (d.msg || ('归档 ' + d.files + ' 个视频 · ' + (d.used / 1073741824).toFixed(1) + ' GB'));
+  } catch (e) {}
+  loadPrewarmPolicy();
+}
+/* 预缓冲策略: 播放时自动暂停, 停止播放后按 10/20/30 分钟恢复; 也可以立即恢复 */
+async function loadPrewarmPolicy() {
+  try {
+    const j = await (await fetch('/api/prewarm_policy', {cache: 'no-store'})).json();
+    const sel = document.getElementById('pw-resume');
+    if (sel) sel.value = String(j.resume_min || 10);
+    const st = document.getElementById('pw-policy-state');
+    if (st) st.textContent = j.paused
+      ? ('已暂停 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复')
+      : '运行中';
+  } catch (e) {}
+}
+async function savePrewarmPolicy() {
+  const mins = parseInt(document.getElementById('pw-resume').value || '10', 10);
+  try {
+    const j = await (await fetch('/api/prewarm_policy', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins})})).json();
+    toast(j.ok ? ('✅ 已保存：停止播放 ' + mins + ' 分钟后恢复预缓冲') : '❌ 保存失败');
+    loadPrewarmPolicy();
+  } catch (e) { toast('❌ 保存失败'); }
+}
+async function prewarmNow() {
+  try {
+    const j = await (await fetch('/api/prewarm_now', {method: 'POST'})).json();
+    toast(j.ok ? '✅ 已立即恢复预缓冲' : '❌ 操作失败');
+    loadPrewarmPolicy();
+  } catch (e) { toast('❌ 操作失败'); }
+}
+async function saveArchiveRetention() {
+  const days = parseInt(document.getElementById('arc-ret').value || '0', 10);
+  const water = parseInt(document.getElementById('arc-water').value || '0', 10);
+  try {
+    const j = await (await fetch('/api/archive_retention', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: days, low_water_pct: water})})).json();
+    toast(j.ok ? '✅ 已保存，后台每 6 小时按此清理' : '❌ 保存失败');
+    loadArchiveRetention();
+  } catch (e) { toast('❌ 保存失败'); }
+}
+async function archiveCleanupNow() {
+  if (!confirm('按当前保留天数清理归档区？删除的事件不可恢复。')) return;
+  toast('⏳ 正在清理...');
+  try {
+    const j = await (await fetch('/api/archive_cleanup', {method: 'POST'})).json();
+    toast(j.ok ? ('✅ ' + j.msg) : '❌ 清理失败');
+    loadArchiveRetention(); refreshLive();
+  } catch (e) { toast('❌ 清理失败'); }
+}
+/* 多路同看: 直接等目标档(最高 360p), 有更低替代档先播; 不再让六格各自拉原画把上行打满。 */
+function waitVariantMulti(vid, baseUrl, cl) {
+  /* 多路全览不再先拉 6 路原画(那是 40Mbps 级别), 最高只等 360p; 没就绪先显示生成中,
+     有更低替代档先播。等太久就提示改单路看, 不偷偷回原画。 */
+  let tries = 0, done = false;
+  const q = effQ();
+  const swap = (url) => {
+    const t0 = vid.currentTime || 0, wasPlaying = !vid.paused;
+    vid.src = url; vid.load();
+    vid.addEventListener('loadedmetadata', () => {
+      try { if (t0 > 0.2) vid.currentTime = t0; } catch (e) {}
+      if (wasPlaying) vid.play().catch(() => {});
+    }, {once: true});
+    cl.style.display = 'none';
+  };
+  cl.innerHTML = '<span class="spin"></span><span>' + t('生成') + ' ' + q + '…</span>';
+  const tick = async () => {
+    if (done || !vid.isConnected) return;
+    let note = '';
+    try {
+      const r = await fetch(baseUrl + '?q=' + q +
+        (playbackSid ? '&sid=' + encodeURIComponent(playbackSid) : '') + '&probe=1',
+        {headers: {Range: 'bytes=0-0'}, cache: 'no-store'});
+      note = r.headers.get('X-TSF-Variant') || '';
+    } catch (e) {}
+    if (!note || note === q) { done = true; swap(qUrl(baseUrl)); return; }
+    if (note.indexOf('alt:') === 0 && !vid._altQ) {
+      vid._altQ = note.slice(4);
+      swap(baseUrl + '?q=' + vid._altQ + (playbackSid ? '&sid=' + encodeURIComponent(playbackSid) : ''));
+    }
+    if (++tries < 40) setTimeout(tick, 1500);
+    else cl.innerHTML = '<span>' + t('生成较慢, 可切单路先看') + '</span>';
+  };
+  setTimeout(tick, 400);
+}
+const PREV_SEC = 15;   // 预缓冲秒数, 与后端 PREVIEW_SECONDS 一致
 function renderClip() {
   const ev = cur;
   const seekTo = pendSeek;   // 本次渲染消费掉定位点, 之后换语言等重渲染不会又跳一次
   pendSeek = 0;
   const clip = curClips[curClipIx] || { key: '', vids: [] };
-  const vg = document.getElementById('vgrid'); vg.innerHTML = '';
+  const vg = document.getElementById('vgrid');
+  /* 换渲染前必须亲手停掉旧 video: 只 innerHTML='' 的话 Chrome 会把旧源继续下载完,
+     僵尸请求占满同域 6 连接和服务端媒体并发名额, 新播放排队 20s 吃 503 → 「加载失败」。
+     预缓冲时代僵尸只下 770KB 瞬间结束看不出问题; 回退原画(几十MB)后立刻暴露。 */
+  vg.querySelectorAll('video').forEach(v => {
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+  });
+  vg.innerHTML = '';
   /* 单路模式: 只这一路进 DOM —— 没被选中的方位连请求都不会发出去 */
   const allVids = camSort(clip.vids);
   let shown = allVids;
@@ -2846,28 +3260,29 @@ function renderClip() {
     if (one.length) shown = one;
     else camSel = 'all';          // 这一段没有该方位, 退回全览
   }
+  multiMode = shown.length > 1;   // 仅标记多路, 不再据此改档位
   shown.forEach(v => {
     const cell = document.createElement('div'); cell.className = 'vcell';
     cell.dataset.cam = v.cam || '';
     const vid = document.createElement('video');
-    /* preload 用 metadata 而不是 auto: 4 路同时 auto 会各拉整段 3.7MB (合计 15MB),
-       在盒子 4G 上行这种窄链路上互相抢, 反而谁都要缓冲半天。
-       只要元数据就能定位到触发时刻, 点播放时再按需拉那一小段。*/
+    /* 画质按用户选择: 先拿同档位的 15 秒预缓冲秒开, 播到 14 秒无缝切完整档;
+       预缓冲没命中时后端先给原画, 后台转目标档 */
     vid._baseUrl = v.url;
     vid._fullUrl = qUrl(v.url);
     let vsrc = vid._fullUrl;
-    if (!isLanNet && curQ === '360p' && seekTo < 9) {
-      vsrc += (vsrc.indexOf('?') >= 0 ? '&' : '?') + 'preview=10';
+    if (seekTo < PREV_SEC - 1) {
+      vsrc += (vsrc.indexOf('?') >= 0 ? '&' : '?') + 'preview=' + PREV_SEC;
       vid._wantPreview = true;
       vid.addEventListener('loadedmetadata', () => {
-        if (vid.duration && vid.duration <= 10.5) vid._preview = true;
+        if (vid.duration && vid.duration <= PREV_SEC + 1.5) vid._preview = true;
         else vid._wantPreview = false;
       });
     }
-    vid.src = vsrc; vid.muted = true; vid.defaultMuted = true; vid.preload = 'metadata';
+    vid.src = vsrc;
+    vid.muted = true; vid.defaultMuted = true; vid.preload = 'metadata';
     /* 每格加载状态: 转码/缓冲时显示提示, 避免黑屏让人以为坏了 */
     const cl = document.createElement('div'); cl.className = 'cload';
-    cl.innerHTML = '<span class="spin"></span><span>缓冲中…</span>';
+    cl.innerHTML = '<span class="spin"></span><span>加载中…</span>';
     const clDone = () => { cl.style.display = 'none'; };
     vid.addEventListener('loadeddata', clDone);
     vid.addEventListener('playing', clDone);
@@ -2894,6 +3309,41 @@ function renderClip() {
     }
     const lb = document.createElement('span'); lb.className = 'clabel'; lb.textContent = camShort(v.cam);
     cell.appendChild(vid); cell.appendChild(cl); cell.appendChild(lb);
+    /* 调试: 单格播放详细信息 (档位/分辨率/实时帧率/缓冲/丢帧/进度/网速), 开关在 个性化→调试 */
+    const dbg = document.createElement('div'); dbg.className = 'vdbg';
+    if (!dbgPlay) dbg.style.display = 'none';
+    cell.appendChild(dbg);
+    {
+      let fc = 0, fps = 0, lastF = performance.now();
+      const onVFrame = () => {
+        fc++; const n = performance.now();
+        if (n - lastF >= 1000) { fps = Math.round(fc * 1000 / (n - lastF)); fc = 0; lastF = n; }
+        if (vid.requestVideoFrameCallback && vid.isConnected) vid.requestVideoFrameCallback(onVFrame);
+      };
+      if (vid.requestVideoFrameCallback) vid.requestVideoFrameCallback(onVFrame);
+      let dbgTimer = null;
+      const dbgTick = () => {
+        if (!dbgPlay) return;
+        if (!vid.isConnected) { if (dbgTimer) clearInterval(dbgTimer); return; }
+        let buf = 0;
+        try { if (vid.buffered.length) buf = Math.max(0, vid.buffered.end(vid.buffered.length - 1) - vid.currentTime); } catch (e) {}
+        let drop = '—';
+        try { if (vid.getVideoPlaybackQuality) drop = vid.getVideoPlaybackQuality().droppedVideoFrames; } catch (e) {}
+        const w = vid.videoWidth || 0, h = vid.videoHeight || 0;
+        /* 按实际像素宽度判档: 只有命中转码档的目标宽度才标档, 其余一律算原画 */
+        const actual = !w ? '—' : (Math.abs(w - 480) <= 6 ? '360p'
+                        : Math.abs(w - 640) <= 10 ? '480p'
+                        : Math.abs(w - 960) <= 14 ? '720p' : '原画');
+        const dur = isFinite(vid.duration) && vid.duration ? Math.round(vid.duration) : '—';
+        const net = netSpeed ? ('实测' + netSpeed.toFixed(1) + 'Mbps') : '测速中…';
+        dbg.textContent = '选' + qName(effQ()) + ' · 实际' + actual + ' ' + (w ? w + '×' + h : '—') + ' · ' + fps + 'fps · 缓冲' + buf.toFixed(1) + 's';
+        dbg.appendChild(document.createElement('br'));
+        dbg.appendChild(document.createTextNode('丢帧' + drop + ' · ' + Math.round(vid.currentTime) + '/' + dur + 's · ' + netKind() + ' · ' + net));
+      };
+      dbgTimer = setInterval(dbgTick, 1000);
+      setTimeout(() => { if (dbgPlay) dbgTick(); }, 600);
+      vid.addEventListener('emptied', () => clearInterval(dbgTimer));
+    }
     cell.onclick = () => focusCell(cell);
     /* 单路: 拿到真实宽高后按画面比例重算格子高度 (4:3 片源不再被裁) */
     if (shown.length === 1) {
@@ -2955,8 +3405,11 @@ function renderClip() {
   const sm = document.getElementById('startmask');
   if ('ontouchstart' in window) { sm.classList.add('show'); }
   playAll();
-  kickGroup(curClipIx + 1);   // 前后相邻组提前转码, 切段不再等十几秒
-  kickGroup(curClipIx - 1);
+  /* 相邻组预热只在单路时做: 6 路全览时再预热前后两组, 等于同时排十几条转码, 反而把当前播放拖死 */
+  if (camSel !== 'all') {
+    kickGroup(curClipIx + 1);   // 前后相邻组提前转码, 切段不再等十几秒
+    kickGroup(curClipIx - 1);
+  }
   if (syncTimer) clearInterval(syncTimer);
   syncTimer = setInterval(tick, 250);
   const sortedVids = camSort(shown);
@@ -3238,8 +3691,10 @@ let liveFolder = '', liveTimer = null, liveBusy = false, liveLoading = false, li
 function liveQv() { return liveQ || curQ || 'orig'; }
 function lvUrl(u) {
   const q = liveQv();
-  if (q === 'orig') return u;
-  return u + (u.indexOf('?') < 0 ? '?' : '&') + 'q=' + q;
+  /* live=1: 服务端据此把实时预览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
+  const sep = u.indexOf('?') < 0 ? '?' : '&';
+  if (q === 'orig') return u + sep + 'live=1';
+  return u + sep + 'q=' + q + '&live=1';
 }
 function setLiveQ(v) {
   liveQ = v;
@@ -3753,17 +4208,37 @@ function togglePlay() {
   if (!vs.length) return;
   if (vs.some(v => v.paused)) playAll(); else pauseAll();
 }
+function variantStateOf(v, cb) {
+  fetch('/api/variant_state?u=' + encodeURIComponent(v._baseUrl) + '&q=' + encodeURIComponent(curQ), {cache: 'no-store'})
+    .then(r => r.json()).then(d => cb(d)).catch(() => cb(null));
+}
+function swapToFull(v, ct) {
+  v.loop = false;
+  v.src = v._fullUrl;
+  v.addEventListener('loadedmetadata', () => {
+    try { v.currentTime = Math.min(ct, Math.max(0, (v.duration || 0) - 0.2)); } catch (e) {}
+    tryPlay(v);
+  }, { once: true });
+}
+/* 从 15 秒预缓冲切到完整档: 先确认完整档真的转好了再切, 免得掉回 4K 原画在公网上卡死。
+   等待期间让预缓冲循环播放, 画面不黑不冻。 */
 function switchPreviewVideos(target) {
   const vs = [...document.querySelectorAll('#vgrid video')];
   vs.forEach(v => {
     if (!v._preview) return;
     v._preview = false;
+    v._wantPreview = false;
     const ct = (target != null) ? target : (v.currentTime || 0);
-    v.src = v._fullUrl;
-    v.addEventListener('loadedmetadata', () => {
-      try { v.currentTime = Math.min(ct, Math.max(0, (v.duration || 0) - 0.2)); } catch (e) {}
-      tryPlay(v);
-    }, { once: true });
+    const goFull = (tries) => {
+      variantStateOf(v, (d) => {
+        if (!d || !d.ok) { swapToFull(v, ct); return; }
+        if (d.full) { swapToFull(v, ct); return; }
+        if (tries === 0) v.loop = true;     // 等完整档期间循环预缓冲
+        if (tries < 6) { setTimeout(() => goFull(tries + 1), 1500); return; }
+        swapToFull(v, ct);
+      });
+    };
+    goFull(0);
   });
 }
 function tick() {
@@ -3771,7 +4246,9 @@ function tick() {
   const vs = [...document.querySelectorAll('#vgrid video')];
   if (!vs.length || !vs[0].duration) return;
   const t = vs[0].currentTime;
-  if (t >= 9 && vs.some(v => v._preview)) switchPreviewVideos(t);
+  const anyPrev = vs.some(v => v._preview);
+  /* 播到 14 秒切完整档; 命中的是老 10 秒预览时, 播完(ended)也必须切, 否则会停在 10 秒 */
+  if (anyPrev && (t >= PREV_SEC - 1 || vs[0].ended)) switchPreviewVideos(t);
   vs.forEach((v, i) => {
     if (i && v.paused && !vs[0].paused && !v.ended) {
       if (v.readyState >= 2) tryPlay(v);   // 还在缓冲(waiting)的视频不要反复强拉, 会卡
@@ -3797,11 +4274,40 @@ function fmtSec(x) {
   return String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0');
 }
 let scrubT = 0;
+/* 跳到某个时间点: 目标档完整文件就绪才跳过去; 没就绪就等一下后台转码, 不让 4K 原画顶上来 */
+function seekToTime(tt) {
+  const vs = [...document.querySelectorAll('#vgrid video')];
+  if (!vs.length) return;
+  const hint = document.getElementById('qhint');
+  if (!curQ || curQ === 'orig') {
+    vs.forEach(v => { try { v.currentTime = tt; } catch (e) {} });
+    return;
+  }
+  let waited = 0;
+  if (hint) { hint.style.display = ''; hint.textContent = '正在准备该位置…'; }
+  const finish = () => {
+    vs.forEach(v => {
+      if (v._preview || String(v.src).indexOf('preview=') >= 0) swapToFull(v, tt);
+      else { try { v.currentTime = tt; } catch (e) {} }
+    });
+    if (hint) setTimeout(() => { hint.style.display = 'none'; }, 600);
+  };
+  const poll = () => {
+    variantStateOf(vs[0], (d) => {
+      if ((d && d.full) || waited >= 15) { finish(); return; }
+      waited += 1.5;
+      setTimeout(poll, 1500);
+    });
+  };
+  poll();
+}
 function applySeekAll(frac) {
   const vs = [...document.querySelectorAll('#vgrid video')];
   if (!vs.length || !vs[0].duration) return;
   const tt = frac / 1000 * vs[0].duration;
-  if (tt >= 9 && vs.some(v => v._preview)) { switchPreviewVideos(tt); return; }
+  if (tt >= PREV_SEC - 1 && vs.some(v => v._preview)) { switchPreviewVideos(tt); return; }
+  /* 进度条拖到预缓冲覆盖不到的位置: 先确认完整档就绪, 没好就让后端先转, 别播 4K 原画 */
+  if (tt >= PREV_SEC - 1) { seekToTime(tt); return; }
   vs.forEach(v => { try { v.currentTime = tt; } catch (e) {} });
 }
 document.getElementById('seek').oninput = function () {
@@ -3842,7 +4348,7 @@ function doLogout() {
   location.href = '/logout';
 }
 function stab(which) {
-  ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'lang', 'skin', 'fan', 'brand', 'update'].forEach(k => {
+  ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'].forEach(k => {
     const b = document.getElementById('st-' + k), t = document.getElementById('tab-' + k);
     if (b) b.classList.toggle('active', k === which);
     if (t) t.style.display = k === which ? '' : 'none';
@@ -3857,6 +4363,7 @@ function stab(which) {
   if (which === 'wraps') refreshWraps();
   if (which === 'brand') refreshBrand();
   if (which === 'skin') applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
+  if (which === 'debug') dbgLoad();
 }
 
 /* ---------- 风扇设置 ---------- */
@@ -4871,9 +5378,14 @@ function switchArea(a) {
   document.getElementById('area-usb').classList.toggle('active', a === 'usb');
   document.getElementById('area-archive').classList.toggle('active', a === 'archive');
   document.getElementById('usb-hint').style.display = a === 'usb' ? '' : 'none';
+  const sp = document.getElementById('storage-panel');
+  if (sp) sp.style.display = a === 'usb' ? '' : 'none';   /* 虚拟U盘设置只在「车机U盘」子页显示 */
   document.getElementById('arch-hint').style.display = a === 'archive' ? '' : 'none';
+  const pw = document.getElementById('pwwrap');
+  if (pw) pw.style.display = a === 'archive' ? '' : 'none';   /* 预缓冲/缩略图进度只在「归档区」子页显示 */
   document.getElementById('purge-box').style.display = a === 'usb' ? 'flex' : 'none';
   if (a === 'usb') refreshStorage();
+  else loadArchiveRetention();   /* 归档区: 刷新占用与自动清理状态 */
   curDir = a === 'usb' ? '' : '/archive/files';
   refreshFiles();
 }
@@ -7045,21 +7557,51 @@ MEDIA_ACTIVE = [0]        # 正在推送的视频流数量: 自动升级要等�
 # 完整转码作业绑定会话; 会话消失即取消, 避免退出后后台继续吃 CPU。
 PLAYBACK_SESSIONS = {}
 PLAYBACK_LOCK = threading.Lock()
+# 最近一次播放活动时间: 播放中/刚播放过的 60 秒内, 后台缩略图与 10 秒预缓冲全部暂停
+PLAY_HOLD = {"ts": 0}
+PLAY_HOLD_SECONDS = 600
+_PREWARM_MIN_CACHE = {"ts": 0, "v": 10}
+
+
+def prewarm_resume_min():
+    """播放停止后多少分钟恢复后台预缓冲: 10/20/30, 默认 10。"""
+    if time.time() - _PREWARM_MIN_CACHE["ts"] < 10:
+        return _PREWARM_MIN_CACHE["v"]
+    try:
+        v = int(load_settings().get("prewarm_resume_min", 10) or 10)
+    except (TypeError, ValueError):
+        v = 10
+    v = max(1, min(v, 30))
+    _PREWARM_MIN_CACHE["ts"] = time.time()
+    _PREWARM_MIN_CACHE["v"] = v
+    return v
+
+
+def play_hold_active():
+    """播放中或停止播放不足所设分钟数 → True, 后台任务应让路。"""
+    return (time.time() - PLAY_HOLD["ts"]) < prewarm_resume_min() * 60
 PLAYBACK_TTL = 30
 THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/thumbs"
-THUMB_SEM = threading.BoundedSemaphore(2)
+THUMB_SEM = threading.BoundedSemaphore(3)
 THUMB_W = 400
 
 
-def thumb_file(fp, ss_t=1.0):
-    """抽指定秒数那一帧并缓存在 eMMC, 返回 jpg 路径; 抽不出来返回 None。
-    列表缩略图 (/thumb) 和飞书推送封面共用。"""
+def thumb_cache_path(fp, ss_t=1.0):
+    """缩略图缓存路径; 文件不存在或 stat 失败返回 None。抽帧与后台预生成共用同一 key。"""
     try:
         st = os.stat(fp)
     except OSError:
         return None
     key = hashlib.md5(("%s|%d|%d|%g" % (fp, st.st_size, int(st.st_mtime), ss_t)).encode()).hexdigest()
-    out = os.path.join(THUMB_DIR, key + ".jpg")
+    return os.path.join(THUMB_DIR, key + ".jpg")
+
+
+def thumb_file(fp, ss_t=1.0):
+    """抽指定秒数那一帧并缓存在 eMMC, 返回 jpg 路径; 抽不出来返回 None。
+    列表缩略图 (/thumb) 和飞书推送封面共用。"""
+    out = thumb_cache_path(fp, ss_t)
+    if not out:
+        return None
     try:                               # 0 字节是上次 ffmpeg 失败留下的残骸, 视为无效缓存
         if os.path.getsize(out) == 0:
             os.remove(out)
@@ -7071,7 +7613,7 @@ def thumb_file(fp, ss_t=1.0):
         os.makedirs(THUMB_DIR, exist_ok=True)
     except OSError:
         pass
-    tmp = os.path.join(THUMB_DIR, "%s.%d.tmp.jpg" % (key, threading.get_ident()))
+    tmp = os.path.join(THUMB_DIR, "%s.%d.tmp.jpg" % (os.path.basename(out)[:-4], threading.get_ident()))
     if not THUMB_SEM.acquire(timeout=12):
         return None
     try:
@@ -7106,16 +7648,20 @@ def thumb_file(fp, ss_t=1.0):
 # RK3568 4xA55 實測: 軟解+縮放+編碼 比 rkvdec 硬解+管道搬運更快(硬解全分辨率 NV12 過管道 sys 開銷大),
 # 故遠端檔位走軟解; 縮放用 bilinear 比 lanczos 快 ~23%(60s 前視 80s->62s), 畫質差異在 500kbps 預覽下可忽略。
 RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 500), "720p": (960, 720, 900)}  # 宽,高,kbps
+# 播放帧率: 用户要求流畅优先(2026-11-23), 360p/480p 从 15 提到 24, 与 720p 一致。
+# 实测 360p 10s 预缓冲 15→24fps 仅慢 6% (4.73s→5.03s), 代价可忽略。
+# 帧率参与缓存 key: 改帧率自动换 key, 旧缓存由 _variant_play 兜底读取, 后台逐步升级。
+RES_FPS = {"360p": 24, "480p": 24, "720p": 24}
 # 编码参数版本号: 参与缓存 key。v4: 修復奇數高度 + 遠端縮放改 bilinear。
 RES_ENC_VER = "4"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
-PREVIEW_MAX = 512 * 1024 * 1024
-PREVIEW_TTL = 3 * 86400       # 预缓冲保留 3 天; 源视频被删则立即清对应缓存
+PREVIEW_MAX = 30 * 1024 * 1024 * 1024   # 系统盘 30G 额度: 全档 10 秒预缓冲常驻, 不再频繁淘汰
+PREVIEW_TTL = 30 * 86400       # 预缓冲保留 30 天; 源视频被删则立即清对应缓存
 VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-transcode.sh")
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
-Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "2")))  # 并发转码上限: 8核允许2个×4线程, 多路点开排队时间减半
+Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))  # 2 个预览/预热 + 1 个用户请求; 预览只转 10 秒, 并发高一点起播更快
 USER_TRANS = [0]      # 正在排队/占用转码槽的用户请求数; 后台预热看到 >0 就让位
 RES_MAX = 2 * 1024 * 1024 * 1024  # 清晰度缓存总量上限 2GB, 超了从最旧开始删
 
@@ -8630,14 +9176,17 @@ def notify_status():
     }
 
 
-def _variant_path(fp, qv, seconds=0):
+def _variant_path(fp, qv, seconds=0, legacy=False):
     """清晰度缓存文件路径; 源文件一变 (size/mtime) 自然换 key, 不会拿旧缓存糊弄。
-    seconds>0 表示只缓存前 N 秒的预缓冲, 与完整缓存分开 key。"""
+    seconds>0 表示只缓存前 N 秒的预缓冲, 与完整缓存分开 key。
+    legacy=True 返回旧帧率(15fps)时代的 key, 仅供升级期兜底读取。"""
     try:
         st = os.stat(fp)
     except OSError:
         return ""
     tag = "%s|%s" % (qv, ("p%d" % seconds) if seconds else "full")
+    if not legacy:
+        tag += "|f%d" % RES_FPS.get(qv, 24)
     key = hashlib.md5(("%s|%d|%d|%s|%s" % (fp, st.st_size, st.st_mtime, tag, RES_ENC_VER)).encode()).hexdigest()
     base = PREVIEW_DIR if seconds else RES_DIR
     return os.path.join(base, key + ".mp4")
@@ -8649,6 +9198,31 @@ def _variant_ready(fp, qv, seconds=0):
         return bool(p) and os.path.getsize(p) > 0
     except OSError:
         return False
+
+
+def _variant_play(fp, qv, seconds=0):
+    """播放读取: 新帧率缓存优先, 没有就兜底旧帧率缓存, 升级期点开不等待。
+    后台预缓冲/按需转码仍按新 key 判定缺失, 逐步把旧档升级掉。"""
+    for leg in (False, True):
+        p = _variant_path(fp, qv, seconds, legacy=leg)
+        try:
+            if p and os.path.getsize(p) > 0:
+                return p
+        except OSError:
+            pass
+    return ""
+
+
+def _variant_drop_legacy(fp, qv, seconds=0):
+    """新档建成后删掉旧帧率档, 免得升级期缓存双倍占盘。"""
+    leg = _variant_path(fp, qv, seconds, legacy=True)
+    new = _variant_path(fp, qv, seconds)
+    if leg and leg != new:
+        for p in (leg, leg + ".src"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 def _kill_transcode(p):
@@ -8700,8 +9274,12 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
     out = _variant_path(fp, qv, seconds)
     if not out:
         return fp
-    if os.path.isfile(out) and os.path.getsize(out) > 0:
-        return out
+    if slot:
+        # 用户请求: 新档优先, 旧帧率档兜底, 升级期不等待。
+        # 后台生成(slot=False)不走兜底, 否则升级作业拿到旧档就返回, 新档永远建不出来。
+        play = _variant_play(fp, qv, seconds)
+        if play:
+            return play
     if not os.path.isfile(FFMPEG_BIN):
         return fp
     if cancel is not None and cancel.is_set():
@@ -8730,23 +9308,29 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
             pass
         w, h, kbps = RES_SCALE[qv]
         tmp = out + ".%d_%d.tmp" % (os.getpid(), threading.get_ident())
-        fps = 15 if qv == "360p" else 24
+        fps = RES_FPS.get(qv, 24)
         preset = "ultrafast" if qv == "360p" else "superfast"
-        enc_threads = "2" if seconds else "4"   # 预缓冲用更少线程, 降低空闲后台功耗峰值
-        limit_args = ["-t", str(seconds)] if seconds else []
+        enc_threads = "3"   # 4 核留 1 核给播放/HTTP; 实测 3 线程比 2 线程快约 30%
+        # 预缓冲只转前 N 秒时, -t 必须放在 -i 前面: 解码到 N 秒就直接收工,
+        # 放输出侧会先把整条 60 秒全解完再丢帧, 白白多花一倍时间
+        limit_args = (["-t", str(seconds)] if seconds else [])
         soft_cmd = ["sh", "-c",
-                    'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+                    'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
                     FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
-                    "-threads", enc_threads, "-i", fp,
+                    "-threads", enc_threads] + limit_args + ["-i", fp,
                     "-vf", "fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear" % (fps, w, h),
                     "-c:v", "libx264", "-preset", preset,
                     "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2),
                     "-bufsize", "%dk" % (kbps * 3),
-                    "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4"] + limit_args + ["-y", tmp]
-        use_vpu = (qv == "360p" and os.access(VPU_TRANSCODE, os.X_OK)
+                    "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+        # 实测(id=2026-11-23): 这条 4K 源走 v4l2 硬解 + CPU 缩放 15 秒要 37~48 秒,
+        # 纯软解(3 线程, -t 前置)只要 18 秒 —— 缩放没有 RGA 加速时硬解反而更慢, 默认关掉。
+        # 以后 mainline 装上 rgaconvert/mpp 插件, 置 TSF_VPU_TRANSCODE_ON=1 再开。
+        use_vpu = (qv == "360p" and os.environ.get("TSF_VPU_TRANSCODE_ON", "0") == "1"
+                   and os.access(VPU_TRANSCODE, os.X_OK)
                    and shutil.which("gst-launch-1.0") and shutil.which("media-ctl"))
         vpu_cmd = ["sh", "-c",
-                   'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+                   'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
                    VPU_TRANSCODE, fp, tmp, str(w), str(h), str(fps), str(kbps),
                    str(kbps * 3 // 2), str(kbps * 3), str(seconds or 0)]
         try:
@@ -8766,6 +9350,7 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
                 return fp
             if rc == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                 os.replace(tmp, out)
+                _variant_drop_legacy(fp, qv, seconds)
                 if seconds:
                     try:
                         with open(out + ".src", "w", encoding="utf-8") as sf:
@@ -8808,6 +9393,7 @@ def playback_beat(sid, paths, q):
     if not sid:
         return
     now = time.time()
+    PLAY_HOLD["ts"] = now
     with PLAYBACK_LOCK:
         PLAYBACK_SESSIONS[sid] = {"seen": now, "paths": set(paths or []), "q": q}
     # 切换清晰度后, 旧档位的完整转码不再需要, 立即停掉。
@@ -8845,8 +9431,10 @@ def playback_sweep_loop():
                         _drop_owner(key, sid)
 
 
-def spawn_variant(fp, qv, owner=None, seconds=0):
-    """后台生成缓存; 同一 (文件,档位,秒数) 只起一个作业。owner 为播放器会话。"""
+def spawn_variant(fp, qv, owner=None, seconds=0, wait_for=None, urgent=False):
+    """后台生成缓存; 同一 (文件,档位,秒数) 只起一个作业。owner 为播放器会话。
+    wait_for=(fp,qv,seconds) 时先等那个作业结束再开跑 —— 预览和完整档抢 4 核会互相拖慢,
+    实测两个同时转要 46 秒, 串行只要 18 秒。"""
     if qv not in RES_SCALE or qv == "orig":
         return False
     if _variant_ready(fp, qv, seconds):
@@ -8864,9 +9452,36 @@ def spawn_variant(fp, qv, owner=None, seconds=0):
 
     def run():
         try:
-            time.sleep(1.5)
+            time.sleep(0.2 if urgent else 1.5)   # 用户正在等的请求立刻开跑, 后台任务留点余量
             if cancel.is_set():
                 return
+            if not urgent:
+                # 后台补档/升级: 前台(播放/实时预览/用户转码)一出现就中途让路,
+                # 不让第一优先级的请求排在后台作业后面等并发名额
+                def _yield_watch():
+                    while not cancel.is_set():
+                        if USER_TRANS[0] > 0 or MEDIA_ACTIVE[0] > 0:
+                            cancel.set()
+                            return
+                        time.sleep(0.5)
+                threading.Thread(target=_yield_watch, daemon=True).start()
+            if wait_for:
+                deadline = time.time() + 180
+                while time.time() < deadline and not cancel.is_set():
+                    with _VARIANT_JOBS_LOCK:
+                        busy = wait_for in _VARIANT_JOBS
+                    if not busy:
+                        break
+                    time.sleep(0.5)
+                if cancel.is_set():
+                    return
+            if not urgent:
+                # 后台补档/升级: 有人播放就先让路, 空闲再跑, 不跟前台抢 CPU
+                idle_deadline = time.time() + 600
+                while play_hold_active() and time.time() < idle_deadline:
+                    if cancel.is_set():
+                        return
+                    time.sleep(2)
             got = False
             deadline = time.time() + 600
             while time.time() < deadline:
@@ -8924,11 +9539,567 @@ def order_files(names):
 # 远程点开可先起播; 有人播放、有完整转码、有用户等待时立即让位。
 PREWARM = {"on": os.environ.get("TSF_PREWARM", "1") != "0", "done": 0, "last": "", "skip": {}}
 PREWARM_Q = "360p"
-PREVIEW_SECONDS = 10
+PREWARM_QS = ["360p"]                   # 白天只补 360p(远程默认档): 一次解码只出一档, 不抢前台 CPU;
+                                        # 480p/720p 的 10 秒档由夜间硬解补档循环负责(见 night_hw_loop)
+PREWARM_PENDING = set()                 # 正在预热的文件, 两个预热线程靠它避免撞同一条
+_PREWARM_PICK_LOCK = threading.Lock()
+# 转码优先级 (用户定稿 2026-11-23): 实时预览在看的文件 与 哨兵告警 并列第一,
+# 其次手动保存, 最后行车记录。白天预缓冲与夜间硬解补档共用此顺序。
+CAT_PRIO = {"SentryClips": 0, "SavedClips": 1, "RecentClips": 2}
+LIVE_HOT = {}                           # fp -> 最近一次实时预览请求时间; 120s 无请求自动过期
+PREVIEW_SECONDS = 15      # 播放时按需生成的预览长度(用户要求 15 秒)
+PREWARM_SEC = 10          # 后台全量预缓冲沿用 10 秒: 已有 800+ 缓存不重转, 播放时长的预览会按需补
 
 
-def _preview_pick():
-    """挑一个还没有 10 秒预缓冲的归档视频, 新文件优先。"""
+def _preview_pick(qs=None, skip=None):
+    """按优先级挑一个还没预缓的归档视频: 实时预览在看的文件与哨兵告警并列第一,
+    再手动保存, 最后行车记录; 同级内新文件优先。夜间硬解补档也复用此顺序。
+    (旧版跨分类比 mtime, 行车记录每分钟出新片永远最新, 哨兵/手动保存永远排不上)"""
+    qs = PREWARM_QS if qs is None else qs
+    skip = PREWARM["skip"] if skip is None else skip
+    now = time.time()
+    for k, t in list(LIVE_HOT.items()):
+        if now - t > 120:
+            LIVE_HOT.pop(k, None)
+    for qv in qs:
+        best = None   # (rank, mt, fp, cat, name)
+        for cat in CATS:
+            base = os.path.join(ARCHIVE, cat)
+            try:
+                names = os.listdir(base)
+            except OSError:
+                continue
+            for name in names:
+                d = os.path.join(base, name)
+                if not os.path.isdir(d):
+                    continue
+                try:
+                    fs = os.listdir(d)
+                except OSError:
+                    continue
+                for f in fs:
+                    if not f.lower().endswith(".mp4"):
+                        continue
+                    fp = os.path.join(d, f)
+                    if fp in PREWARM_PENDING:
+                        continue
+                    if skip.get((fp, qv), 0) >= 2:
+                        continue
+                    try:
+                        mt = os.path.getmtime(fp)
+                    except OSError:
+                        continue
+                    if time.time() - mt < 120:
+                        continue
+                    if _variant_ready(fp, qv, PREWARM_SEC):
+                        continue
+                    rank = 0 if fp in LIVE_HOT else CAT_PRIO.get(cat, 3)
+                    if best is None or (rank, -mt) < (best[0], -best[1]):
+                        best = (rank, mt, fp, cat, name)
+        if best:
+            return (best[1], best[2], best[3], best[4], qv)
+    return None
+
+
+def prewarm_loop():
+    """空闲时逐个生成 10 秒预缓冲; 播放/完整转码期间暂停。"""
+    time.sleep(45)
+    while True:
+        try:
+            if not storage_ready():
+                time.sleep(30)
+                continue
+            if not PREWARM["on"]:
+                time.sleep(600)
+                continue
+            preview_cleanup()
+            with PLAYBACK_LOCK:
+                playing = bool(PLAYBACK_SESSIONS)
+            with _VARIANT_JOBS_LOCK:
+                full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
+            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy or play_hold_active() or NIGHT_HW.get("busy"):
+                time.sleep(15)
+                continue
+            with _PREWARM_PICK_LOCK:
+                job = _preview_pick()
+                if job:
+                    PREWARM_PENDING.add(job[1])
+            if not job:
+                time.sleep(60)
+                continue
+            _mt, fp, cat, name, qv = job
+            if not Q_SEM.acquire(blocking=False):
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+                time.sleep(15)
+                continue
+            # 播放一开始就掐掉这条后台预缓冲转码, 把 CPU 全部让给正在看的视频
+            job_cancel = threading.Event()
+
+            def _watch_play():
+                while not job_cancel.is_set():
+                    with PLAYBACK_LOCK:
+                        playing_now = bool(PLAYBACK_SESSIONS)
+                    if playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or play_hold_active():
+                        job_cancel.set()
+                        return
+                    time.sleep(0.5)
+
+            threading.Thread(target=_watch_play, daemon=True).start()
+            try:
+                get_variant(fp, qv, slot=False, seconds=PREWARM_SEC, cancel=job_cancel)
+                if job_cancel.is_set():
+                    time.sleep(5)
+                elif _variant_ready(fp, qv, PREWARM_SEC):
+                    PREWARM["done"] += 1
+                    PREWARM["last"] = "%s/%s · %s · 10s" % (cat, name, qv)
+                    PREWARM["skip"].pop((fp, qv), None)
+                else:
+                    PREWARM["skip"][(fp, qv)] = PREWARM["skip"].get((fp, qv), 0) + 1
+                    time.sleep(30)
+            finally:
+                job_cancel.set()
+                Q_SEM.release()
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+            time.sleep(0.5)
+        except Exception:
+            time.sleep(60)
+
+
+# ---------- 夜间硬解补档: 480p/720p 的 10 秒预览 (默认 22:00-08:00, 空闲才跑) ----------
+# 白天预缓冲只补 360p(软解, 保前台速度); 夜里用 rkvdec 硬解 + RGA 缩放 + x264 编码补 480p/720p。
+# 实测(2026-11-23, 4K前视源): 480p 10s ≈ 26.5s/约1核, 720p ≈ 38s/约1.3核, 比软解省电约30%。
+# 有人播放/媒体请求/白天预缓冲在跑时立即取消让路; 硬解失败自动回退软解, 补档进度不受影响。
+NIGHT_HW = {"on": os.environ.get("TSF_NIGHT_HW", "1") != "0",
+            "done": 0, "last": "", "skip": {}, "busy": False}
+NIGHT_HW_QS = ["480p", "720p"]
+NIGHT_HOURS = (22, 8)   # 22:00(含) ~ 次日 08:00(不含)
+
+
+def _night_window():
+    h = time.localtime().tm_hour
+    a, b = NIGHT_HOURS
+    return (h >= a or h < b) if a > b else (a <= h < b)
+
+
+def _rkvdec_nodes():
+    """rkvdec 的 video/media 设备号重启后会变, 每次现场解析, 不写死。"""
+    try:
+        out = subprocess.run(["v4l2-ctl", "--list-devices"],
+                             capture_output=True, timeout=10).stdout.decode()
+    except Exception:
+        return None
+    vid = med = ""
+    for chunk in out.split("\n\n"):
+        if not chunk.strip().startswith("rkvdec"):
+            continue
+        for line in chunk.splitlines():
+            s = line.strip()
+            if s.startswith("/dev/video"):
+                vid = s
+            elif s.startswith("/dev/media"):
+                med = s
+        break
+    return (vid, med) if vid and med else None
+
+
+def _hw_preview(fp, qv, seconds, cancel):
+    """硬解+RGA缩放+x264编码生成前 N 秒预览, 写入与软解相同的缓存 key。成功返回 True。
+    帧率转换放在 RGA 缩放之前: 4K 帧只缩放需要的 15/24fps, 不白缩 36fps。"""
+    nodes = _rkvdec_nodes()
+    gst = shutil.which("gst-launch-1.0")
+    if not nodes or not gst:
+        return False
+    vid, med = nodes
+    try:
+        out = subprocess.run([FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
+                              "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
+                              "-of", "csv=s=,:p=0", fp],
+                             capture_output=True, timeout=20).stdout.decode().strip()
+        parts = out.splitlines()[0].split(",")
+        w0, h0 = int(parts[0]), int(parts[1])
+        sfps = 0.0
+        for fr in parts[2:4]:   # r_frame_rate 可能是容器时基假值(如 10000/1), avg 兜底
+            num, _, den = fr.partition("/")
+            try:
+                v = float(num) / (float(den) if den else 1.0)
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+            if 0 < v < 240:
+                sfps = v
+                break
+        if not sfps:
+            sfps = 36.0         # 特斯拉源典型帧率; 只影响 eos 截断帧数, 宁可多解不可少解
+    except Exception:
+        return False
+    if w0 <= 0 or h0 <= 0:
+        return False
+    w, h, kbps = RES_SCALE[qv]
+    if w0 * h > w * h0:                      # 保持比例, 与软解 force_original_aspect_ratio=decrease 一致
+        h = max(2, (w * h0 // w0) // 2 * 2)
+    else:
+        w = max(2, (h * w0 // h0) // 2 * 2)
+    fps = RES_FPS.get(qv, 24)
+    frames = int(seconds * sfps) + int(sfps)   # 多解约 1 秒, 保证预览不短于 N 秒
+    outp = _variant_path(fp, qv, seconds)
+    if not outp:
+        return False
+    tmp = outp + ".%d_%d.hwn.tmp" % (os.getpid(), threading.get_ident())
+    cmd = ["sh", "-c",
+           'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
+           gst, "-q", "-e",
+           "filesrc", "location=" + fp, "!", "qtdemux", "!", "h264parse", "!",
+           "v4l2slh264dec", "video-device=" + vid, "media-device=" + med, "!",
+           "identity", "eos-after=%d" % frames, "!",
+           "videorate", "!", "video/x-raw,framerate=%d/1" % fps, "!",
+           "v4l2convert", "!", "video/x-raw,format=NV12,width=%d,height=%d" % (w, h), "!",
+           "videoconvert", "!", "video/x-raw,format=I420", "!",
+           "x264enc", "speed-preset=superfast", "bitrate=%d" % kbps,
+           "key-int-max=%d" % (fps * 2), "threads=2", "!",
+           "h264parse", "!", "mp4mux", "faststart=true", "!",
+           "filesink", "location=" + tmp]
+    try:
+        rc = _run_transcode_cmd(cmd, cancel, timeout=240)
+        if rc == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+            os.replace(tmp, outp)
+            try:
+                with open(outp + ".src", "w", encoding="utf-8") as sf:
+                    sf.write(fp)
+            except OSError:
+                pass
+            _variant_drop_legacy(fp, qv, seconds)
+            return True
+        return False
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def night_hw_loop():
+    """夜间窗口内空闲时逐个补 480p/720p 的 10 秒档; 任何播放活动立即取消让路。"""
+    time.sleep(90)
+    while True:
+        try:
+            if not NIGHT_HW["on"] or not _night_window() or not storage_ready():
+                time.sleep(300)
+                continue
+            with PLAYBACK_LOCK:
+                playing = bool(PLAYBACK_SESSIONS)
+            with _VARIANT_JOBS_LOCK:
+                full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
+            if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
+                    or play_hold_active() or PREWARM_PENDING):
+                time.sleep(30)
+                continue
+            with _PREWARM_PICK_LOCK:
+                job = _preview_pick(NIGHT_HW_QS, NIGHT_HW["skip"])
+                if job:
+                    PREWARM_PENDING.add(job[1])
+            if not job:
+                time.sleep(600)
+                continue
+            _mt, fp, cat, name, qv = job
+            if not Q_SEM.acquire(blocking=False):
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+                time.sleep(30)
+                continue
+            NIGHT_HW["busy"] = True
+            job_cancel = threading.Event()
+
+            def _watch_idle():
+                while not job_cancel.is_set():
+                    with PLAYBACK_LOCK:
+                        playing_now = bool(PLAYBACK_SESSIONS)
+                    if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
+                            or play_hold_active() or not _night_window()):
+                        job_cancel.set()
+                        return
+                    time.sleep(0.5)
+
+            threading.Thread(target=_watch_idle, daemon=True).start()
+            try:
+                hw_ok = False
+                try:
+                    hw_ok = _hw_preview(fp, qv, PREWARM_SEC, job_cancel)
+                except Exception:
+                    hw_ok = False
+                if not hw_ok and not job_cancel.is_set():
+                    # 硬解不可用/失败: 回退软解, 保证补档进度
+                    get_variant(fp, qv, slot=False, seconds=PREWARM_SEC, cancel=job_cancel)
+                if job_cancel.is_set():
+                    time.sleep(5)
+                elif _variant_ready(fp, qv, PREWARM_SEC):
+                    NIGHT_HW["done"] += 1
+                    NIGHT_HW["last"] = "%s/%s · %s · 10s · %s" % (cat, name, qv, "硬解" if hw_ok else "软解")
+                    NIGHT_HW["skip"].pop((fp, qv), None)
+                else:
+                    NIGHT_HW["skip"][(fp, qv)] = NIGHT_HW["skip"].get((fp, qv), 0) + 1
+                    time.sleep(60)
+            finally:
+                job_cancel.set()
+                NIGHT_HW["busy"] = False
+                Q_SEM.release()
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+            time.sleep(1)
+        except Exception:
+            time.sleep(120)
+
+
+# 归档自动清理: 只处理 CATS 下名字是事件时间的目录 (YYYY-MM-DD_HH-MM-SS), 整目录删除。
+# 0 = 永不清理; 后台每 6 小时检查一次, 也可以在网页上「立即清理一次」。
+ARCH_CLEAN = {"last": 0, "deleted": 0, "freed": 0, "running": False, "msg": ""}
+ARCH_EVENT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
+
+
+def archive_retention_days():
+    try:
+        v = int(load_settings().get("archive_retention_days", 0) or 0)
+    except (TypeError, ValueError):
+        v = 0
+    return max(0, min(v, 3650))
+
+
+def _dir_size(path):
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def archive_cleanup(days=None):
+    """删除超过保留天数的归档事件目录; 返回删除事件数与释放字节。"""
+    days = archive_retention_days() if days is None else max(0, min(int(days), 3650))
+    ARCH_CLEAN["running"] = True
+    deleted = freed = 0
+    try:
+        if days <= 0:
+            ARCH_CLEAN["msg"] = "自动清理已关闭"
+            return {"deleted": 0, "freed": 0, "days": 0}
+        cutoff = time.time() - days * 86400
+        for cat in CATS:
+            base = os.path.join(ARCHIVE, cat)
+            try:
+                names = os.listdir(base)
+            except OSError:
+                continue
+            for name in names:
+                if not ARCH_EVENT_RE.match(name):
+                    continue          # 只认 TeslaCam 事件目录名, 不碰其他文件/皮肤/中转目录
+                d = os.path.join(base, name)
+                if not os.path.isdir(d):
+                    continue
+                try:
+                    ts = datetime.datetime.strptime(name, "%Y-%m-%d_%H-%M-%S").replace(
+                        tzinfo=datetime.timezone.utc).timestamp()
+                except ValueError:
+                    continue
+                if ts >= cutoff:
+                    continue
+                sz = _dir_size(d)
+                try:
+                    shutil.rmtree(d)
+                except OSError:
+                    continue
+                deleted += 1
+                freed += sz
+        ARCH_CLEAN.update({"last": int(time.time()), "deleted": deleted, "freed": freed,
+                           "msg": "删除 %d 个事件，释放 %.2f GB" % (deleted, freed / 1073741824.0)})
+        return {"deleted": deleted, "freed": freed, "days": days}
+    finally:
+        ARCH_CLEAN["running"] = False
+
+
+def archive_low_water_pct():
+    try:
+        v = int(load_settings().get("archive_low_water_pct", 10) or 0)
+    except (TypeError, ValueError):
+        v = 10
+    return max(0, min(v, 50))
+
+
+def _archive_events():
+    """所有事件目录, 按时间从旧到新。"""
+    out = []
+    for cat in CATS:
+        base = os.path.join(ARCHIVE, cat)
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for name in names:
+            if not ARCH_EVENT_RE.match(name):
+                continue
+            d = os.path.join(base, name)
+            if not os.path.isdir(d):
+                continue
+            try:
+                ts = datetime.datetime.strptime(name, "%Y-%m-%d_%H-%M-%S").replace(
+                    tzinfo=datetime.timezone.utc).timestamp()
+            except ValueError:
+                continue
+            out.append((ts, cat, name, d))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+ARCH_WATER = {"n": None}
+
+
+def archive_water_level():
+    """归档区自己的剩余水位: 有分配额度按额度算, 没额度才退回整盘。
+       车机U盘占满是镜像内部增长, 不能把整盘剩余算成归档区剩余, 否则明明归档区还空着就误删。"""
+    try:
+        quota = _archive_quota()
+    except Exception:
+        quota = 0
+    if quota > 0:
+        used = min(archive_size(), quota)
+        return max(0, quota - used) * 100.0 / quota, used, quota
+    try:
+        du = shutil.disk_usage(ARCHIVE)
+    except OSError:
+        return None, 0, 0
+    return du.free * 100.0 / du.total, du.total - du.free, du.total
+
+
+def archive_cleanup_watermark():
+    """水位低时按「新归档一条 → 删最旧一条」滚动替换, 不整日清空。
+       记录上一次的事件总数, 每轮把新增的条数作为清理条数; 没有新增就不删。"""
+    th = archive_low_water_pct()
+    events = _archive_events()
+    n = len(events)
+    prev = ARCH_WATER["n"]
+    ARCH_WATER["n"] = n
+    added = 0 if prev is None else max(0, n - prev)
+    if th <= 0:
+        return {"deleted": 0, "freed": 0, "free_pct": None, "msg": "水位清理已关闭"}
+    try:
+        free_pct, used, total = archive_water_level()
+    except Exception:
+        free_pct, used, total = None, 0, 0
+    if not total:
+        return {"deleted": 0, "freed": 0, "free_pct": None, "msg": "无法读取归档区容量"}
+    free_pct = (total - used) * 100.0 / total
+    if free_pct >= th:
+        return {"deleted": 0, "freed": 0, "free_pct": free_pct,
+                "msg": "归档区剩余 %.0f%%, 高于 %d%% 水位" % (free_pct, th)}
+    if added <= 0:
+        return {"deleted": 0, "freed": 0, "free_pct": free_pct,
+                "msg": "归档区剩余 %.0f%%, 低于 %d%% 水位; 暂无新归档, 暂不删除" % (free_pct, th)}
+    deleted = freed = 0
+    for _ts, _cat, _name, d in events[:added]:
+        sz = _dir_size(d)
+        try:
+            shutil.rmtree(d)
+        except OSError:
+            continue
+        deleted += 1
+        freed += sz
+        used = max(0, used - sz)
+        free_pct = (total - used) * 100.0 / total
+    msg = ("新归档 %d 条, 清理最旧 %d 条、释放 %.2f GB, 剩余 %.0f%%"
+           % (added, deleted, freed / 1073741824.0, free_pct))
+    if deleted:
+        ARCH_CLEAN.update({"last": int(time.time()), "deleted": ARCH_CLEAN.get("deleted", 0) + deleted,
+                           "freed": ARCH_CLEAN.get("freed", 0) + freed, "msg": msg})
+    return {"deleted": deleted, "freed": freed, "free_pct": free_pct, "msg": msg}
+
+
+def archive_cleanup_loop():
+    time.sleep(180)
+    last_days = 0
+    while True:
+        try:
+            now = time.time()
+            if now - last_days >= 6 * 3600:      # 保留天数清理: 6 小时一次
+                days = archive_retention_days()
+                if days > 0:
+                    archive_cleanup(days)
+                last_days = now
+            archive_cleanup_watermark()          # 水位替换: 10 分钟一次, 新归档进来就删最旧一条
+        except Exception:
+            pass
+        time.sleep(600)
+
+
+_PREVIEW_CACHE_LIMIT = 30 * 1024 * 1024 * 1024     # 系统盘给 10 秒预缓冲 + 缩略图的额度
+_CACHE_USED = {"t": 0, "v": 0}
+
+
+def _prebuf_used():
+    """10 秒预缓冲 + 列表缩略图在系统盘上的实际占用; 30 秒缓存, 别每 5 秒遍历一遍。"""
+    if time.time() - _CACHE_USED["t"] > 30:
+        total = 0
+        for d in (PREVIEW_DIR, THUMB_DIR):
+            try:
+                for f in os.listdir(d):
+                    p = os.path.join(d, f)
+                    try:
+                        if os.path.isfile(p):
+                            total += os.path.getsize(p)
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+        _CACHE_USED.update(t=time.time(), v=total)
+    return _CACHE_USED["v"]
+
+
+def _archive_src_count():
+    """归档里 mp4 源文件数 (事件目录/文件两层), 给前端进度条当分母。"""
+    n = 0
+    for cat in CATS:
+        base = os.path.join(ARCHIVE, cat)
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        for name in names:
+            d = os.path.join(base, name)
+            if not os.path.isdir(d):
+                continue
+            try:
+                fs = os.listdir(d)
+            except OSError:
+                continue
+            n += sum(1 for f in fs if f.lower().endswith(".mp4"))
+    return n
+
+
+_ARCH_SRC_CACHE = {"t": 0, "n": 0}
+_ARCH_INFO_CACHE = {"t": 0, "used": 0, "files": 0}
+
+
+def _archive_src_cached():
+    if time.time() - _ARCH_SRC_CACHE["t"] > 60:
+        _ARCH_SRC_CACHE["n"] = _archive_src_count()
+        _ARCH_SRC_CACHE["t"] = time.time()
+    return _ARCH_SRC_CACHE["n"]
+
+
+def _archive_info_cached():
+    """归档视频数与占用, 60 秒缓存 (archive_size 会遍历目录, 不能每 5 秒算一次)。"""
+    if time.time() - _ARCH_INFO_CACHE["t"] > 60:
+        _ARCH_INFO_CACHE["files"] = _archive_src_count()
+        try:
+            _ARCH_INFO_CACHE["used"] = archive_size()
+        except Exception:
+            _ARCH_INFO_CACHE["used"] = 0
+        _ARCH_INFO_CACHE["t"] = time.time()
+    return _ARCH_INFO_CACHE
+
+
+def _thumb_pick():
+    """找一个还没有缩略图缓存的归档视频; 新文件优先。"""
     best = None
     for cat in CATS:
         base = os.path.join(ARCHIVE, cat)
@@ -8948,60 +10119,43 @@ def _preview_pick():
                 if not f.lower().endswith(".mp4"):
                     continue
                 fp = os.path.join(d, f)
-                if PREWARM["skip"].get(fp, 0) >= 2:
+                p = thumb_cache_path(fp, 1.0)
+                if not p:
                     continue
+                try:
+                    if os.path.getsize(p) > 0:
+                        continue
+                except OSError:
+                    pass
                 try:
                     mt = os.path.getmtime(fp)
                 except OSError:
                     continue
-                if time.time() - mt < 120:
-                    continue
-                if _variant_ready(fp, PREWARM_Q, PREVIEW_SECONDS):
-                    continue
                 if best is None or mt > best[0]:
-                    best = (mt, fp, cat, name)
-    return best
+                    best = (mt, fp)
+    return best[1] if best else None
 
 
-def prewarm_loop():
-    """空闲时逐个生成 10 秒预缓冲; 播放/完整转码期间暂停。"""
-    time.sleep(45)
+def thumb_prewarm_loop():
+    """空闲时把归档视频的列表封面逐个预生成, 前端进列表不再一张张现抽帧转圈。
+       有人播放/转码时让位, 只做低成本抽帧。"""
+    time.sleep(30)
     while True:
         try:
             if not storage_ready():
                 time.sleep(30)
                 continue
-            if not PREWARM["on"]:
-                time.sleep(600)
-                continue
-            preview_cleanup()
             with PLAYBACK_LOCK:
                 playing = bool(PLAYBACK_SESSIONS)
-            with _VARIANT_JOBS_LOCK:
-                full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
-            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy:
-                time.sleep(15)
+            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or _VARIANT_JOBS or play_hold_active():
+                time.sleep(5)   # 播放中/刚播放完 10 分钟内暂停抽帧, 播放一停就尽快恢复
                 continue
-            job = _preview_pick()
-            if not job:
-                time.sleep(60)
+            fp = _thumb_pick()
+            if not fp:
+                time.sleep(300)
                 continue
-            _mt, fp, cat, name = job
-            if not Q_SEM.acquire(blocking=False):
-                time.sleep(15)
-                continue
-            try:
-                get_variant(fp, PREWARM_Q, slot=False, seconds=PREVIEW_SECONDS)
-                if _variant_ready(fp, PREWARM_Q, PREVIEW_SECONDS):
-                    PREWARM["done"] += 1
-                    PREWARM["last"] = "%s/%s · 10s" % (cat, name)
-                    PREWARM["skip"].pop(fp, None)
-                else:
-                    PREWARM["skip"][fp] = PREWARM["skip"].get(fp, 0) + 1
-                    time.sleep(30)
-            finally:
-                Q_SEM.release()
-            time.sleep(2)
+            thumb_file(fp, 1.0)
+            time.sleep(3)   # 放慢抽帧, 把 CPU 让给 10 秒预缓冲
         except Exception:
             time.sleep(60)
 
@@ -9031,15 +10185,22 @@ def probe_size(path):
 
 
 def probe_fps(path):
-    """返回视频帧率 (float); 失败返回 0。原画导出时用来保留源帧率。"""
+    """返回视频帧率 (float); 失败返回 0。原画导出时用来保留源帧率。
+    r_frame_rate 可能是容器时基假值 (如 10000/1), 用 avg_frame_rate 兜底。"""
     try:
         out = subprocess.run([FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
-                              "-show_entries", "stream=r_frame_rate",
-                              "-of", "default=nw=1:nk=1", path],
+                              "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+                              "-of", "csv=s=,:p=0", path],
                              capture_output=True, timeout=20).stdout.decode().strip()
-        num, _, den = out.partition("/")
-        v = float(num) / (float(den) if den else 1.0)
-        return v if 0 < v < 240 else 0.0
+        for fr in out.splitlines()[0].split(","):
+            num, _, den = fr.partition("/")
+            try:
+                v = float(num) / (float(den) if den else 1.0)
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+            if 0 < v < 240:
+                return v
+        return 0.0
     except Exception:
         return 0.0
 
@@ -10281,6 +11442,131 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"on": PREWARM["on"], "done": PREWARM["done"], "last": PREWARM["last"],
                         "q": PREWARM_Q, "busy_users": USER_TRANS[0],
                         "media_active": MEDIA_ACTIVE[0]})
+        elif path == "/api/prewarm_stats":
+            # 归档页进度条: 系统盘占用 + 10 秒预缓冲(全档) + 列表缩略图
+            src = _archive_src_cached()
+            try:
+                pdone = sum(1 for f in os.listdir(PREVIEW_DIR) if f.endswith(".mp4")) if os.path.isdir(PREVIEW_DIR) else 0
+            except OSError:
+                pdone = 0
+            try:
+                tdone = sum(1 for f in os.listdir(THUMB_DIR) if f.endswith(".jpg")) if os.path.isdir(THUMB_DIR) else 0
+            except OSError:
+                tdone = 0
+            try:
+                sys_u = shutil.disk_usage("/")
+                sys_used, sys_total = sys_u.used, sys_u.total
+            except OSError:
+                sys_used = sys_total = 0
+            ptotal = src * len(PREWARM_QS)
+            self._json({"preview_done": pdone, "preview_total": ptotal,
+                        "thumb_done": tdone, "thumb_total": src,
+                        "sys_used": sys_used, "sys_total": sys_total,
+                        "cache_used": _prebuf_used(), "cache_limit": _PREVIEW_CACHE_LIMIT,
+                        "qs": PREWARM_QS})
+        elif path == "/api/speedtest":
+            # 真实测速用: 返回指定大小的随机字节, 禁用缓存
+            try:
+                n = int(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("bytes", ["524288"])[0])
+            except (TypeError, ValueError):
+                n = 524288
+            n = max(65536, min(n, 4194304))
+            data = os.urandom(n)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(n))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/api/net_kind":
+            # 服务端自己判断访问来源: 局域网 / Tailscale / 公网, 前端据此选默认画质
+            ip = ""
+            try:
+                ip = (self.client_address[0] or "").split("%")[0]
+                if ip.startswith("::ffff:"):
+                    ip = ip[7:]
+            except Exception:
+                ip = ""
+            # 经过 frp/反代/端口映射时, 真实客户端 IP 在代理头里
+            rip = (self.headers.get("X-Real-IP", "") or "").strip()
+            xff = (self.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+            if rip:
+                ip = rip.split("%")[0]
+            elif xff:
+                ip = xff.split("%")[0]
+            kind = "public"
+            try:
+                import ipaddress
+                a = ipaddress.ip_address(ip)
+                if a.is_loopback:
+                    kind = "lan"
+                elif a in ipaddress.ip_network("100.64.0.0/10"):
+                    kind = "tailscale"
+                elif a.is_private:
+                    kind = "lan"
+                else:
+                    kind = "public"
+            except Exception:
+                kind = "public"
+            # 再用访问域名兜底: 用域名(不是内网 IP/localhost)访问, 视为公网入口
+            try:
+                host = urllib.parse.urlsplit("http://" + (self.headers.get("Host", "") or "")).hostname or ""
+                if kind == "lan" and host and host != "localhost":
+                    h = ipaddress.ip_address(host)
+                    if not (h.is_private or h.is_loopback):
+                        kind = "public"
+            except Exception:
+                pass
+            self._json({"ip": ip, "kind": kind, "lan": kind == "lan"})
+        elif path == "/api/variant_state":
+            # 前端切换「完整档」前先问一句: 完整档转好了没? 没好就继续用预缓冲, 别掉回 4K 原画
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            u = qs.get("u", [""])[0]
+            qv = qs.get("q", [""])[0]
+            fp = ""
+            m = re.match(r"^/media/([\w-]+)/([\w\-. ]+)/([\w\-. ]+)$",
+                         urllib.parse.unquote(urllib.parse.urlsplit(u).path))
+            if m:
+                fp = os.path.normpath(os.path.join(ARCHIVE, m.group(1), m.group(2), m.group(3)))
+            ok = bool(fp) and fp.startswith(ARCHIVE) and os.path.isfile(fp)
+            if ok and qv in RES_SCALE:
+                pv = 0
+                for sec in (PREVIEW_SECONDS, 10):
+                    if _variant_play(fp, qv, sec):
+                        pv = sec
+                        break
+                self._json({"ok": True, "full": bool(_variant_play(fp, qv)),
+                            "preview": pv, "sec": PREVIEW_SECONDS})
+            else:
+                self._json({"ok": False, "full": False, "preview": 0, "sec": PREVIEW_SECONDS})
+        elif path == "/api/prewarm_policy":
+            remain = max(0, prewarm_resume_min() * 60 - (time.time() - PLAY_HOLD["ts"]))
+            self._json({"resume_min": prewarm_resume_min(),
+                        "paused": play_hold_active(), "remain": int(remain),
+                        "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
+                        "last": PREWARM["last"], "qs": PREWARM_QS,
+                        "night_on": NIGHT_HW["on"], "night_window": _night_window(),
+                        "night_busy": NIGHT_HW["busy"], "night_done": NIGHT_HW["done"],
+                        "night_last": NIGHT_HW["last"], "night_qs": NIGHT_HW_QS})
+        elif path == "/api/archive_retention":
+            info = _archive_info_cached()
+            try:
+                su = shutil.disk_usage("/")
+                sysd = {"used": su.used, "total": su.total}
+            except OSError:
+                sysd = {"used": 0, "total": 0}
+            try:
+                wp, _wu, _wt = archive_water_level()
+                free_pct = round(wp, 1) if wp is not None else None
+            except Exception:
+                free_pct = None
+            self._json({"days": archive_retention_days(),
+                        "low_water_pct": archive_low_water_pct(), "free_pct": free_pct,
+                        "last": ARCH_CLEAN["last"], "deleted": ARCH_CLEAN["deleted"],
+                        "freed": ARCH_CLEAN["freed"], "running": ARCH_CLEAN["running"],
+                        "msg": ARCH_CLEAN["msg"],
+                        "files": info["files"], "used": info["used"],
+                        "system": sysd})
         elif path == "/api/brand/logo":
             data, ct = brand_logo_bytes()
             self.send_response(200)
@@ -10441,39 +11727,53 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # 清晰度: ?q=360p/480p/720p 返回缓存副本; ?preview=10 优先取前10秒预缓冲。
             # sid 绑定播放器会话, 退出后服务端取消该会话的完整转码。
+            # 任何一次媒体请求都算播放活动, 后台任务立即让路
+            PLAY_HOLD["ts"] = time.time()
             qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             qv = qs.get("q", ["orig"])[0]
             sid = qs.get("sid", [""])[0]
-            want_preview = qs.get("preview", ["0"])[0] == "10"
+            try:
+                want_preview_sec = int(qs.get("preview", ["0"])[0] or 0)
+            except (TypeError, ValueError):
+                want_preview_sec = 0
+            want_preview_sec = 0 if want_preview_sec < 5 else min(want_preview_sec, 120)
+            if qs.get("live", [""])[0]:
+                LIVE_HOT[fp] = time.time()   # 实时预览并列第一: 记住在看的文件, 预缓冲优先补它
             variant_note = ""
             if qv in RES_SCALE and qv != "orig":
+                src = fp
                 if sid:
-                    playback_beat(sid, [fp], qv)
-                if want_preview:
-                    if _variant_ready(fp, qv):
-                        fp = _variant_path(fp, qv)
-                    elif _variant_ready(fp, qv, 10):
-                        fp = _variant_path(fp, qv, 10)
-                        variant_note = "preview10"
+                    playback_beat(sid, [src], qv)
+                if want_preview_sec:
+                    pp = _variant_play(src, qv)
+                    if pp:
+                        fp = pp
                     else:
-                        spawn_variant(fp, qv, owner=sid or None, seconds=10)
-                        alt = next((a for a in ("480p", "360p", "720p")
-                                    if a != qv and _variant_ready(fp, a)), None)
-                        if alt:
-                            fp = _variant_path(fp, alt)
-                            variant_note = "alt:" + alt
+                        # 长的预览优先, 已缓存的短预览兜底, 免得重建全部缓存
+                        hit = 0
+                        for sec in (want_preview_sec, PREVIEW_SECONDS, 10):
+                            pp = _variant_play(src, qv, sec) if sec else ""
+                            if pp:
+                                hit = sec
+                                break
+                        if hit:
+                            fp = pp
+                            variant_note = "preview%d" % hit
                         else:
+                            spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec, urgent=True)
+                            # 不阻塞: 预览还没好就先给原画, 保证点开立刻有画面; 后台继续转
                             variant_note = "orig"
-                elif _variant_ready(fp, qv):
-                    fp = _variant_path(fp, qv)
+                    # 真的在播放(带 sid)就顺带把完整档也排上, 但要等预览先转完, 不抢 CPU
+                    if sid and not _variant_ready(src, qv):
+                        spawn_variant(src, qv, owner=sid,
+                                      wait_for=(src, qv, want_preview_sec))
                 else:
-                    spawn_variant(fp, qv, owner=sid or None)
-                    alt = next((a for a in ("480p", "360p", "720p")
-                                if a != qv and _variant_ready(fp, a)), None)
-                    if alt:
-                        fp = _variant_path(fp, alt)
-                        variant_note = "alt:" + alt
+                    pp = _variant_play(src, qv)
+                    if pp:
+                        fp = pp
                     else:
+                        spawn_variant(src, qv, owner=sid or None, urgent=True)
+                        # 不阻塞: 目标档没转好先用原画秒开, 转好后下次播放/切档即生效
                         variant_note = "orig"
             size = os.path.getsize(fp)
             rng = self.headers.get("Range")
@@ -10640,6 +11940,64 @@ class Handler(BaseHTTPRequestHandler):
             j = {"ok": ok, "msg": msg, "done": done, "failed": failed}
             j.update(extra)
             self._json(j)
+            return
+        if path == "/api/prewarm_policy":
+            body = self._read_json()
+            if body == "TOOBIG" or not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            try:
+                mins = max(1, min(int(body.get("resume_min", 10) or 10), 30))
+            except (TypeError, ValueError):
+                mins = 10
+            save_settings({"prewarm_resume_min": mins})
+            _PREWARM_MIN_CACHE["ts"] = 0   # 立刻生效, 不等缓存
+            self._json({"ok": True, "resume_min": mins, "msg": "已保存"})
+            return
+        if p == "/api/uptest":
+            # 上行测速: 收下浏览器发来的随机字节, 回包让前端算耗时
+            try:
+                n = int(self.headers.get("Content-Length", "0") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            n = max(0, min(n, 4194304))
+            got = 0
+            while got < n:
+                chunk = self.rfile.read(min(65536, n - got))
+                if not chunk:
+                    break
+                got += len(chunk)
+            self._json({"ok": True, "bytes": got})
+            return
+        if path == "/api/prewarm_now":
+            # 立即预缓冲: 清掉播放占用, 后台线程下一轮就恢复
+            PLAY_HOLD["ts"] = 0
+            self._json({"ok": True, "msg": "已恢复预缓冲", "resume_min": prewarm_resume_min()})
+            return
+        if path == "/api/archive_retention":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            try:
+                days = max(0, min(int(body.get("days") or 0), 3650))
+            except (TypeError, ValueError):
+                days = 0
+            try:
+                water = max(0, min(int(body.get("low_water_pct", 10) or 0), 50))
+            except (TypeError, ValueError):
+                water = 10
+            save_settings({"archive_retention_days": days, "archive_low_water_pct": water})
+            self._json({"ok": True, "days": days, "low_water_pct": water, "msg": "已保存"})
+            return
+        if path == "/api/archive_cleanup":
+            try:
+                r = archive_cleanup()
+            except Exception as ex:
+                self._json({"ok": False, "msg": "清理失败: %s" % ex}, 500)
+                return
+            self._json({"ok": True, "msg": ARCH_CLEAN["msg"], "days": r["days"],
+                        "deleted": r["deleted"], "freed": r["freed"]})
             return
         if path == "/api/kick":
             # 前端播到当前段一半/打开事件时, 让服务端把相邻段的当前清晰度先转好。
@@ -11300,6 +12658,10 @@ if __name__ == "__main__":
     threading.Thread(target=health_logger, daemon=True).start()
     threading.Thread(target=notify_loop, daemon=True).start()
     threading.Thread(target=auto_update_loop, daemon=True).start()
-    threading.Thread(target=prewarm_loop, daemon=True).start()
+    threading.Thread(target=prewarm_loop, daemon=True).start()   # 单 worker: 后台预热和播放抢 CPU 会更卡
+    threading.Thread(target=night_hw_loop, daemon=True).start()  # 夜间硬解补 480p/720p 10s 档
+    threading.Thread(target=thumb_prewarm_loop, daemon=True).start()
+    threading.Thread(target=archive_cleanup_loop, daemon=True).start()
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     srv.serve_forever()
+

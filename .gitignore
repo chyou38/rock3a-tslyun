@@ -23,3 +23,9 @@ fonts/
 cache/
 preview-cache/
 *.bak-*
+
+# 本地调试/工作文件 (绝不入库)
+_*
+hw*.png
+*.exp-*
+ROCK3A-*方案*.md

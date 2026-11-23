@@ -63,7 +63,7 @@
 有线 `end0` 走 netplan + systemd-networkd 的 DHCP；无线 `wlp1s0` 不写进 netplan（netplan 的 `wifis:` 不支持 `band` 键，且去掉 `access-points` 会报错），改由独立 `wpa_supplicant` 实例连接，`systemd-networkd` 只负责 DHCP。
 
 ```text
-end0 (DHCP, 例 192.168.100.13)
+end0 (DHCP, 例 192.168.1.50)
   └─ 有线网络可用 → 热点关闭
 wlp1s0 (STA, 2.4G only, freq_list 2412-2472)
   └─ 连上 WiFi → 热点关闭；未连 → 热点可开

@@ -41,26 +41,28 @@ IFS=, read -r CODEC SW SH < <("$FFPROBE" -v error -select_streams v:0 \
     -show_entries stream=codec_name,width,height -of csv=p=0 "$SRC")
 [ -n "$SW" ] && [ -n "$SH" ] || { echo "无法读取源视频尺寸" >&2; exit 2; }
 
-# H.264 可直接输出 NV12。HEVC Main 10 则先降帧、按目标比例缩放,
-# 再把 10bit 转成 8bit NV12, 避免通过本地管道搬运 4K 原始帧。
-PW=$SW
-PH=$SH
+# 统一先缩到目标尺寸再出 NV12: 管道里只搬 480x360 的小帧,
+# 不再把 4K 原始帧(每帧 8MB)经 CPU 拷给 FFmpeg 再缩放 —— 这是之前 15 秒要转 37 秒的主因。
+PW=${W}
+PH=$(( (SH * W + SW / 2) / SW ))
+if [ "$PH" -gt "$H" ]; then
+    PH=$H
+    PW=$(( (SW * H + SH / 2) / SH ))
+fi
+PW=$(( (PW + 1) / 2 * 2 ))
+PH=$(( (PH + 1) / 2 * 2 ))
 if [ "$CODEC" = "hevc" ] || [ "$CODEC" = "h265" ]; then
     DECODER=(h265parse ! v4l2slh265dec video-device="$VIDEO" media-device="$MEDIA")
-    PW=$W
-    PH=$(( (SH * W + SW / 2) / SW ))
-    if [ "$PH" -gt "$H" ]; then
-        PH=$H
-        PW=$(( (SW * H + SH / 2) / SH ))
-    fi
-    PW=$(( (PW + 1) / 2 * 2 ))
-    PH=$(( (PH + 1) / 2 * 2 ))
     POST=(videorate ! "video/x-raw,framerate=${FPS}/1" !
-          videoscale ! "video/x-raw,width=${PW},height=${PH}" !
-          videoconvert ! video/x-raw,format=NV12 ! fdsink fd=1 sync=false)
+          videoconvert ! video/x-raw,format=NV12 !
+          videoscale ! "video/x-raw,width=${PW},height=${PH},format=NV12" !
+          fdsink fd=1 sync=false)
 elif [ "$CODEC" = "h264" ]; then
     DECODER=(h264parse ! v4l2slh264dec video-device="$VIDEO" media-device="$MEDIA")
-    POST=(videorate ! "video/x-raw,format=NV12,framerate=${FPS}/1" ! fdsink fd=1 sync=false)
+    POST=(videorate ! "video/x-raw,framerate=${FPS}/1" !
+          videoconvert ! video/x-raw,format=NV12 !
+          videoscale ! "video/x-raw,width=${PW},height=${PH},format=NV12" !
+          fdsink fd=1 sync=false)
 else
     echo "VPU 暂不支持输入编码: $CODEC" >&2
     exit 2
@@ -78,7 +80,7 @@ set +e
 "$FFMPEG" -y -hide_banner -loglevel error \
     -f rawvideo -pixel_format nv12 -video_size "${PW}x${PH}" -framerate "$FPS" -i pipe:0 \
     -i "$SRC" -map 0:v:0 -map '1:a?' \
-    -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos" \
+    -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear" \
     -c:v libx264 -preset ultrafast -threads "${TSF_VPU_ENC_THREADS:-4}" \
     -b:v "${BITRATE}k" -maxrate "${MAXRATE}k" -bufsize "${BUF}k" \
     -c:a copy -movflags +faststart -f mp4 "${FFMPEG_LIMIT[@]}" "$DST"
