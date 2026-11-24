@@ -63,7 +63,7 @@ mkdir -p "$DATA/archive/SentryClips" "$DATA/archive/SavedClips" "$DATA/archive/R
 
 sh "$TSF_DIR/prepare-teslacam.sh" "$DATA/teslacam.img" "$SIZE_GB" "$TSF_DIR/mkexfat.py"
 
-sed -i "s|^TSF_IMG=.*|TSF_IMG=$DATA/teslacam.img|; s|^TSF_ARCHIVE=.*|TSF_ARCHIVE=$DATA/archive|; s|^TSF_CACHE=.*|TSF_CACHE=$DATA/cache|; s|^TSF_BOX_MAX_GB=.*|TSF_BOX_MAX_GB=$ARCHIVE_GB|" "$CONF"
+sed -i "s|^TSF_IMG=.*|TSF_IMG=$DATA/teslacam.img|; s|^TSF_ARCHIVE=.*|TSF_ARCHIVE=$DATA/archive|; s|^TSF_CACHE=.*|TSF_CACHE=$DATA/cache|" "$CONF"
 
 systemctl restart tesla-gadget.service tesla-live.service
 echo "initialized $SIZE_GB $ARCHIVE_GB"

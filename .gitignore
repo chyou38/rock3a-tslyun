@@ -15,6 +15,7 @@ Thumbs.db
 *.swp
 # 设备运行时数据与密钥 (绝不入库)
 auth.conf
+wifi-networks.json
 ota-src.json
 settings.json
 health.log

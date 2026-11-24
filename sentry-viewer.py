@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.50"
+APP_VERSION = "2.8.55"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -729,7 +729,7 @@ BRAND_LOGO_B64 = (
 
 def load_settings():
     d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
-         "archive_retention_days": 0, "archive_low_water_pct": 10}
+         "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -746,6 +746,11 @@ def load_settings():
                 d["archive_low_water_pct"] = max(0, min(int(j.get("archive_low_water_pct", 10) or 0), 50))
             except (TypeError, ValueError):
                 d["archive_low_water_pct"] = 10
+            # 预缓冲额度剩余低于该百分比时自动清理 (5-30%)
+            try:
+                d["preview_low_water_pct"] = max(5, min(int(j.get("preview_low_water_pct") or 10), 30))
+            except (TypeError, ValueError):
+                d["preview_low_water_pct"] = 10
             # 预缓冲策略: 播放停止后恢复分钟数与预解码秒数 (之前没读回, 保存后又被默认值盖掉)
             try:
                 d["prewarm_resume_min"] = max(1, min(int(j.get("prewarm_resume_min") or 2), 1440))
@@ -1782,9 +1787,9 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint" id="net-wifi-live">--</div>
     <div class="brandrow">
       <button class="storage-btn" onclick="netScan()">扫描无线</button>
-      <button class="storage-btn" onclick="netForget()">忘记网络</button>
     </div>
     <div id="net-aps" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0"></div>
+    <div id="net-saved" style="display:flex;flex-direction:column;gap:6px;margin:6px 0"></div>
     <div class="brandrow"><input class="ninput" id="net-ssid" placeholder="SSID" autocomplete="off"></div>
     <div class="brandrow"><input class="ninput" id="net-psk" type="password" placeholder="无线密码 (留空为开放网络)" autocomplete="new-password"></div>
     <div class="brandrow"><button class="primary" onclick="netApplyWifi()">连接无线</button></div>
@@ -1937,8 +1942,9 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <div class="storbar"><i id="pwcachbar"></i></div>
       <div class="storrow"><span class="storlab">归档区占用</span><span class="storval" id="pwarc">读取中…</span></div>
       <div class="storbar"><i id="pwarcbar"></i></div>
-      <div class="storrow"><span class="storlab">视频 10 秒预缓冲</span><span class="storval" id="pwprev">读取中…</span></div>
+      <div class="storrow"><span class="storlab">视频预缓冲 <span id="pwprev-arrow" onclick="togglePwPrev()" style="cursor:pointer;font-size:11px;color:var(--muted2)">▸</span></span><span class="storval" id="pwprev">读取中…</span></div>
       <div class="storbar"><i id="pwprevbar"></i></div>
+      <div id="pwprev-detail" style="display:none;margin:3px 0 7px"></div>
       <div class="storrow"><span class="storlab">列表缩略图</span><span class="storval" id="pwthumb">读取中…</span></div>
       <div class="storbar"><i id="pwthumbbar"></i></div>
       <div class="arc-clean">
@@ -1956,14 +1962,19 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
           <span class="hint">秒</span>
           <button class="arc-btn" onclick="savePrewarmPolicy()">确定</button>
         </div>
-        <div class="hint">播放视频时自动暂停列表缩略图与 10 秒预缓冲，停止播放后按所选时间恢复。</div>
+        <div class="arc-clean-row">
+          <span class="hint">额度剩余低于</span>
+          <input id="pw-lowwater" class="arc-input" type="number" min="5" max="30" step="1" inputmode="numeric">
+          <span class="hint">% 自动清理</span>
+        </div>
+        <div class="hint">播放视频时自动暂停列表缩略图与后台预缓冲；360P 优先，480P/720P 由硬解在空闲时补档，停止播放后按所选时间恢复。</div>
       </div>
       <div class="arc-clean">
         <div class="arc-clean-head"><b>归档自动清理</b><span class="hint" id="arc-clean-last">尚未清理</span></div>
         <div class="arc-clean-row">
           <span class="hint">保留</span>
           <select id="arc-ret" class="arc-select">
-            <option value="0">永不清理</option>
+            <option value="0">0 天（不按天数）</option>
             <option value="7">7 天</option>
             <option value="14">14 天</option>
             <option value="30">30 天</option>
@@ -1983,7 +1994,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
             <option value="20">20%</option>
             <option value="30">30%</option>
           </select>
-          <span class="hint">新归档一条就清最旧一条</span>
+          <span class="hint">低于水位自动清理到水位+5%</span>
         </div>
         <div class="hint" id="arc-clean-msg"></div>
       </div>
@@ -3124,7 +3135,14 @@ function kickGroup(ix) {
   try { fetch('/api/kick', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({paths: paths, q: q, sid: playbackSid})}).catch(() => {}); } catch (e) {}
 }
-/* 归档页进度: 系统盘占用 + 10 秒预缓冲(360p/480p/720p) + 列表缩略图 */
+function togglePwPrev() {
+  const d = document.getElementById('pwprev-detail'), a = document.getElementById('pwprev-arrow');
+  if (!d || !a) return;
+  const open = d.style.display === 'none';
+  d.style.display = open ? '' : 'none';
+  a.textContent = open ? '▾' : '▸';
+}
+/* 归档页进度: 系统盘占用 + 预缓冲(360p/480p/720p 三档) + 列表缩略图 */
 async function pollPrewarm() {
   try {
     const r = await fetch('/api/prewarm_stats', {cache: 'no-store'});
@@ -3141,7 +3159,26 @@ async function pollPrewarm() {
     const cv = document.getElementById('pwcach'), cb = document.getElementById('pwcachbar');
     if (pv) pv.textContent = d.preview_done + ' / ' + d.preview_total + ' · ' + pp + '%';
     if (pb) pb.style.width = pp + '%';
-    if (tv) tv.textContent = d.thumb_done + ' / ' + d.thumb_total + ' · ' + tp + '%';
+    const pbd = document.getElementById('pwprev-detail');
+    if (pbd) {
+      pbd.innerHTML = '';
+      (d.preview_by || []).forEach(r => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--muted2);margin-top:4px';
+        const l = document.createElement('span');
+        l.textContent = r.q.replace('p', 'P') + (r.hw ? ' · 硬解补档' : '');
+        const v = document.createElement('span');
+        v.textContent = r.files + ' 个 · 当前' + (d.preview_sec || '') + 's 覆盖 ' + r.cover + '/' + r.total + ' · ' + r.pct + '%';
+        row.appendChild(l); row.appendChild(v);
+        pbd.appendChild(row);
+        const bar = document.createElement('div');
+        bar.className = 'storbar';
+        bar.innerHTML = '<i style="width:' + r.pct + '%"></i>';
+        pbd.appendChild(bar);
+      });
+    }
+    if (tv) tv.textContent = d.thumb_done + ' / ' + d.thumb_total + ' · ' + tp + '%' +
+      (d.thumb_bytes ? ' · ' + fsz(d.thumb_bytes) : '');
     if (tb) tb.style.width = tp + '%';
     if (sv) sv.textContent = fsz(d.sys_used) + ' / ' + fsz(d.sys_total) + ' · ' + sp + '%';
     if (sb) { sb.style.width = sp + '%'; sb.style.background = storColor(sp); }
@@ -3177,6 +3214,8 @@ async function loadPrewarmPolicy() {
     if (sel) sel.value = String(j.resume_min || 10);
     const pv = document.getElementById('pw-prev');
     if (pv) pv.value = String(j.preview_sec || 60);
+    const lw = document.getElementById('pw-lowwater');
+    if (lw) lw.value = String(j.preview_low_water_pct || 10);
     const st = document.getElementById('pw-policy-state');
     if (st) st.textContent = j.paused
       ? ('已暂停 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复')
@@ -3192,10 +3231,14 @@ async function savePrewarmPolicy() {
   if (!psec || psec < 5) psec = 5;
   if (psec > 120) psec = 120;
   if (document.getElementById('pw-prev')) document.getElementById('pw-prev').value = String(psec);
+  let pwater = parseInt((document.getElementById('pw-lowwater') || {}).value || '10', 10);
+  if (!pwater || pwater < 5) pwater = 5;
+  if (pwater > 30) pwater = 30;
+  if (document.getElementById('pw-lowwater')) document.getElementById('pw-lowwater').value = String(pwater);
   try {
     const j = await (await fetch('/api/prewarm_policy', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins, preview_sec: psec})})).json();
-    toast(j.ok ? ('✅ 已保存：预解码 ' + psec + ' 秒 · 停止播放 ' + mins + ' 分钟后恢复') : '❌ 保存失败');
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins, preview_sec: psec, preview_low_water_pct: pwater})})).json();
+    toast(j.ok ? ('✅ 已保存：预解码 ' + psec + ' 秒 · 剩余低于 ' + pwater + '% 自动清理 · 停止播放 ' + mins + ' 分钟后恢复') : '❌ 保存失败');
     loadPrewarmPolicy();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -3212,7 +3255,7 @@ async function saveArchiveRetention() {
   try {
     const j = await (await fetch('/api/archive_retention', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: days, low_water_pct: water})})).json();
-    toast(j.ok ? '✅ 已保存，后台每 6 小时按此清理' : '❌ 保存失败');
+    toast(j.ok ? '✅ 已保存' : '❌ 保存失败');
     loadArchiveRetention();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -4489,6 +4532,7 @@ function netLive(j) {
   document.getElementById('net-wifi-live').textContent = wi.present
     ? ((wi.ssid || '--') + ' · ' + (wi.link || '--') + ' · IP ' + ((wi.ipv4 || []).join(', ') || '--'))
     : t('未检测到无线网卡');
+  netSavedRender(wi.networks || [], wi.ssid || '');
   const ap = j.ap || {}, bt = j.bt || {};
   document.getElementById('net-ap-live').textContent =
     t(ap.mode === 'auto' ? '自动' : (ap.mode === '1' ? '开启' : '关闭')) + ' · ' + (ap.ssid || '--') + ' · ch' + (ap.channel || '-') +
@@ -4570,6 +4614,61 @@ async function netConfirm() {
     const j = await netPost('/api/net/confirm', {});
     netErr(j.msg || '');
     netLoad();
+  } catch (e) { netErr('应用失败'); }
+}
+function netSavedRender(list, current) {
+  const box = document.getElementById('net-saved');
+  if (!box) return;
+  box.textContent = '';
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.className = 'hint';
+    d.textContent = t('暂无已保存网络');
+    box.appendChild(d);
+    return;
+  }
+  list.forEach(it => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--line2);border-radius:8px;padding:6px 9px';
+    const name = document.createElement('span');
+    name.style.cssText = 'font-size:12.5px;flex:1;min-width:120px';
+    name.textContent = it.ssid + (it.ssid === current ? ' · ' + t('已连接') : '');
+    row.appendChild(name);
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!it.auto;
+    cb.onchange = () => netAuto(it.ssid, cb.checked);
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(t('自动连接')));
+    row.appendChild(lab);
+    const b1 = document.createElement('button');
+    b1.className = 'storage-btn'; b1.textContent = t('连接');
+    b1.onclick = () => netConnectSaved(it.ssid);
+    row.appendChild(b1);
+    const b2 = document.createElement('button');
+    b2.className = 'storage-btn'; b2.textContent = t('忘记网络');
+    b2.onclick = () => netForgetSsid(it.ssid);
+    row.appendChild(b2);
+    box.appendChild(row);
+  });
+}
+async function netConnectSaved(ssid) {
+  try {
+    const j = await netPost('/api/net/wifi', { ssid: ssid, psk: '' });
+    if (j.ok) { netErr(''); netLoad(); } else netErr(j.msg || '应用失败');
+  } catch (e) { netErr('应用失败'); }
+}
+async function netForgetSsid(ssid) {
+  if (!confirm(t('忘记网络') + ' ' + ssid + ' ?')) return;
+  try {
+    const j = await netPost('/api/net/wifi/forget', { ssid: ssid });
+    if (j.ok) { netErr(''); netLoad(); } else netErr(j.msg || '应用失败');
+  } catch (e) { netErr('应用失败'); }
+}
+async function netAuto(ssid, on) {
+  try {
+    const j = await netPost('/api/net/wifi/auto', { ssid: ssid, auto: !!on });
+    if (j.ok) { netErr(''); netLoad(); } else netErr(j.msg || '应用失败');
   } catch (e) { netErr('应用失败'); }
 }
 async function netScan() {
@@ -5615,7 +5714,14 @@ def safe_name(name):
     return name if re.match(r'^[\w\-. ]{1,80}$', name) else None
 
 
-def list_events():
+_EVENTS_CACHE = {"t": 0.0, "v": None}
+
+
+def list_events(force=False):
+    """归档事件列表; 10 秒缓存, 避免页面轮询时反复 stat 1296 个 mp4。"""
+    now = time.time()
+    if not force and _EVENTS_CACHE["v"] is not None and now - _EVENTS_CACHE["t"] < 10:
+        return _EVENTS_CACHE["v"]
     out = {}
     for cat in CATS:
         base = os.path.join(ARCHIVE, cat)
@@ -5645,6 +5751,7 @@ def list_events():
                         meta = {}
                 events.append({"name": name, "videos": vids, "size": total, "meta": meta})
         out[cat] = events
+    _EVENTS_CACHE.update(t=now, v=out)
     return out
 
 
@@ -6057,6 +6164,105 @@ def net_confirm():
         return had
 
 
+WIFI_STORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wifi-networks.json")
+_WIFI_STORE_LOCK = threading.Lock()
+
+
+def _wifi_store_read():
+    try:
+        with open(WIFI_STORE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("networks"), dict):
+            return d
+    except (OSError, ValueError):
+        pass
+    return {"networks": {}}
+
+
+def _wifi_store_write(d):
+    try:
+        tmp = WIFI_STORE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, WIFI_STORE_FILE)
+    except OSError:
+        pass
+
+
+def _wpa_networks(n):
+    """从现有 wpa_supplicant 配置里恢复历史网络 (只读迁移, 不改写该文件)。"""
+    out = {}
+    if not n:
+        return out
+    try:
+        with open("/etc/wpa_supplicant/wpa_supplicant-%s.conf" % n, encoding="utf-8") as f:
+            txt = f.read()
+    except OSError:
+        return out
+    for blk in re.findall(r"network\s*=\s*\{(.*?)\}", txt, re.S):
+        m1 = re.search(r'ssid\s*=\s*"((?:[^"\\]|\\.)*)"', blk)
+        if not m1:
+            continue
+        ssid = m1.group(1).replace('\\"', '"').replace("\\\\", "\\")
+        m2 = re.search(r'psk\s*=\s*"((?:[^"\\]|\\.)*)"', blk)
+        psk = m2.group(1) if m2 else ""
+        if not psk:
+            m3 = re.search(r"psk\s*=\s*([0-9a-fA-F]{64})", blk)
+            psk = m3.group(1) if m3 else ""
+        out[ssid] = psk
+    return out
+
+
+def wifi_store():
+    """已保存网络(含密码与自动连接开关); 首次读取时从 netplan / wpa_supplicant 迁移。"""
+    with _WIFI_STORE_LOCK:
+        d = _wifi_store_read()
+        nets = d.setdefault("networks", {})
+        changed = False
+        try:
+            net = _netplan_cfg().get("network") or {}
+            aps = (((net.get("wifis") or {}).get(_wifi_iface()) or {}).get("access-points") or {})
+            for ssid, conf in aps.items():
+                if ssid not in nets:
+                    psk = (conf.get("password") or "") if isinstance(conf, dict) else ""
+                    nets[ssid] = {"psk": psk, "auto": True}
+                    changed = True
+                elif "psk" not in nets[ssid]:
+                    nets[ssid]["psk"] = (conf.get("password") or "") if isinstance(conf, dict) else ""
+                    changed = True
+        except Exception:
+            pass
+        for ssid, psk in _wpa_networks(_wifi_iface()).items():
+            if ssid not in nets:
+                # 只在 wpa_supplicant 里出现的历史网络: 先列出来, 默认不自动连
+                nets[ssid] = {"psk": psk, "auto": False}
+                changed = True
+            elif not nets[ssid].get("psk") and psk:
+                nets[ssid]["psk"] = psk
+                changed = True
+        if changed:
+            _wifi_store_write(d)
+        return d
+
+
+def _wifi_apply_store_aps(n, cfg, store):
+    """把 store 里 auto=True 的网络写进 netplan access-points, 保留其他非本程序写入的项。"""
+    wf = cfg["network"].setdefault("wifis", {}).setdefault(n, {"dhcp4": True, "dhcp6": True})
+    aps = dict(wf.get("access-points") or {})
+    for ssid, info in (store.get("networks") or {}).items():
+        if not info.get("auto", True):
+            aps.pop(ssid, None)
+            continue
+        psk = info.get("psk") or ""
+        aps[ssid] = ({"password": psk} if psk else {})
+    if aps:
+        wf["access-points"] = aps
+    else:
+        wf.pop("access-points", None)
+    return wf
+
+
 def _wifi_iface():
     try:
         for n in sorted(os.listdir("/sys/class/net")):
@@ -6127,8 +6333,11 @@ def net_state():
         except Exception:
             pass
         wi["ipv4"] = _ipv4_of(n)
-        wf = (net.get("wifis") or {}).get(n) or {}
-        wi["saved"] = list((wf.get("access-points") or {}).keys())
+        stored = wifi_store().get("networks") or {}
+        wi["saved"] = list(stored.keys())
+        wi["networks"] = [{"ssid": k, "auto": bool(v.get("auto", True)),
+                           "psk_set": bool(v.get("psk"))}
+                          for k, v in stored.items()]
     st["ap"] = ap_state()
     st["bt"] = bt_state()
     return st
@@ -6169,19 +6378,69 @@ def net_wifi_apply(ssid, psk):
     n = _wifi_iface()
     if not n:
         return False, "未检测到无线网卡"
+    store = wifi_store()
+    if not psk:
+        psk = ((store.get("networks") or {}).get(ssid) or {}).get("psk") or ""
     cfg = _netplan_cfg()
     wf = cfg["network"].setdefault("wifis", {}).setdefault(n, {"dhcp4": True, "dhcp6": True})
-    wf["access-points"] = {ssid: ({"password": psk} if psk else {})}
-    return _netplan_apply(cfg)
+    aps = dict(wf.get("access-points") or {})      # 合并保存, 不再覆盖掉以前连过的网络
+    aps[ssid] = ({"password": psk} if psk else {})
+    wf["access-points"] = aps
+    ok, msg = _netplan_apply(cfg)
+    if ok:
+        with _WIFI_STORE_LOCK:
+            d = _wifi_store_read()
+            nets = d.setdefault("networks", {})
+            nets[ssid] = {"psk": psk, "auto": True}   # 手动连上的网络默认自动连接
+            _wifi_store_write(d)
+    return ok, msg
 
 
-def net_wifi_forget():
+def net_wifi_forget(ssid=""):
     n = _wifi_iface()
+    store = wifi_store()
+    nets = store.get("networks") or {}
+    targets = [ssid] if ssid else list(nets.keys())
+    if ssid and ssid not in nets:
+        return False, "未找到该网络"
     cfg = _netplan_cfg()
     wfs = (cfg.get("network") or {}).get("wifis") or {}
     if n and n in wfs:
-        del wfs[n]
-        return _netplan_apply(cfg)
+        wf = wfs[n]
+        aps = dict(wf.get("access-points") or {})
+        for s in targets:
+            aps.pop(s, None)
+        if aps:
+            wf["access-points"] = aps
+        else:
+            wfs.pop(n, None)
+        ok, msg = _netplan_apply(cfg)
+        if not ok:
+            return ok, msg
+    with _WIFI_STORE_LOCK:
+        for s in targets:
+            nets.pop(s, None)
+        _wifi_store_write(store)
+    return True, "ok"
+
+
+def net_wifi_auto(ssid, auto):
+    if not ssid:
+        return False, "参数无效"
+    store = wifi_store()
+    nets = store.get("networks") or {}
+    if ssid not in nets:
+        return False, "未找到该网络"
+    n = _wifi_iface()
+    cfg = _netplan_cfg()
+    nets[ssid]["auto"] = bool(auto)
+    wf = _wifi_apply_store_aps(n, cfg, store) if n else None
+    if n:
+        ok, msg = _netplan_apply(cfg)
+        if not ok:
+            return ok, msg
+    with _WIFI_STORE_LOCK:
+        _wifi_store_write(store)
     return True, "ok"
 
 
@@ -7659,6 +7918,12 @@ PLAYBACK_TTL = 30
 THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/thumbs"
 THUMB_SEM = threading.BoundedSemaphore(3)
 THUMB_W = 400
+THUMB_QUOTA = 2 * 1024 * 1024 * 1024      # 列表/触发封面单独 2G, 不挤占预缓冲 30G
+THUMB_TTL = 30 * 86400                    # 缩略图保留 30 天; 命中时刷新 mtime
+THUMB_LEGACY_AGE = 7 * 86400              # 没有 .src 的老缩略图, 7 天后清掉
+_THUMB_CLEAN_LAST = {"t": 0.0}
+_THUMB_STATS_CACHE = {"t": 0.0, "v": None}
+_THUMB_MIGRATED = {"done": False}
 
 
 def thumb_cache_path(fp, ss_t=1.0):
@@ -7671,9 +7936,49 @@ def thumb_cache_path(fp, ss_t=1.0):
     return os.path.join(THUMB_DIR, key + ".jpg")
 
 
-def thumb_file(fp, ss_t=1.0):
-    """抽指定秒数那一帧并缓存在 eMMC, 返回 jpg 路径; 抽不出来返回 None。
-    列表缩略图 (/thumb) 和飞书推送封面共用。"""
+def _thumb_meta_path(out):
+    return out + ".src"
+
+
+def _thumb_read_meta(out):
+    try:
+        with open(_thumb_meta_path(out), encoding="utf-8") as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _thumb_write_meta(out, src, kind, ss_t):
+    """给缩略图写源片侧车, 清理和统计都靠它区分列表封面/触发封面。"""
+    try:
+        old = _thumb_read_meta(out) or {}
+        keep_list = old.get("kind") == "list"
+        final_kind = "list" if keep_list else kind
+        ss_val = round(float(ss_t), 3)
+        if (old.get("src") == src and old.get("kind") == final_kind
+                and old.get("ss") == ss_val):
+            return
+        meta = {"v": 1, "src": src, "kind": final_kind,
+                "ss": ss_val, "ts": int(time.time())}
+        tmp = _thumb_meta_path(out) + ".%d.tmp" % threading.get_ident()
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        os.replace(tmp, _thumb_meta_path(out))
+    except OSError:
+        pass
+
+
+def _thumb_touch(out):
+    try:
+        os.utime(out, None)
+    except OSError:
+        pass
+
+
+def thumb_file(fp, ss_t=1.0, kind="list"):
+    """抽指定秒数那一帧并缓存在数据盘, 返回 jpg 路径; 抽不出来返回 None。
+    列表缩略图 (/thumb) 和飞书推送封面共用; kind=list/trigger 用于统计和清理。"""
     out = thumb_cache_path(fp, ss_t)
     if not out:
         return None
@@ -7683,6 +7988,8 @@ def thumb_file(fp, ss_t=1.0):
     except OSError:
         pass
     if os.path.isfile(out):
+        _thumb_touch(out)
+        _thumb_write_meta(out, fp, kind, ss_t)
         return out
     try:
         os.makedirs(THUMB_DIR, exist_ok=True)
@@ -7693,6 +8000,8 @@ def thumb_file(fp, ss_t=1.0):
         return None
     try:
         if os.path.isfile(out):
+            _thumb_touch(out)
+            _thumb_write_meta(out, fp, kind, ss_t)
             return out
         # 指定秒数可能落在片段末尾之外(触发帧偏移略超时长), 逐级回落
         for ss in ("%.1f" % ss_t, "1", "0"):
@@ -7705,6 +8014,7 @@ def thumb_file(fp, ss_t=1.0):
                                capture_output=True, timeout=30)
                 if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     os.replace(tmp, out)
+                    _thumb_write_meta(out, fp, kind, ss_t)
                     return out
             except Exception:
                 pass
@@ -7716,6 +8026,139 @@ def thumb_file(fp, ss_t=1.0):
                 os.remove(tmp)
             except OSError:
                 pass
+
+
+def _thumb_del(out):
+    for x in (out, _thumb_meta_path(out)):
+        try:
+            os.unlink(x)
+        except OSError:
+            pass
+
+
+def thumb_cleanup(force=False):
+    """缩略图清理: 源片删除立即清; 超过 TTL/无侧车老文件清; 超 2G 从最旧淘汰。"""
+    if not storage_ready():
+        return
+    now = time.time()
+    if not force and now - _THUMB_CLEAN_LAST["t"] < 300:
+        return
+    _THUMB_CLEAN_LAST["t"] = now
+    removed = False
+    files = []
+    try:
+        for f in os.listdir(THUMB_DIR):
+            if not f.endswith(".jpg"):
+                continue
+            out = os.path.join(THUMB_DIR, f)
+            try:
+                age = now - os.path.getmtime(out)
+                sz = os.path.getsize(out)
+            except OSError:
+                continue
+            meta = _thumb_read_meta(out)
+            src = (meta or {}).get("src") or ""
+            if src and not os.path.isfile(src):
+                _thumb_del(out)
+                removed = True
+                continue
+            if not meta and age > THUMB_LEGACY_AGE:
+                _thumb_del(out)
+                removed = True
+                continue
+            if age > THUMB_TTL:
+                _thumb_del(out)
+                removed = True
+                continue
+            files.append((out, sz, os.path.getmtime(out)))
+        total = sum(x[1] for x in files)
+        if total > THUMB_QUOTA:
+            target = int(THUMB_QUOTA * 0.8)
+            files.sort(key=lambda x: x[2])
+            for out, sz, _mt in files:
+                if total <= target:
+                    break
+                _thumb_del(out)
+                total -= sz
+                removed = True
+        if removed:
+            _THUMB_STATS_CACHE["t"] = 0
+            _CACHE_USED["t"] = 0
+            _invalidate_storage_caches()
+    except Exception:
+        pass
+
+
+def thumb_migrate_legacy():
+    """给旧版没有 .src 的列表缩略图补侧车; 匹配不上的是旧触发封面/孤儿, 留给 TTL 清。"""
+    if _THUMB_MIGRATED["done"] or not storage_ready() or not os.path.isdir(THUMB_DIR):
+        return
+    try:
+        expected = {}
+        for _ts, _cat, _name, d in _archive_events():
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for f in names:
+                if not f.lower().endswith(".mp4"):
+                    continue
+                fp = os.path.join(d, f)
+                out = thumb_cache_path(fp, 1.0)
+                if out:
+                    expected[os.path.basename(out)] = fp
+        n = 0
+        for f in os.listdir(THUMB_DIR):
+            if not f.endswith(".jpg"):
+                continue
+            out = os.path.join(THUMB_DIR, f)
+            meta = _thumb_read_meta(out)
+            if meta and meta.get("kind") == "list":
+                continue
+            src = expected.get(f)
+            if src:
+                _thumb_write_meta(out, src, "list", 1.0)
+                n += 1
+        _THUMB_MIGRATED["done"] = True
+        if n:
+            _THUMB_STATS_CACHE["t"] = 0
+            print("[thumb] 旧缩略图补源片侧车 %d 张" % n, flush=True)
+    except Exception:
+        pass
+    finally:
+        if storage_ready():
+            _THUMB_MIGRATED["done"] = True
+
+
+def _thumb_stats():
+    """列表封面覆盖数按「源片」算, 不按 jpg 个数算; 触发封面不计入列表进度。"""
+    now = time.time()
+    if _THUMB_STATS_CACHE["v"] is not None and now - _THUMB_STATS_CACHE["t"] < 30:
+        return _THUMB_STATS_CACHE["v"]
+    covers = set()
+    files = 0
+    total = 0
+    try:
+        for f in os.listdir(THUMB_DIR):
+            if not f.endswith(".jpg"):
+                continue
+            out = os.path.join(THUMB_DIR, f)
+            files += 1
+            try:
+                total += os.path.getsize(out)
+            except OSError:
+                pass
+            meta = _thumb_read_meta(out)
+            if not meta:
+                continue
+            src = meta.get("src") or ""
+            if src and meta.get("kind") != "trigger" and os.path.isfile(src):
+                covers.add(src)
+    except OSError:
+        pass
+    d = {"done": len(covers), "files": files, "bytes": total}
+    _THUMB_STATS_CACHE.update(t=now, v=d)
+    return d
 # ---------- 在线清晰度: 按需转码 + eMMC 缓存 (设备端单任务串行, 防止重转码打崩内核) ----------
 # 源可為 1280x960(4:3) 或新硬體 2896x1876/1448x938(≈1.54:1)。固定目標碼率: 公網上行慢, CRF 碼率不可控會傳不完。
 # 縮放必须 force_divisible_by=2: 非 4:3 源按比例縮到 640 寬時高為 415(奇數), libx264 yuv420p 會直接報錯,
@@ -7732,8 +8175,11 @@ RES_ENC_VER = "4"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
-PREVIEW_MAX = 30 * 1024 * 1024 * 1024   # 系统盘 30G 额度: 全档 10 秒预缓冲常驻, 不再频繁淘汰
+PREVIEW_QUOTA = 30 * 1024 * 1024 * 1024   # 预缓冲视频单独 30G; 缩略图另算, 不再挤占这个额度
 PREVIEW_TTL = 30 * 86400       # 预缓冲保留 30 天; 源视频被删则立即清对应缓存
+PREVIEW_ORPHAN_AGE = 7 * 86400 # 没有 .src 无法核对源文件的老缓存, 7 天后清掉
+PREVIEW_HOT = {}               # 最近正在被点播的预缓冲路径 -> 最后访问时间, 水位淘汰时跳过
+_PREVIEW_CLEAN_LAST = {"t": 0.0}  # 预缓冲全量扫描节流, 避免每 15 秒翻 2000+ 个文件
 VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-transcode.sh")
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
 Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))  # 2 个预览/预热 + 1 个用户请求; 预览只转 10 秒, 并发高一点起播更快
@@ -7766,10 +8212,47 @@ def res_cleanup():
         pass
 
 
-def preview_cleanup():
-    """系统盘预缓冲: 源视频删除/超过3天/超容量时清理, 同时清残留 tmp。"""
+def preview_low_water_pct():
+    """预缓冲剩余低于该百分比时开始自动清理, 默认 10%。"""
     try:
-        now = time.time()
+        v = int(load_settings().get("preview_low_water_pct", 10) or 10)
+    except (TypeError, ValueError):
+        v = 10
+    return max(5, min(v, 30))
+
+
+def _invalidate_storage_caches():
+    """归档/预缓冲清理后统一失效统计缓存, 别让面板继续显示旧占用。"""
+    for name, key in (("_ARC_SIZE_CACHE", "t"), ("_ARCH_SRC_CACHE", "t"),
+                      ("_ARCH_INFO_CACHE", "t"), ("_CACHE_USED", "t"),
+                      ("_PREVIEW_STATS_CACHE", "ts"), ("_THUMB_STATS_CACHE", "t"),
+                      ("_EVENTS_CACHE", "t")):
+        cache = globals().get(name)
+        if isinstance(cache, dict):
+            cache[key] = 0
+
+
+def preview_hot_mark(fp):
+    """记录最近被点播的预缓冲文件, 防止水位淘汰删到正在看的那一段。"""
+    if fp and os.path.dirname(fp) == PREVIEW_DIR:
+        PREVIEW_HOT[fp] = time.time()
+
+
+def preview_cleanup(force=False):
+    """预缓冲清理: 源视频被删/超过保留期/无 .src 老残留立即清;
+       30G 额度剩余低于水位(默认10%)时按最旧开始淘汰, 清到留出 5% 余量。
+       缩略图有独立额度和独立清理, 不再把缩略图占用算进这 30G。"""
+    if not storage_ready():            # 归档盘未挂载时所有 .src 都会判成源片丢失, 绝不能清
+        return
+    now = time.time()
+    if not force and now - _PREVIEW_CLEAN_LAST["t"] < 60:
+        return                         # 预缓冲线程每 15 秒跑一次, 全量扫盘节流到 60 秒
+    _PREVIEW_CLEAN_LAST["t"] = now
+    removed = False
+    try:
+        for hp, ht in list(PREVIEW_HOT.items()):
+            if now - ht > 3600:
+                PREVIEW_HOT.pop(hp, None)
         for f in os.listdir(PREVIEW_DIR):
             p = os.path.join(PREVIEW_DIR, f)
             if f.endswith(".tmp") and now - os.path.getmtime(p) > 1800:
@@ -7790,31 +8273,50 @@ def preview_cleanup():
                 src = ""
             try:
                 age = now - os.path.getmtime(p)
+                sz = os.path.getsize(p)
+                mt = os.path.getmtime(p)
             except OSError:
                 continue
-            if age > PREVIEW_TTL or (src and not os.path.isfile(src)):
+            if age > PREVIEW_TTL or (src and not os.path.isfile(src)) or (not src and age > PREVIEW_ORPHAN_AGE):
+                for x in (p, p + ".meta", src_file):
+                    try:
+                        os.unlink(x)
+                        removed = True
+                    except OSError:
+                        pass
+                PREVIEW_HOT.pop(p, None)
+                continue
+            files.append((p, sz, mt, PREVIEW_HOT.get(p, 0.0)))
+        used = sum(x[1] for x in files)
+        pct = preview_low_water_pct()
+        trigger = PREVIEW_QUOTA * (100 - pct) / 100.0
+        target = PREVIEW_QUOTA * (100 - min(30, pct + 5)) / 100.0
+        if used <= trigger:
+            if removed:
+                _invalidate_storage_caches()
+            return
+        with PLAYBACK_LOCK:
+            playing = bool(PLAYBACK_SESSIONS)
+        if playing:                    # 播放中绝不按水位淘汰, 等空闲再清
+            if removed:
+                _invalidate_storage_caches()
+            return
+        files.sort(key=lambda x: x[2])
+        for p, sz, _mt, hot_ts in files:
+            if used <= target:
+                break
+            if hot_ts and now - hot_ts < 900:
+                continue               # 最近 15 分钟被点播过的预缓冲不删
+            for x in (p, p + ".meta", p + ".src"):
                 try:
-                    os.unlink(p)
-                    os.unlink(src_file)
+                    os.unlink(x)
+                    removed = True
                 except OSError:
                     pass
-                continue
-            if os.path.isfile(p):
-                files.append(p)
-        total = sum(os.path.getsize(f) for f in files)
-        if total <= PREVIEW_MAX:
-            return
-        files.sort(key=lambda f: os.path.getmtime(f))
-        for f in files:
-            if total <= PREVIEW_MAX:
-                break
-            sz = os.path.getsize(f)
-            try:
-                os.unlink(f)
-                os.unlink(f + ".src")
-            except OSError:
-                pass
-            total -= sz
+            PREVIEW_HOT.pop(p, None)
+            used -= sz
+        if removed:
+            _invalidate_storage_caches()
     except Exception:
         pass
 
@@ -7841,26 +8343,31 @@ RECENT_KEEP_MIN = int(os.environ.get("TSF_RECENT_KEEP_MIN", "60"))    # 兜底�
 # 同步进行中的目录 (1 小时内有改动) 跳过, 非时间戳命名的目录一律不动。
 # 清掉的分类/事件会记入 /archive/.pruned 墓碑文件, 同步端读到就跳过 —— 否则车机 U 盘上
 # 还留着的旧事件会被当成新片段重抄回来, 形成 删除→重抄 的死循环 (和 RecentClips 同理)。
-BOX_KEEP_DAYS = int(os.environ.get("TSF_BOX_KEEP_DAYS", "14"))        # 盒子侧哨兵/手动保存保留天数, 0=不按天数清
-BOX_MAX_GB = int(os.environ.get("TSF_BOX_MAX_GB", "12"))              # 盒子侧单个分类体积上限(GB), 0=不按体积清
-# 容量滚动策略 (默认主策略): 归档剩余低于分配额度的 MIN_PCT% 时, 从最旧的已归档
-# 事件开始删, 删到剩余 >= TARGET_PCT% 为止 (留回差避免反复触发)。额度实时拉取,
-# 阈值可在 conf 里改, 不写死。只删盒子归档副本, 车机 U 盘那份永远不碰。
-ARC_FREE_MIN_PCT = float(os.environ.get("TSF_ARC_FREE_MIN_PCT", "10"))
-ARC_FREE_TARGET_PCT = float(os.environ.get("TSF_ARC_FREE_TARGET_PCT", "15"))
+BOX_KEEP_DAYS = int(os.environ.get("TSF_BOX_KEEP_DAYS", "0"))        # 旧方案B保留天数, 默认关闭; 保留天数统一走页面设置
+BOX_MAX_GB = int(os.environ.get("TSF_BOX_MAX_GB", "0"))              # 旧方案B单类体积上限, 默认关闭
+# 容量滚动策略 (默认主策略): 归档剩余低于页面设置 archive_low_water_pct() 时,
+# 从最旧的已归档事件开始删, 删到剩余 >= 水位+5% 为止 (留回差避免反复触发)。
+# 页面水位 0=关闭; 额度实时拉取。只删盒子归档副本, 车机 U 盘那份永远不碰。
 PRUNED_FILE = os.path.join(ARCHIVE, ".pruned")                        # 墓碑: 每行 "分类/事件名", 同步端跳过
 
 
 def _archive_quota():
     """归档分配额度实时拉取: 镜像与归档同盘时 = 整盘格式化容量 - 虚拟U盘镜像标称容量。
-    与初始化分配口径一致; 不同盘或取不到时返回 0 (调用方自行回退)。"""
+    与初始化分配口径一致; 不同盘或取不到时返回 0 (调用方自行回退)。
+    缩略图缓存若和归档同盘, 预留独立 THUMB_QUOTA; 预缓冲在系统盘, 不占这里。"""
     try:
         if os.stat(IMG).st_dev != os.stat(ARCHIVE).st_dev:
             return 0
         hf = os.statvfs(os.path.dirname(IMG) or "/")
         if hf.f_blocks <= 0:
             return 0
-        return max(0, hf.f_blocks * hf.f_frsize - os.stat(IMG).st_size)
+        reserve = 0
+        try:
+            if os.stat(THUMB_DIR).st_dev == os.stat(ARCHIVE).st_dev:
+                reserve = THUMB_QUOTA
+        except OSError:
+            pass
+        return max(0, hf.f_blocks * hf.f_frsize - os.stat(IMG).st_size - reserve)
     except OSError:
         return 0
 
@@ -7900,8 +8407,14 @@ def roll_recent():
     n = 0
     for dt, e in evs:
         if dt < cutoff:
-            shutil.rmtree(os.path.join(rd, e), ignore_errors=True)
-            n += 1
+            p = os.path.join(rd, e)
+            shutil.rmtree(p, ignore_errors=True)
+            if not os.path.isdir(p):
+                n += 1
+    if n:
+        _invalidate_storage_caches()
+        preview_cleanup(force=True)
+        thumb_cleanup(force=True)
     return n
 
 
@@ -7973,18 +8486,24 @@ def roll_box():
                 if not os.path.isdir(p):
                     _tombstone(cat, e)
                     n += 1
+    if n:
+        _invalidate_storage_caches()
+        preview_cleanup(force=True)
+        thumb_cleanup(force=True)
     return n
 
 
 def roll_archive_capacity():
-    """容量滚动: 归档剩余 < 额度的 ARC_FREE_MIN_PCT% 时, 跨分类按事件时间从最旧
-    开始删, 删到剩余 >= ARC_FREE_TARGET_PCT%。额度/阈值全部实时取, 不写死。
-    只删盒子归档副本; 1 小时内有改动的目录 (可能还在同步) 跳过。"""
+    """容量滚动: 归档剩余低于页面设定水位时, 跨分类按事件时间从最旧开始删,
+    删到剩余 >= 水位+5%。页面水位 0=关闭; 只删盒子归档副本; 1 小时内有改动的目录跳过。"""
     quota = _archive_quota()
-    if quota <= 0 or ARC_FREE_MIN_PCT <= 0:
+    threshold = archive_low_water_pct()
+    if quota <= 0 or threshold <= 0:
         return 0
     used = archive_size()
-    if (quota - used) * 100.0 / quota >= ARC_FREE_MIN_PCT:
+    free_pct = (quota - used) * 100.0 / quota
+    target = min(50.0, threshold + 5.0)
+    if free_pct >= threshold:
         return 0
     evs = []
     for cat in ("SentryClips", "SavedClips"):
@@ -8004,18 +8523,68 @@ def roll_archive_capacity():
                 continue
     evs.sort()
     n = 0
+    freed = 0
     for dt, cat, e, p, sz in evs:
-        if (quota - used) * 100.0 / quota >= ARC_FREE_TARGET_PCT:
+        if (quota - used) * 100.0 / quota >= target:
             break
         shutil.rmtree(p, ignore_errors=True)
         if not os.path.isdir(p):
             _tombstone(cat, e)
             used = max(0, used - sz)
-            _ARC_SIZE_CACHE["t"] = 0      # 让存储卡尽快看到新占用
+            freed += sz
             n += 1
     if n:
-        print("[archive] 容量滚动清理 %d 个最旧事件 (剩余 %.1f%%)" % (
+        _invalidate_storage_caches()
+        preview_cleanup(force=True)      # 原片没了, 对应预缓冲立即清
+        thumb_cleanup(force=True)        # 缩略图也跟着源片一起清
+        ARCH_CLEAN.update({"last": int(time.time()), "deleted": n, "freed": freed,
+                           "msg": "容量水位清理 %d 个最旧事件、释放 %.2f GB, 剩余 %.0f%%"
+                                  % (n, freed / 1073741824.0, (quota - used) * 100.0 / quota)})
+        print("[archive] 容量水位清理 %d 个最旧事件 (剩余 %.1f%%)" % (
             n, (quota - used) * 100.0 / quota), flush=True)
+    return n
+
+
+def emergency_cleanup():
+    """物理盘快满时的兜底: 不再只盯着 RecentClips, 跨分类删最旧事件到 FREE_TARGET。
+       只删盒子归档副本; 1 小时内有改动的目录跳过 (可能还在同步)。"""
+    if free_mb(ARCHIVE) >= FREE_MIN_MB:
+        return 0
+    evs = []
+    for cat in CATS:
+        base = os.path.join(ARCHIVE, cat)
+        if not os.path.isdir(base):
+            continue
+        for e in os.listdir(base):
+            dt = _ev_dt(e)
+            if not dt:
+                continue
+            p = os.path.join(base, e)
+            try:
+                if time.time() - os.path.getmtime(p) < 3600:
+                    continue
+                evs.append((dt, cat, e, p, _dir_size(p)))
+            except OSError:
+                continue
+    evs.sort()
+    n = 0
+    freed = 0
+    for dt, cat, e, p, sz in evs:
+        if free_mb(ARCHIVE) >= FREE_TARGET_MB:
+            break
+        shutil.rmtree(p, ignore_errors=True)
+        if not os.path.isdir(p):
+            _tombstone(cat, e)
+            freed += sz
+            n += 1
+    if n:
+        _invalidate_storage_caches()
+        preview_cleanup(force=True)
+        thumb_cleanup(force=True)
+        ARCH_CLEAN.update({"last": int(time.time()), "deleted": n, "freed": freed,
+                           "msg": "磁盘兜底清理 %d 个最旧事件、释放 %.2f GB"
+                                  % (n, freed / 1073741824.0)})
+        print("[archive] 磁盘兜底清理 %d 个最旧事件" % n, flush=True)
     return n
 
 
@@ -8063,7 +8632,6 @@ def health_logger():
 
 
 def disk_guard():
-    rd = os.path.join(ARCHIVE, "RecentClips")
     while True:
         if not storage_ready():
             time.sleep(30)
@@ -8084,19 +8652,8 @@ def disk_guard():
             reclaim_ghost_allocations()
         except Exception:
             pass
-        try:   # 兜底: 万一别的数据把盘吃满, 再按空间淘汰最旧的
-            if free_mb(ARCHIVE) < FREE_MIN_MB and os.path.isdir(rd):
-                cutoff = time.time() - RECENT_KEEP_MIN * 60
-                for e in sorted(os.listdir(rd)):   # 目录名即时间戳, 天然按时间排序
-                    if free_mb(ARCHIVE) >= FREE_TARGET_MB:
-                        break
-                    p = os.path.join(rd, e)
-                    try:
-                        if not os.path.isdir(p) or os.path.getmtime(p) > cutoff:
-                            continue
-                    except OSError:
-                        continue
-                    shutil.rmtree(p, ignore_errors=True)
+        try:   # 兜底: 物理盘快满, 跨分类删最旧事件到安全余量
+            emergency_cleanup()
         except Exception:
             pass
         time.sleep(300)
@@ -8241,7 +8798,7 @@ def _trigger_frame(cat, name):
     fp, off, meta = _pick_clip(cat, name)
     if not fp:
         return None, meta
-    return thumb_file(fp, off), meta
+    return thumb_file(fp, off, kind="trigger"), meta
 
 
 def _post_json(url, payload, timeout=12, headers=None):
@@ -9640,14 +10197,14 @@ def order_files(names):
 # ---------- 归档视频 10 秒预缓冲 (系统盘, 空闲才跑) ----------
 # 不再在列表页/后台预转完整视频。只为每个归档摄像头生成前 10 秒 360P 小缓存,
 # 远程点开可先起播; 有人播放、有完整转码、有用户等待时立即让位。
-PREWARM = {"on": os.environ.get("TSF_PREWARM", "1") != "0", "done": 0, "last": "", "skip": {}}
+PREWARM = {"on": os.environ.get("TSF_PREWARM", "1") != "0", "done": 0, "last": "", "skip": {}, "busy": False}
 PREWARM_Q = "360p"
-PREWARM_QS = ["360p"]                   # 白天只补 360p(远程默认档): 一次解码只出一档, 不抢前台 CPU;
-                                        # 480p/720p 的 10 秒档由夜间硬解补档循环负责(见 night_hw_loop)
+PREWARM_QS = ["360p"]                   # 360p 是最高优先级: 白天软解补, 任何时候都先保证它;
+                                        # 480p/720p 由后台硬解补档(见 hw_fill_loop), 只在 360p 空闲时跑
 PREWARM_PENDING = set()                 # 正在预热的文件, 两个预热线程靠它避免撞同一条
 _PREWARM_PICK_LOCK = threading.Lock()
 # 转码优先级 (用户定稿 2026-11-23): 实时预览在看的文件 与 哨兵告警 并列第一,
-# 其次手动保存, 最后行车记录。白天预缓冲与夜间硬解补档共用此顺序。
+# 其次手动保存, 最后行车记录。360p 预缓冲优先于 480p/720p 硬解补档。
 CAT_PRIO = {"SentryClips": 0, "SavedClips": 1, "RecentClips": 2}
 LIVE_HOT = {}                           # fp -> 最近一次实时预览请求时间; 120s 无请求自动过期
 PREVIEW_SECONDS = 30     # 预解码默认 30 秒, 设置里可改 5-120
@@ -9656,7 +10213,7 @@ PREWARM_SEC = 30         # 后台预解码沿用同一目标长度, 旧 10/15 �
 
 def _preview_pick(qs=None, skip=None):
     """按优先级挑一个还没预缓的归档视频: 实时预览在看的文件与哨兵告警并列第一,
-    再手动保存, 最后行车记录; 同级内新文件优先。夜间硬解补档也复用此顺序。
+    再手动保存, 最后行车记录; 同级内新文件优先。后台硬解补档也复用此顺序。
     (旧版跨分类比 mtime, 行车记录每分钟出新片永远最新, 哨兵/手动保存永远排不上)"""
     qs = PREWARM_QS if qs is None else qs
     skip = PREWARM["skip"] if skip is None else skip
@@ -9705,35 +10262,41 @@ def _preview_pick(qs=None, skip=None):
 
 
 def prewarm_loop():
-    """空闲时逐个生成 10 秒预缓冲; 播放/完整转码期间暂停。"""
+    """空闲时逐个生成当前预解码档的 360p 预缓冲; 播放/完整转码期间暂停。"""
     time.sleep(45)
     while True:
         try:
             if not storage_ready():
                 time.sleep(30)
                 continue
+            thumb_migrate_legacy()
+            preview_cleanup()          # 清理不受预缓冲开关影响, 额度满了/源片删了照样要降
+            thumb_cleanup()
             if not PREWARM["on"]:
                 time.sleep(600)
                 continue
-            preview_cleanup()
             with PLAYBACK_LOCK:
                 playing = bool(PLAYBACK_SESSIONS)
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
-            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy or play_hold_active() or NIGHT_HW.get("busy"):
+            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy or play_hold_active():
                 time.sleep(15)
                 continue
             with _PREWARM_PICK_LOCK:
                 job = _preview_pick()
                 if job:
                     PREWARM_PENDING.add(job[1])
+                    PREWARM["busy"] = True
             if not job:
                 time.sleep(60)
                 continue
             _mt, fp, cat, name, qv = job
-            if not Q_SEM.acquire(blocking=False):
+            # 360p 是最高优先级: 先占住优先级标记, 硬解补档的 watcher 会在 0.5s 内让路;
+            # 等 Q_SEM 最多 30s, 避免和前台点播抢同一个转码槽。
+            if not Q_SEM.acquire(timeout=30):
                 with _PREWARM_PICK_LOCK:
                     PREWARM_PENDING.discard(fp)
+                PREWARM["busy"] = False
                 time.sleep(15)
                 continue
             # 播放一开始就掐掉这条后台预缓冲转码, 把 CPU 全部让给正在看的视频
@@ -9765,25 +10328,25 @@ def prewarm_loop():
                 Q_SEM.release()
                 with _PREWARM_PICK_LOCK:
                     PREWARM_PENDING.discard(fp)
+                PREWARM["busy"] = False
             time.sleep(0.5)
         except Exception:
+            PREWARM["busy"] = False
             time.sleep(60)
 
 
-# ---------- 夜间硬解补档: 480p/720p 的 10 秒预览 (默认 22:00-08:00, 空闲才跑) ----------
-# 白天预缓冲只补 360p(软解, 保前台速度); 夜里用 rkvdec 硬解 + RGA 缩放 + x264 编码补 480p/720p。
+# ---------- 后台硬解补档: 480p/720p 当前预览 (全天可跑; 360p 预缓冲/播放优先) ----------
+# 后台硬解补档: 480p/720p 的当前预解码档, 全天可跑, 不再限制 22:00-08:00。
 # 实测(2026-11-23, 4K前视源): 480p 10s ≈ 26.5s/约1核, 720p ≈ 38s/约1.3核, 比软解省电约30%。
-# 有人播放/媒体请求/白天预缓冲在跑时立即取消让路; 硬解失败自动回退软解, 补档进度不受影响。
+# 有人播放/媒体请求/360p 预缓冲在跑时立即取消让路; 硬解失败自动回退软解, 补档进度不受影响。
 NIGHT_HW = {"on": os.environ.get("TSF_NIGHT_HW", "1") != "0",
-            "done": 0, "last": "", "skip": {}, "busy": False}
+            "done": 0, "last": "", "skip": {}, "busy": False, "qidx": 0}
 NIGHT_HW_QS = ["480p", "720p"]
-NIGHT_HOURS = (22, 8)   # 22:00(含) ~ 次日 08:00(不含)
 
 
 def _night_window():
-    h = time.localtime().tm_hour
-    a, b = NIGHT_HOURS
-    return (h >= a or h < b) if a > b else (a <= h < b)
+    """兼容旧接口字段: 硬解补档已改为全天可运行, 不再有夜间窗口限制。"""
+    return True
 
 
 def _rkvdec_nodes():
@@ -9883,11 +10446,11 @@ def _hw_preview(fp, qv, seconds, cancel):
 
 
 def night_hw_loop():
-    """夜间窗口内空闲时逐个补 480p/720p 的 10 秒档; 任何播放活动立即取消让路。"""
+    """全天空闲时逐个补 480p/720p 的当前预解码档; 360p 预缓冲和播放活动优先。"""
     time.sleep(90)
     while True:
         try:
-            if not NIGHT_HW["on"] or not _night_window() or not storage_ready():
+            if not NIGHT_HW["on"] or not storage_ready():
                 time.sleep(300)
                 continue
             with PLAYBACK_LOCK:
@@ -9895,13 +10458,19 @@ def night_hw_loop():
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
-                    or play_hold_active() or PREWARM_PENDING):
+                    or play_hold_active() or PREWARM_PENDING or PREWARM.get("busy")):
                 time.sleep(30)
                 continue
             with _PREWARM_PICK_LOCK:
-                job = _preview_pick(NIGHT_HW_QS, NIGHT_HW["skip"])
-                if job:
-                    PREWARM_PENDING.add(job[1])
+                job = None
+                # 480p/720p 轮转; 当前档没缺口就立即看另一档, 避免 720p 永远排不到
+                for _ in range(len(NIGHT_HW_QS)):
+                    qv_pick = NIGHT_HW_QS[NIGHT_HW["qidx"] % len(NIGHT_HW_QS)]
+                    NIGHT_HW["qidx"] = (NIGHT_HW["qidx"] + 1) % len(NIGHT_HW_QS)
+                    job = _preview_pick([qv_pick], NIGHT_HW["skip"])
+                    if job:
+                        PREWARM_PENDING.add(job[1])
+                        break
             if not job:
                 time.sleep(600)
                 continue
@@ -9919,7 +10488,7 @@ def night_hw_loop():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
-                            or play_hold_active() or not _night_window()):
+                            or play_hold_active() or PREWARM.get("busy")):
                         job_cancel.set()
                         return
                     time.sleep(0.5)
@@ -9955,7 +10524,7 @@ def night_hw_loop():
 
 
 # 归档自动清理: 只处理 CATS 下名字是事件时间的目录 (YYYY-MM-DD_HH-MM-SS), 整目录删除。
-# 0 = 永不清理; 后台每 6 小时检查一次, 也可以在网页上「立即清理一次」。
+# 0 = 不按天数清理; 容量水位由页面 archive_low_water_pct 单独控制; 后台每 6 小时检查一次。
 ARCH_CLEAN = {"last": 0, "deleted": 0, "freed": 0, "running": False, "msg": ""}
 ARCH_EVENT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 
@@ -9968,17 +10537,6 @@ def archive_retention_days():
     return max(0, min(v, 3650))
 
 
-def _dir_size(path):
-    total = 0
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                total += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return total
-
-
 def archive_cleanup(days=None):
     """删除超过保留天数的归档事件目录; 返回删除事件数与释放字节。"""
     days = archive_retention_days() if days is None else max(0, min(int(days), 3650))
@@ -9986,7 +10544,6 @@ def archive_cleanup(days=None):
     deleted = freed = 0
     try:
         if days <= 0:
-            ARCH_CLEAN["msg"] = "自动清理已关闭"
             return {"deleted": 0, "freed": 0, "days": 0}
         cutoff = time.time() - days * 86400
         for cat in CATS:
@@ -10001,22 +10558,26 @@ def archive_cleanup(days=None):
                 d = os.path.join(base, name)
                 if not os.path.isdir(d):
                     continue
+                # 目录名是车机本地时间(可能是任意时区), 不能按 UTC 解析;
+                # 目录 mtime 是文件系统绝对时间, 用它判断归档年龄最稳。
                 try:
-                    ts = datetime.datetime.strptime(name, "%Y-%m-%d_%H-%M-%S").replace(
-                        tzinfo=datetime.timezone.utc).timestamp()
-                except ValueError:
+                    ts = os.stat(d).st_mtime
+                except OSError:
                     continue
                 if ts >= cutoff:
                     continue
                 sz = _dir_size(d)
-                try:
-                    shutil.rmtree(d)
-                except OSError:
+                shutil.rmtree(d, ignore_errors=True)
+                if os.path.isdir(d):
                     continue
                 deleted += 1
                 freed += sz
         ARCH_CLEAN.update({"last": int(time.time()), "deleted": deleted, "freed": freed,
                            "msg": "删除 %d 个事件，释放 %.2f GB" % (deleted, freed / 1073741824.0)})
+        if deleted:
+            _invalidate_storage_caches()
+            preview_cleanup(force=True)          # 原视频没了, 对应预缓冲立即删除
+            thumb_cleanup(force=True)
         return {"deleted": deleted, "freed": freed, "days": days}
     finally:
         ARCH_CLEAN["running"] = False
@@ -10046,16 +10607,12 @@ def _archive_events():
             if not os.path.isdir(d):
                 continue
             try:
-                ts = datetime.datetime.strptime(name, "%Y-%m-%d_%H-%M-%S").replace(
-                    tzinfo=datetime.timezone.utc).timestamp()
-            except ValueError:
+                ts = os.stat(d).st_mtime
+            except OSError:
                 continue
             out.append((ts, cat, name, d))
     out.sort(key=lambda x: x[0])
     return out
-
-
-ARCH_WATER = {"n": None}
 
 
 def archive_water_level():
@@ -10076,46 +10633,36 @@ def archive_water_level():
 
 
 def archive_cleanup_watermark():
-    """水位低时按「新归档一条 → 删最旧一条」滚动替换, 不整日清空。
-       记录上一次的事件总数, 每轮把新增的条数作为清理条数; 没有新增就不删。"""
+    """水位清理: 低于页面水位就按事件时间删最旧, 删到水位+5%; 不再按「新增条数」限流。
+       页面水位 0=关闭; 和 roll_archive_capacity 共用同一套逻辑。"""
     th = archive_low_water_pct()
-    events = _archive_events()
-    n = len(events)
-    prev = ARCH_WATER["n"]
-    ARCH_WATER["n"] = n
-    added = 0 if prev is None else max(0, n - prev)
     if th <= 0:
         return {"deleted": 0, "freed": 0, "free_pct": None, "msg": "水位清理已关闭"}
+    _ARC_SIZE_CACHE["t"] = 0
     try:
-        free_pct, used, total = archive_water_level()
+        free_pct, _used, total = archive_water_level()
     except Exception:
-        free_pct, used, total = None, 0, 0
+        free_pct, _used, total = None, 0, 0
     if not total:
         return {"deleted": 0, "freed": 0, "free_pct": None, "msg": "无法读取归档区容量"}
-    free_pct = (total - used) * 100.0 / total
-    if free_pct >= th:
+    if free_pct is not None and free_pct >= th:
         return {"deleted": 0, "freed": 0, "free_pct": free_pct,
                 "msg": "归档区剩余 %.0f%%, 高于 %d%% 水位" % (free_pct, th)}
-    if added <= 0:
-        return {"deleted": 0, "freed": 0, "free_pct": free_pct,
-                "msg": "归档区剩余 %.0f%%, 低于 %d%% 水位; 暂无新归档, 暂不删除" % (free_pct, th)}
-    deleted = freed = 0
-    for _ts, _cat, _name, d in events[:added]:
-        sz = _dir_size(d)
-        try:
-            shutil.rmtree(d)
-        except OSError:
-            continue
-        deleted += 1
-        freed += sz
-        used = max(0, used - sz)
-        free_pct = (total - used) * 100.0 / total
-    msg = ("新归档 %d 条, 清理最旧 %d 条、释放 %.2f GB, 剩余 %.0f%%"
-           % (added, deleted, freed / 1073741824.0, free_pct))
-    if deleted:
-        ARCH_CLEAN.update({"last": int(time.time()), "deleted": ARCH_CLEAN.get("deleted", 0) + deleted,
-                           "freed": ARCH_CLEAN.get("freed", 0) + freed, "msg": msg})
-    return {"deleted": deleted, "freed": freed, "free_pct": free_pct, "msg": msg}
+    before = archive_size()
+    n = roll_archive_capacity()
+    after = archive_size()
+    freed = max(0, before - after)
+    try:
+        free_pct, _used, _total = archive_water_level()
+    except Exception:
+        free_pct = None
+    msg = ("低于 %d%% 水位, 已清理 %d 个最旧事件、释放 %.2f GB, 剩余 %.0f%%"
+           % (th, n, freed / 1073741824.0, free_pct if free_pct is not None else 0))
+    if not n:
+        msg = "归档区剩余 %.0f%%, 低于 %d%% 水位; 没有可删事件 (1 小时内可能有同步)" % (
+            free_pct if free_pct is not None else 0, th)
+        ARCH_CLEAN["msg"] = msg
+    return {"deleted": n, "freed": freed, "free_pct": free_pct, "msg": msg}
 
 
 def archive_cleanup_loop():
@@ -10123,27 +10670,98 @@ def archive_cleanup_loop():
     last_days = 0
     while True:
         try:
+            if not storage_ready():
+                time.sleep(60)
+                continue
             now = time.time()
             if now - last_days >= 6 * 3600:      # 保留天数清理: 6 小时一次
                 days = archive_retention_days()
                 if days > 0:
                     archive_cleanup(days)
                 last_days = now
-            archive_cleanup_watermark()          # 水位替换: 10 分钟一次, 新归档进来就删最旧一条
+            archive_cleanup_watermark()          # 水位兜底: 10 分钟一次, 低于设定水位就删到 +5%
         except Exception:
             pass
         time.sleep(600)
 
 
-_PREVIEW_CACHE_LIMIT = 30 * 1024 * 1024 * 1024     # 系统盘给 10 秒预缓冲 + 缩略图的额度
+_PREVIEW_CACHE_LIMIT = 30 * 1024 * 1024 * 1024     # 预缓冲视频额度 30G; 缩略图另算 2G
 _CACHE_USED = {"t": 0, "v": 0}
 
 
+_PREVIEW_STATS_CACHE = {"ts": 0, "d": None}
+
+
+def _preview_stats():
+    """按档位统计预缓冲: 文件数 + 当前预解码时长的覆盖源片数; 15 秒缓存。"""
+    if _PREVIEW_STATS_CACHE["d"] is not None and time.time() - _PREVIEW_STATS_CACHE["ts"] < 15:
+        return _PREVIEW_STATS_CACHE["d"]
+    qs = ("360p", "480p", "720p")
+    target_sec = preview_seconds()
+    files = {q: 0 for q in qs}
+    files_cur = {q: 0 for q in qs}
+    cover = {q: set() for q in qs}       # 当前 preview_sec 档覆盖
+    cover_any = {q: set() for q in qs}   # 任意长度旧档覆盖
+    try:
+        names = [f for f in os.listdir(PREVIEW_DIR) if f.endswith(".mp4")] if os.path.isdir(PREVIEW_DIR) else []
+    except OSError:
+        names = []
+    for f in names:
+        p = os.path.join(PREVIEW_DIR, f)
+        meta = {}
+        qv = ""
+        try:
+            with open(p + ".meta", encoding="utf-8") as mf:
+                meta = json.load(mf) or {}
+                qv = meta.get("qv") or ""
+        except (OSError, ValueError):
+            meta = {}
+            qv = ""
+        try:
+            with open(p + ".src", encoding="utf-8") as sf:
+                src = sf.read().strip()
+        except OSError:
+            src = ""
+        if qv not in qs and src:
+            # 老文件没有 .meta: 按缓存 key 反查它属于哪一档
+            for cand in qs:
+                for sec in (0, 10, 15, 20, 30, 45, 60, 90, 120):
+                    for leg in (False, True):
+                        kp = _variant_path(src, cand, sec, legacy=leg)
+                        if kp and os.path.basename(kp) == f:
+                            qv = cand
+                            break
+                    if qv:
+                        break
+                if qv:
+                    break
+        if qv in qs:
+            files[qv] += 1
+            if src:
+                cover_any[qv].add(src)
+            try:
+                cur = abs(float(meta.get("sec")) - target_sec) < 0.6
+            except (TypeError, ValueError):
+                cur = False
+            if cur:
+                files_cur[qv] += 1
+                if src:
+                    cover[qv].add(src)
+    src_total = _archive_src_cached()
+    d = {"files": files, "files_cur": files_cur,
+         "cover": {q: len(v) for q, v in cover.items()},
+         "cover_any": {q: len(v) for q, v in cover_any.items()},
+         "src": src_total, "sec": target_sec}
+    _PREVIEW_STATS_CACHE["ts"] = time.time()
+    _PREVIEW_STATS_CACHE["d"] = d
+    return d
+
+
 def _prebuf_used():
-    """10 秒预缓冲 + 列表缩略图在系统盘上的实际占用; 30 秒缓存, 别每 5 秒遍历一遍。"""
+    """预缓冲视频在系统盘上的实际占用; 30 秒缓存, 别每 5 秒遍历一遍。"""
     if time.time() - _CACHE_USED["t"] > 30:
         total = 0
-        for d in (PREVIEW_DIR, THUMB_DIR):
+        for d in (PREVIEW_DIR,):
             try:
                 for f in os.listdir(d):
                     p = os.path.join(d, f)
@@ -11548,24 +12166,34 @@ class Handler(BaseHTTPRequestHandler):
                         "q": PREWARM_Q, "busy_users": USER_TRANS[0],
                         "media_active": MEDIA_ACTIVE[0]})
         elif path == "/api/prewarm_stats":
-            # 归档页进度条: 系统盘占用 + 10 秒预缓冲(全档) + 列表缩略图
+            # 归档页进度条: 系统盘占用 + 预缓冲(按当前预解码时长统计) + 列表缩略图
             src = _archive_src_cached()
-            try:
-                pdone = sum(1 for f in os.listdir(PREVIEW_DIR) if f.endswith(".mp4")) if os.path.isdir(PREVIEW_DIR) else 0
-            except OSError:
-                pdone = 0
-            try:
-                tdone = sum(1 for f in os.listdir(THUMB_DIR) if f.endswith(".jpg")) if os.path.isdir(THUMB_DIR) else 0
-            except OSError:
-                tdone = 0
+            pst = _preview_stats()
+            qrows = []
+            for q in ("360p", "480p", "720p"):
+                cov = pst["cover"].get(q, 0)
+                qrows.append({"q": q,
+                              "hw": q in NIGHT_HW_QS,
+                              "files": pst["files"].get(q, 0),
+                              "files_cur": pst["files_cur"].get(q, 0),
+                              "cover": cov,
+                              "cover_any": pst["cover_any"].get(q, 0),
+                              "total": src,
+                              "pct": (min(100, round(cov * 100 / src)) if src else 0)})
+            qrows.sort(key=lambda x: ("360p", "480p", "720p").index(x["q"]))
+            pdone = sum(r["cover"] for r in qrows)
+            ptotal = src * 3
+            tstat = _thumb_stats()
             try:
                 sys_u = shutil.disk_usage("/")
                 sys_used, sys_total = sys_u.used, sys_u.total
             except OSError:
                 sys_used = sys_total = 0
-            ptotal = src * len(PREWARM_QS)
             self._json({"preview_done": pdone, "preview_total": ptotal,
-                        "thumb_done": tdone, "thumb_total": src,
+                        "preview_by": qrows, "preview_sec": pst.get("sec", preview_seconds()),
+                        "thumb_done": min(tstat["done"], src), "thumb_total": src,
+                        "thumb_files": tstat["files"], "thumb_bytes": tstat["bytes"],
+                        "thumb_limit": THUMB_QUOTA,
                         "sys_used": sys_used, "sys_total": sys_total,
                         "cache_used": _prebuf_used(), "cache_limit": _PREVIEW_CACHE_LIMIT,
                         "qs": PREWARM_QS})
@@ -11648,6 +12276,7 @@ class Handler(BaseHTTPRequestHandler):
             remain = max(0, prewarm_resume_min() * 60 - (time.time() - PLAY_HOLD["ts"]))
             self._json({"resume_min": prewarm_resume_min(),
                         "preview_sec": preview_seconds(),
+                        "preview_low_water_pct": preview_low_water_pct(),
                         "paused": play_hold_active(), "remain": int(remain),
                         "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
                         "last": PREWARM["last"], "qs": PREWARM_QS,
@@ -11656,6 +12285,8 @@ class Handler(BaseHTTPRequestHandler):
                         "night_last": NIGHT_HW["last"], "night_qs": NIGHT_HW_QS})
         elif path == "/api/archive_retention":
             info = _archive_info_cached()
+            days = archive_retention_days()
+            water = archive_low_water_pct()
             try:
                 su = shutil.disk_usage("/")
                 sysd = {"used": su.used, "total": su.total}
@@ -11666,11 +12297,12 @@ class Handler(BaseHTTPRequestHandler):
                 free_pct = round(wp, 1) if wp is not None else None
             except Exception:
                 free_pct = None
-            self._json({"days": archive_retention_days(),
-                        "low_water_pct": archive_low_water_pct(), "free_pct": free_pct,
+            msg = ARCH_CLEAN["msg"] or ("保留 %d 天, 水位 %d%%" % (days, water))
+            self._json({"days": days,
+                        "low_water_pct": water, "free_pct": free_pct,
                         "last": ARCH_CLEAN["last"], "deleted": ARCH_CLEAN["deleted"],
                         "freed": ARCH_CLEAN["freed"], "running": ARCH_CLEAN["running"],
-                        "msg": ARCH_CLEAN["msg"],
+                        "msg": msg,
                         "files": info["files"], "used": info["used"],
                         "system": sysd})
         elif path == "/api/brand/logo":
@@ -11904,6 +12536,7 @@ class Handler(BaseHTTPRequestHandler):
                         spawn_variant(src, qv, owner=sid or None, urgent=True)
                         # 不阻塞: 目标档没转好先用原画秒开, 转好后下次播放/切档即生效
                         variant_note = "orig"
+            preview_hot_mark(fp)
             size = os.path.getsize(fp)
             rng = self.headers.get("Range")
             if rng:
@@ -12083,10 +12716,17 @@ class Handler(BaseHTTPRequestHandler):
                 psec = max(5, min(int(body.get("preview_sec", preview_seconds()) or preview_seconds()), 120))
             except (TypeError, ValueError):
                 psec = preview_seconds()
-            save_settings({"prewarm_resume_min": mins, "preview_sec": psec})
+            try:
+                pwater = max(5, min(int(body.get("preview_low_water_pct", preview_low_water_pct())
+                                       or preview_low_water_pct()), 30))
+            except (TypeError, ValueError):
+                pwater = preview_low_water_pct()
+            save_settings({"prewarm_resume_min": mins, "preview_sec": psec,
+                           "preview_low_water_pct": pwater})
             _PREWARM_MIN_CACHE["ts"] = 0   # 立刻生效, 不等缓存
             _PREVIEW_SEC_CACHE["ts"] = 0
-            self._json({"ok": True, "resume_min": mins, "preview_sec": psec, "msg": "已保存"})
+            self._json({"ok": True, "resume_min": mins, "preview_sec": psec,
+                        "preview_low_water_pct": pwater, "msg": "已保存"})
             return
         if p == "/api/uptest":
             # 上行测速: 收下浏览器发来的随机字节, 回包让前端算耗时
@@ -12122,16 +12762,29 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 water = 10
             save_settings({"archive_retention_days": days, "archive_low_water_pct": water})
+            ARCH_CLEAN["msg"] = "已保存: 保留 %d 天, 水位 %d%%" % (days, water)
             self._json({"ok": True, "days": days, "low_water_pct": water, "msg": "已保存"})
             return
         if path == "/api/archive_cleanup":
             try:
+                before = archive_size()
                 r = archive_cleanup()
+                n = roll_archive_capacity()
+                after = archive_size()
+                deleted = r["deleted"] + n
+                freed = max(0, before - after)
+                if deleted:
+                    msg = "按保留天数删除 %d 个, 容量水位删除 %d 个, 释放 %.2f GB" % (
+                        r["deleted"], n, freed / 1073741824.0)
+                else:
+                    msg = "没有需要清理的事件 (保留天数 %d 天, 水位 %d%%)" % (
+                        r["days"], archive_low_water_pct())
+                ARCH_CLEAN["msg"] = msg
             except Exception as ex:
                 self._json({"ok": False, "msg": "清理失败: %s" % ex}, 500)
                 return
-            self._json({"ok": True, "msg": ARCH_CLEAN["msg"], "days": r["days"],
-                        "deleted": r["deleted"], "freed": r["freed"]})
+            self._json({"ok": True, "msg": msg, "days": r["days"],
+                        "deleted": deleted, "freed": freed})
             return
         if path == "/api/kick":
             # 前端播到当前段一半/打开事件时, 让服务端把相邻段的当前清晰度先转好。
@@ -12518,7 +13171,16 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg, aps = net_wifi_scan()
             self._json({"ok": ok, "msg": msg, "aps": aps})
         elif path == "/api/net/wifi/forget":
-            ok, msg = net_wifi_forget()
+            body = self._read_json()
+            ssid = body.get("ssid", "") if isinstance(body, dict) else ""
+            ok, msg = net_wifi_forget(ssid)
+            self._json({"ok": ok, "msg": msg if not ok else "ok"})
+        elif path == "/api/net/wifi/auto":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            ok, msg = net_wifi_auto(str(body.get("ssid", "")), bool(body.get("auto")))
             self._json({"ok": ok, "msg": msg if not ok else "ok"})
         elif path == "/api/net/confirm":
             ok = net_confirm()
@@ -12793,8 +13455,9 @@ if __name__ == "__main__":
     threading.Thread(target=notify_loop, daemon=True).start()
     threading.Thread(target=auto_update_loop, daemon=True).start()
     threading.Thread(target=prewarm_loop, daemon=True).start()   # 单 worker: 后台预热和播放抢 CPU 会更卡
-    threading.Thread(target=night_hw_loop, daemon=True).start()  # 夜间硬解补 480p/720p 10s 档
+    threading.Thread(target=night_hw_loop, daemon=True).start()  # 后台硬解补 480p/720p 当前档; 360p 优先
     threading.Thread(target=thumb_prewarm_loop, daemon=True).start()
+    threading.Thread(target=thumb_migrate_legacy, daemon=True).start()  # 旧缩略图补 .src 侧车, 统计按源片算
     threading.Thread(target=archive_cleanup_loop, daemon=True).start()
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     srv.serve_forever()

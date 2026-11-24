@@ -204,8 +204,6 @@ TSF_RECENT_ROLL_MIN=60
 TSF_RECENT_KEEP_MIN=60
 # 归档默认按容量滚动: 剩余低于额度 10% 时从最旧事件删到剩余 15%。
 # 额度实时 = 整盘容量 - 虚拟U盘容量, 不写死; 天数/体积上限默认关闭, 需要再开。
-TSF_ARC_FREE_MIN_PCT=10
-TSF_ARC_FREE_TARGET_PCT=15
 TSF_BOX_KEEP_DAYS=0
 TSF_BOX_MAX_GB=0
 TSF_FREE_MIN_MB=4096

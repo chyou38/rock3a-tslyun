@@ -125,7 +125,7 @@ Main config: `/etc/tesla-sentry.conf` (restart services after editing):
 | `TSF_LIVE_INTERVAL` | `15` | Live read-only sync poll interval, seconds |
 | `TSF_IDLE` | `600` | Image idle seconds; only used by the cron job that mounts to write Boombox audio |
 | `TSF_RECENT_ROLL_MIN` | `60` | `RecentClips` rolling window in minutes, 0 = no rolling |
-| `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `14` / `12` | Box-side retention for Sentry / saved clips, by age and per-category size cap; 0 = unlimited |
+| `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `0` / `0` | Legacy Plan B box-side retention and per-category cap; disabled by default. Archive retention is configured in **Personalization → Files → Archive** |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | Free-space fallback cleanup: trigger threshold and target |
 | `TSF_CACHE` | automatic | Thumbnail / telemetry / transcode cache directory |
 | `TSF_MDNS_NAME` | `tsl` | mDNS host name, i.e. `http://tsl.local`; restart avahi-daemon after changing |
