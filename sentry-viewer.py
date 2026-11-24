@@ -185,7 +185,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "2.8.55"
+APP_VERSION = "2.8.58"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -2143,6 +2143,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <script>
 let data = {}, cur = null, syncTimer = null, currentCat = 'SentryClips', lastSig = '', reasonFilter = 'all', dateFilter = 'all';
 let curClips = [], curClipIx = 0, TEL = null;
+let tripView = true, autoNext = false, autoNexting = false;   // 行车记录默认按连续行程聚合
+try { if (localStorage.getItem('tsfTripView') === '0') tripView = false; } catch (e) {}
 
 /* ---------- 多语言 ----------
    字典以中文原文为 key; 静态文案由 applyLang() 遍历 DOM 替换, 动态文案在生成时用 t() 包一层。
@@ -2625,12 +2627,123 @@ function groupVideos(vids) {
   }
   return [...m.keys()].sort().map(k => ({ key: k, vids: m.get(k) }));
 }
+
+/* ---------- 行车记录：把连续的 1 分钟片段归并成一次“行程” ----------
+   底层文件一行不动，只在列表和播放时做逻辑聚合。相邻片段开始时间差超过
+   TRIP_GAP_MS 就认为中间断开（停车/熄火），另起一段行程。 */
+const TRIP_GAP_MS = 180000;   // 3 分钟（片段时间戳是毫秒）
+function localStamp(ms) {
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+    'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+function localClock(ms) {
+  const d = new Date(ms);
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function clipStartOf(ev) {
+  const v = (ev && ev.videos || [])[0];
+  const key = v ? clipKeyOf(v) : ((ev && ev.name) || '').split('__')[0];
+  return clipEpoch(key) || 0;
+}
+function tripRangeText(trip) {
+  return localClock(trip.start) + '–' + localClock(trip.end);
+}
+function tripMinutes(trip) {
+  return Math.max(1, Math.round((trip.end - trip.start) / 60000));
+}
+function tripToEvent(trip) {
+  const first = trip.evs[0], last = trip.evs[trip.evs.length - 1];
+  const firstVid = (first.videos || [])[0];
+  const firstKey = firstVid ? (clipKeyOf(firstVid) || first.name) : first.name;
+  return {
+    name: firstKey + '__trip',
+    videos: trip.evs.flatMap(e => e.videos || []),
+    size: trip.evs.reduce((a, e) => a + (e.size || 0), 0),
+    meta: { timestamp: localStamp(trip.start) },
+    _trip: { start: trip.start, end: trip.end, count: trip.evs.length, lastStart: trip.lastStart }
+  };
+}
+function groupTrips(evs) {
+  const arr = (evs || []).slice().sort((a, b) => clipStartOf(a) - clipStartOf(b));
+  const groups = [];
+  for (const ev of arr) {
+    const start = clipStartOf(ev);
+    const last = groups[groups.length - 1];
+    if (last && start > 0 && start - last.lastStart <= TRIP_GAP_MS) {
+      last.evs.push(ev);
+      last.lastStart = start;
+    } else {
+      groups.push({ evs: [ev], start: start, lastStart: start });
+    }
+  }
+  return groups.map(g => {
+    /* 最后一段通常按 60 秒估算；末段可能更短，只影响显示时长，不影响播放 */
+    g.end = g.lastStart + 60;
+    return tripToEvent(g);
+  }).sort((a, b) => b._trip.start - a._trip.start);
+}
+function displayEvents(cat) {
+  const raw = data[cat] || [];
+  return cat === 'RecentClips' && tripView ? groupTrips(raw) : raw;
+}
+function displayCount(cat) {
+  return displayEvents(cat).length;
+}
+function totalDisplayCount() {
+  return Object.keys(data).reduce((a, c) => a + displayCount(c), 0);
+}
+function updateHeaderCounts() {
+  const tabs = document.getElementById('tabs');
+  if (tabs) {
+    [...tabs.children].forEach((b, i) => {
+      const c = Object.keys(data)[i];
+      if (!c) return;
+      b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
+    });
+  }
+  const stat = document.getElementById('stat');
+  if (stat) stat.textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
+}
+function toggleTripView() {
+  tripView = !tripView;
+  try { localStorage.setItem('tsfTripView', tripView ? '1' : '0'); } catch (e) {}
+  updateHeaderCounts();
+  render(currentCat);
+}
 function curVids() { return (curClips[curClipIx] || { vids: [] }).vids; }
 function switchClip(i) {
   if (!curClips[i]) return;
   curClipIx = i;
   pendSeek = 0;          // 手动切段就从头播, 不要沿用触发点定位
   renderClip();
+}
+/* 连续行程: 当前一分钟的六路都播完后, 自动切下一分钟。
+   预解码档(10/20秒)先播完时不算结束, 先等完整档接上; 避免整段被 20 秒预览截断。 */
+function tripMaybeNext() {
+  /* 行车记录的“行程”和哨兵/手动保存事件都走这里:
+     当前一分钟各画面播完后，自动接该事件/行程的下一分钟。 */
+  if (!autoNext || autoNexting || !cur) return;
+  const vs = [...document.querySelectorAll('#vgrid video')];
+  if (!vs.length) return;
+  const ended = v => v.ended || (isFinite(v.duration) && v.duration > 0 && v.currentTime >= v.duration - 0.05);
+  if (!vs.every(ended)) return;
+  if (vs.some(v => v.loop)) return;   // 还在循环预缓冲等完整档, 不是真的播完
+  /* 长片段的 10/20 秒预览播完: 先切完整档, 不跳到下一分钟 */
+  if (vs.some(v => (v._preview || v._wantPreview) && isFinite(v.duration) && v.duration > PREV_SEC + 1.5)) {
+    switchPreviewVideos(PREV_SEC);
+    return;
+  }
+  if (curClipIx + 1 < curClips.length) {
+    autoNexting = true;
+    switchClip(curClipIx + 1);
+    setTimeout(() => { autoNexting = false; }, 800);
+  } else {
+    autoNext = false;
+    toast(cur._trip ? '本段行程已播完' : '本条记录已播完');
+  }
 }
 function gridDims(n) {
   if (n <= 1) return [1, 1];
@@ -2656,7 +2769,7 @@ async function load() {
   for (const c of Object.keys(data)) {
     const b = document.createElement('button');
     b.className = 'tab' + (!liveOpen && c === currentCat ? ' active' : '');
-    b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${data[c].length}</span>`;
+    b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
     b.onclick = () => { document.querySelectorAll('.tab').forEach(t => t.classList.remove('active')); b.classList.add('active'); currentCat = c; reasonFilter = 'all'; dateFilter = 'all'; closeLive(); render(c); prekickList(); };
     tabs.appendChild(b);
   }
@@ -2667,7 +2780,7 @@ async function load() {
   lv.innerHTML = `<span class="tl">${t('实时预览')}</span>`;   // 与其它页签同结构 (单行分段控件里才不会错位)
   lv.onclick = () => { document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); lv.classList.add('active'); openLive(); };
   tabs.appendChild(lv);
-  document.getElementById('stat').textContent = `${t('归档')} ${Object.values(data).reduce((a, v) => a + v.length, 0)} ${t('条')}`;
+  document.getElementById('stat').textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
   lastSig = sigOf(data);
   renderQSel();
   render(currentCat);
@@ -2796,9 +2909,9 @@ async function refreshLive() {
       const tabs = document.getElementById('tabs');
       [...tabs.children].forEach((b, i) => {
         const c = Object.keys(d)[i];
-        if (c) b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${d[c].length}</span>`;
+        if (c) b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
       });
-      document.getElementById('stat').textContent = `${t('归档')} ${Object.values(d).reduce((a, v) => a + v.length, 0)} ${t('条')}`;
+      document.getElementById('stat').textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
       if (!document.getElementById('player').classList.contains('open')) render(currentCat);
       prekickList();   // 新的哨兵/保存事件刚同步过来时, 按当前画质提交后台预转
     }
@@ -2859,7 +2972,7 @@ function matchReason(cat, ev) {
 }
 /* 两行筛选: 触发原因 / 日期, 互为主次 (计数按对方的筛选结果算) */
 function renderFilters(cat) {
-  const evs = data[cat] || [];
+  const evs = displayEvents(cat);
   const rbox = document.getElementById('filters'), dbox = document.getElementById('dfilters');
   const byDate = dateFilter === 'all' ? evs : evs.filter(ev => dateOf(ev) === dateFilter);
   const byReason = reasonFilter === 'all' ? evs : evs.filter(ev => matchReason(cat, ev));
@@ -2903,7 +3016,10 @@ function renderFilters(cat) {
     days.map(d => [d, d.slice(5).replace('-', '/'), dcnt[d] || 0]));
   dbox.innerHTML = '<span class="flab">' + t('日期') + '</span>' + items.map(([k, label, n]) =>
     `<button class="chip d${k === dateFilter ? ' on' : ''}" onclick="setDate('${k}')">${label}<span class="n">${n}</span></button>`
-  ).join('') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
+  ).join('') + (cat === 'RecentClips'
+    ? '<button class="chip trip" onclick="toggleTripView()" title="切换按连续行程 / 按分钟查看">' +
+      (tripView ? '按分钟查看' : '按行程查看') + '</button>'
+    : '') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
 }
 /* 原生日期选择器: 分类里只有一天时也能翻到别的日期 */
 function pickDate() {
@@ -2950,7 +3066,7 @@ function render(cat) {
   const g = document.getElementById('grid'), e = document.getElementById('empty');
   g.innerHTML = '';
   renderFilters(cat);
-  let evs = data[cat] || [];
+  let evs = displayEvents(cat);
   evs = evs.filter(ev => matchReason(cat, ev));
   if (dateFilter !== 'all') evs = evs.filter(ev => dateOf(ev) === dateFilter);
   e.style.display = evs.length ? 'none' : 'block';
@@ -2970,8 +3086,10 @@ function render(cat) {
       prevDay = day;
     }
     const card = document.createElement('div'); card.className = 'card';
+    const isTrip = !!ev._trip;
     const groups = groupVideos(ev.videos);
-    const vids = camSort(groups.length ? groups[groups.length - 1].vids : []);
+    /* 行程卡用第一分钟的前视画面当封面; 普通事件仍用最后一组 */
+    const vids = camSort(groups.length ? (isTrip ? groups[0] : groups[groups.length - 1]).vids : []);
     let th;
     if (vids.length) {
       /* 哨兵事件: 用触发摄像头在触发那一帧当封面; 其他/回落: 前摄像头第1秒 */
@@ -2984,6 +3102,7 @@ function render(cat) {
     const mm = ev.meta || {};
     /* 标题: 触发原因·触发摄像头 (哨兵), 否则分类名 */
     let title = t(CATS_NAME[cat] || cat);
+    if (isTrip) title = t('连续行程');
     if (mm.reason) {
       title = reasonLabel(mm.reason) || mm.reason;
       if (isSentryEv(mm) && mm.camera) {
@@ -2996,12 +3115,15 @@ function render(cat) {
     const tsM = String(mm.timestamp || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
     const tm = tsM ? tsM[4] + ':' + tsM[5]
                    : (ev.name.match(/_(\d{2}-\d{2})/) || [,''])[1].replace('-', ':');
-    const tmTxt = tm ? tm : fmtName(ev.name);
-    const extra = (mm.city ? ' · ' + mm.city : '') + (mm.street ? ' ' + mm.street : '');
-    const dayTxt = dateFilter === 'all' && day ? day.slice(5).replace('-', '/') + ' · ' : '';
+    const tmTxt = isTrip ? tripRangeText(ev._trip) : (tm ? tm : fmtName(ev.name));
+    const extra = isTrip ? '' : ((mm.city ? ' · ' + mm.city : '') + (mm.street ? ' ' + mm.street : ''));
+    const dayTxt = !isTrip && dateFilter === 'all' && day ? day.slice(5).replace('-', '/') + ' · ' : '';
     const mb = ev.size / 1048576;
     const szTxt = mb >= 1 ? mb.toFixed(1) + ' MB' : (mb * 1024).toFixed(0) + ' KB';
-    card.innerHTML = th + `<div class="meta"><div class="l1"><span class="rt" title="${title}">${title}</span><span class="tm">${tmTxt}${extra}</span></div><div class="l2"><span>${dayTxt}${vids.length} ${t('路画面')}</span><span class="sz">${szTxt}</span></div></div>`;
+    const l2Txt = isTrip
+      ? (ev._trip.count + ' ' + t('段') + ' · ' + tripMinutes(ev._trip) + ' ' + t('分钟') + ' · ' + vids.length + ' ' + t('路画面'))
+      : (dayTxt + vids.length + ' ' + t('路画面'));
+    card.innerHTML = th + `<div class="meta"><div class="l1"><span class="rt" title="${title}">${title}</span><span class="tm">${tmTxt}${extra}</span></div><div class="l2"><span>${l2Txt}</span><span class="sz">${szTxt}</span></div></div>`;
     card.onclick = () => openPlayer(ev);
     g.appendChild(card);
   }
@@ -3105,13 +3227,14 @@ function renderCamBar() {
 function openPlayer(ev) {
   cur = ev;
   startPlaybackSession();
+  autoNext = true;   // 所有记录都连续播: 行车行程整段、哨兵/手动保存事件内的多分钟段
+  autoNexting = false;
   curClips = groupVideos(ev.videos);
   kicked = new Set();      // 新事件重新计算预转范围
-  /* 默认定位到触发时刻所在那一段, 并停在触发前 5 秒 —— 以前固定取最后一段,
-     所以多段事件点进去常常是「人已经走了」的那一分钟 */
-  const hit = triggerClip(ev, curClips);
-  curClipIx = hit ? hit.ix : (curClips.length ? curClips.length - 1 : 0);
-  pendSeek = hit ? Math.max(0, hit.off - 5) : 0;
+  /* 多分钟事件从第一段开始连续播完; 触发时刻仍在片段条上用 trig 标出,
+     想直接看触发瞬间就点那个带标记的片段。行程卡本来就从第一分钟开始。 */
+  curClipIx = 0;
+  pendSeek = 0;
   camSel = pickDefaultCam();     // 默认单路: 触发摄像头
   renderClip();
 }
@@ -3383,6 +3506,13 @@ function renderClip() {
        每格自己有「缓冲中…」遮罩, 足够表达状态; #qhint 只留给手动切清晰度时用。
        现在 /media 未命中画质缓存会先给原画 + 后台转码, 首帧不再干等十几秒。*/
     vid.addEventListener('canplay', () => { document.getElementById('qhint').style.display = 'none'; });
+    if (autoNext) {
+      vid.addEventListener('ended', () => {
+        /* 预览档结束由 tick/switchPreviewVideos 接管, 这里只处理完整档 */
+        if (vid._preview || vid._wantPreview) return;
+        tripMaybeNext();
+      });
+    }
     vid.setAttribute('muted', ''); vid.setAttribute('playsinline', '');
     vid.setAttribute('webkit-playsinline', ''); vid.setAttribute('x5-playsinline', '');
     /* 触发段: metadata 一到就跳到触发前几秒, 不然会先从片段开头播一遍 */
@@ -4236,7 +4366,10 @@ function doExportZip() {
   const sel = [...document.querySelectorAll('#expchks input:checked')].map(c => c.value);
   if (!sel.length) { toast('请至少选择一路'); return; }
   closeExport();
-  location.href = '/api/export/' + encodeURIComponent(currentCat) + '/' + encodeURIComponent(cur.name) + '?cams=' + encodeURIComponent(sel.join(',')) + (expQ !== 'orig' ? '&q=' + expQ : '');
+  /* 行程卡是前端虚拟事件, 导出仍落到当前这一分钟的真实目录 */
+  const parts = ((curVids()[0] || {}).url || '').replace(/^\/media\//, '').split('/');
+  const cat = parts[0] || currentCat, name = parts[1] || cur.name;
+  location.href = '/api/export/' + encodeURIComponent(cat) + '/' + encodeURIComponent(name) + '?cams=' + encodeURIComponent(sel.join(',')) + (expQ !== 'orig' ? '&q=' + expQ : '');
 }
 document.getElementById('startmask').addEventListener('click', playAll);
 function tryPlay(v) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
@@ -4334,7 +4467,14 @@ function switchPreviewVideos(target) {
         if (d.full) { swapToFull(v, ct); return; }
         /* 完整档没好, 但后台已经补出更长的预解码档: 先换长的续播, 不再原地循环短档 */
         if (d.preview && d.preview > (v.duration || 0) + 2) { swapToPreview(v, d.preview, ct); return; }
-        if (tries === 0) v.loop = true;     // 等完整档期间循环预缓冲
+        if (tries === 0) {
+          v.loop = true;     // 等完整档期间循环预缓冲
+          /* 预缓冲刚好播完时 loop 后不会自动重新 play, 这里补一脚 */
+          if (v.paused || v.ended || v.currentTime >= (v.duration || 0) - 0.1) {
+            try { v.currentTime = 0; } catch (e) {}
+            tryPlay(v);
+          }
+        }
         if (tries < 20) { setTimeout(() => goFull(tries + 1), 1500); return; }
         swapToFull(v, ct);
       });
@@ -4369,6 +4509,12 @@ function tick() {
   document.getElementById('ptime').textContent = fmtSec(t);
   document.getElementById('ic-dur').textContent = fmtSec(vs[0].duration);
   updateHud(t);
+  /* 兜底: ended 事件在部分浏览器/预缓冲切换时会漏, tick 里再查一次;
+     v.loop=true 是还在等完整档, 不能在这时跳下一段。 */
+  if (autoNext && !autoNexting) {
+    const allDone = vs.every(v => v.ended || (isFinite(v.duration) && v.duration > 0 && v.currentTime >= v.duration - 0.05));
+    if (allDone && !vs.some(v => v.loop)) tripMaybeNext();
+  }
 }
 function fmtSec(x) {
   x = Math.max(0, Math.floor(x || 0));
@@ -4423,6 +4569,7 @@ document.getElementById('seek').onchange = function () {
 };
 function closePlayer() {
   pauseAll();
+  autoNext = false; autoNexting = false;
   stopPlaybackSession();
   if (syncTimer) clearInterval(syncTimer);
   [...document.querySelectorAll('#vgrid video')].forEach(v => {
