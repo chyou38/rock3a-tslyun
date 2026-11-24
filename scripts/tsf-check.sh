@@ -128,7 +128,7 @@ fi
 if [ -d /etc/systemd/system ]; then
     ok "init 系统" "systemd"
 else
-    bad "init 系统" "非 systemd — 本仓库仅适配 Armbian/Debian 13 systemd"
+    bad "init 系统" "非 systemd — 本仓库仅适配 Debian 12/13、Armbian systemd"
 fi
 
 if [ -d /etc/crontabs ] || [ -f /etc/crontab ] || command -v systemctl >/dev/null 2>&1; then

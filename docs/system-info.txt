@@ -1,15 +1,16 @@
-Tesla Sentry Box · ROCK 3A 系统信息原始采集
-采集时间: 2026-11-22 (Asia/Shanghai)
-主机: rock-3a
+Tesla Sentry Box · ROCK 3A 系统信息采集（已净化）
+采集时间: 2026-11-25 (Asia/Shanghai)
+主机: tsl-sentry
 
 === /etc/os-release ===
-PRETTY_NAME="Armbian 26.8.1 trixie"
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
 NAME="Debian GNU/Linux"
-VERSION_ID="13"
-VERSION="13 (trixie)"
+VERSION_ID="12"
+VERSION="12 (bookworm)"
 
 === uname -a ===
-Linux rock-3a 6.18.44-current-rockchip64 #1 SMP PREEMPT Sun Aug  9 18:25:30 UTC 2026 aarch64 GNU/Linux
+Linux tsl-sentry 6.1.84-15-rk2410-nocsf #1 SMP PREEMPT aarch64 GNU/Linux
+（Radxa 官方 Debian 12 BSP 内核）
 
 === lscpu ===
 Architecture: aarch64
@@ -18,31 +19,35 @@ Model name: Cortex-A55
 
 === free -h ===
                total        used        free      shared  buff/cache   available
-Mem:           1.9Gi       275Mi       1.3Gi       4.4Mi       394Mi       1.7Gi
+Mem:           1.9Gi       1.1Gi       119Mi       7.0Mi       748Mi       707Mi
 
 === python3 -V ===
-Python 3.13.5
+Python 3.11.2
 
 === 关键依赖版本 ===
-hostapd          2:2.10-24
-dnsmasq          2.91-1+deb13u2
-dnsmasq-base     2.91-1+deb13u2
-wpasupplicant    2:2.10-24
-iw               6.9-1+b1
-bluez            5.82-1.1+rpt2
-ffmpeg           7:7.1.5-0+deb13u1
-exfatprogs       1.2.9-1+deb13u1
-firmware-iwlwifi 20250410-2
-python3          3.13.5-1
+hostapd          2:2.10-12+deb12u3
+dnsmasq          2.90-4~deb12u2
+wpasupplicant    2:2.10-12+deb12u3
+iw               5.19-1
+bluez            5.66-1+deb12u2
+ffmpeg           7:5.1.9-0+deb12u1
+exfatprogs       1.2.0-1+deb12u1
+udhcpc           1:1.35.0-4+deb12u1+b1
+NetworkManager   BSP 自带
 
 === 无线/蓝牙硬件 ===
-0000:01:00.0 Network controller [0280]: Intel Corporation Wi-Fi 6 AX200 [8086:2723] (rev 1a)
-Bus 003 Device 003: ID 8087:0029 Intel Corp. AX200 Bluetooth
+0000:01:00.0 Network controller [0280]: Intel Corporation Wi-Fi 6 AX200 [8086:2723]
+（蓝牙为 AX200 集成 USB 8087:0029；本次采集时该 USB 设备未枚举，属硬件枚举问题，不是驱动配置）
 
-=== AX200 固件 ===
-/lib/firmware/iwlwifi-cc-a0-59.ucode
-/lib/firmware/iwlwifi-cc-a0-72.ucode
-/lib/firmware/iwlwifi-cc-a0-77.ucode
+=== 存储 ===
+/dev/mmcblk0p3  57G  7.3G  48G  14%  /                (eMMC, 系统盘)
+/dev/sda1      470G  1.4G 445G   1%  /mnt/tsf-storage (USB 数据盘, ext4)
+
+数据目录:
+  /mnt/tsf-storage/tsf-data/teslacam.img      虚拟 U 盘镜像
+  /mnt/tsf-storage/tsf-data/archive/          归档区
+  /mnt/tsf-storage/tsf-data/cache/            缩略图/遥测/合成临时缓存
+  /opt/tesla-sentry/preview-cache/             三档预缓冲（当前仍在 eMMC）
 
 === 服务 is-enabled ===
 sentry-viewer            enabled
@@ -51,9 +56,13 @@ tesla-live               enabled
 pwm-fan-control          enabled
 tsf-hotspot              enabled
 tsf-ap-policy.timer      enabled
+tsf-wifi-dhcp            enabled
+tsf-bt-name              enabled
 wpa_supplicant@wlp1s0    enabled
+wpa_supplicant           masked
 bluetooth                enabled
-hostapd                  disabled
+hostapd                  enabled（当前机；安装脚本默认 disabled，由 tsf-ap.sh 按需拉起）
+dnsmasq                  disabled
 
 === 服务 is-active ===
 sentry-viewer            active
@@ -61,17 +70,20 @@ tesla-gadget             active
 tesla-live               active
 pwm-fan-control          active
 tsf-ap-policy.timer      active
+tsf-wifi-dhcp            active
+tsf-bt-name              inactive（无蓝牙控制器时 oneshot 退出）
 wpa_supplicant@wlp1s0    active
 bluetooth                active
-hostapd                  inactive
+hostapd                  active
+dnsmasq                  active
 
-=== 网页监听 ===
-0.0.0.0:80 (python3 sentry-viewer.py), 8080 已无监听
-
-=== 热点 ===
-ap0 192.168.50.1/24, dnsmasq 192.168.50.100-200/12h, NAT -> end0
-hostapd: interface=ap0, hw_mode=g, channel=6, country_code=CN, WPA2-PSK
+=== 网络 ===
+end1    NetworkManager DHCP（有线；旧 Armbian 为 end0）
+wlp1s0  wpa_supplicant@wlp1s0 + udhcpc（DHCP）
+ap0     192.168.50.1/24（hostapd 2.4G ch6 + dnsmasq 192.168.50.100-200/12h）
+NAT     按当前默认出口同时配置 end1 / wlp1s0
 
 === 备注 ===
-- SSID / PSK / 账号密码不记录在本文件
+- SSID / PSK / 账号密码 / MAC / 真实 IP 不记录在本文件
+- 预缓冲 TSF_PREVIEW_CACHE 未显式设置时落在 /opt/tesla-sentry/preview-cache（eMMC）
 - 完整说明见 docs/SYSTEM.md

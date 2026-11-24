@@ -1,6 +1,6 @@
 [Unit]
 Description=TSL Sentry personal hotspot (hostapd+dnsmasq+NAT)
-After=network-online.target systemd-networkd.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

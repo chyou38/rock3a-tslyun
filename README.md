@@ -18,7 +18,7 @@
 
 把 Radxa ROCK 3A（RK3568，2GB）顶替原车 U 盘插进手套箱：车机照常录制，手机连盒子 WiFi 打开网页就能回看 4 / 6 路同步画面、逐帧读视频码流里的 SEI 遥测（挡位 / 车速 / 油门 / 刹车 / 方向盘 / 转向灯 / AP / 坐标），并导出带行车信息水印的视频。
 
-本仓库只维护这一套硬件与系统：**Armbian 26.8.1 trixie（Debian 13）/ 内核 6.18.44-current-rockchip64 / Intel AX200 无线网卡**。其他型号的开发板、路由器或 NAS 未适配，装不上或功能不可用，不在支持范围。
+本仓库只维护这一套硬件与系统：**Radxa 官方 Debian 12 bookworm BSP / 内核 6.1.84-15-rk2410-nocsf / Intel AX200 无线网卡**。旧 Armbian mainline（Debian 13 / 6.18.x）仍保留兼容代码，但新部署与实测以 BSP 为准。其他型号的开发板、路由器或 NAS 未适配，装不上或功能不可用，不在支持范围。
 
 ---
 
@@ -28,7 +28,7 @@
 |---|---|
 | 🗂 虚拟 U 盘 | **安装时不预建镜像**；部署后打开网页「个性化 → 车机U盘」里的「设备与存储」，插入任意容量 USB 硬盘（整盘 ≥8G）→ 选择整块盘 → 拖动虚拟U盘占比 → 输入序列号格式化创建。创建的是稀疏 exFAT 镜像并预置 `TeslaCam` 目录，通过 USB Gadget `mass_storage` 导出；网卡 / 串口共存。也可在安装时用 `--size` 显式预建。 |
 | ⚡ 实时查看 | `tesla-live-sync.py` 每 15 秒**只读解析 exFAT**（不挂载、不断 USB），车机边写网页边看，新片段通常 15–30 秒出现；cron `*/10` 只负责写 Boombox 音频 |
-| 📦 归档与滚动窗口 | 视频落到独立 ext4 归档区，不与车机同时读写镜像；`RecentClips` 跟随车机滚动缓冲只留最近 60 分钟，`SentryClips` / `SavedClips` 的**盒子副本**默认按 14 天 / 12GB 清理（车机 U 盘那份只读不动），`.pruned` 墓碑避免「删除→重抄」死循环 |
+| 📦 归档与滚动窗口 | 视频落到独立归档目录（BSP 在 USB 数据盘，旧 Armbian 为独立 ext4 `/archive`），不与车机同时读写镜像；`RecentClips` 跟随车机滚动缓冲只留最近 60 分钟，`SentryClips` / `SavedClips` 的**盒子副本**归档保留统一走网页「个性化 → 文件 → 归档区」按容量水位清理，`.pruned` 墓碑避免「删除→重抄」死循环 |
 | 🎬 播放 | **默认单路**: 点开事件直接播触发摄像头那一路 (画面下方切换条可选 前视/后视/左B柱/右B柱/全览, 点哪个才加载哪个, 切换保留播放进度)；全览 4 路 2×2 / 6 路 3×2 自适应，250ms 同步校正、统一进度条、0.5–4x；**自动落在触发时刻所在的那一分钟、从触发前 5 秒起播**（片段栏红点标记） |
 | 📊 遥测与元数据 | 直读码流内嵌 SEI protobuf：挡位 / 车速 / 油门 / 刹车 / 方向盘角度 / 转向灯 / AP 状态 / 坐标 / 三轴加速度，随进度逐帧跳动；`event.json` 提供时间 / 城市 / 街道 / 触发原因 / 触发画面 |
 | 🔍 筛选与预览 | 触发原因 + 日期胶囊叠加筛选；`?ev=` `?date=` `?cat=` `?cam=` `?exp=1` 深链；📡 实时预览与其它分类同级（点页签即切换，不用返回），带 原画 / 720p / 480p / 360p 画质选择；存储条（虚拟U盘按卷内实际写入量计，不是镜像预分配占用；进度条按占用比例配色：<30% 绿 / 30–85% 蓝 / >85% 红）与在线同步状态 |
@@ -52,20 +52,20 @@
 |---|---|
 | 主板 | Radxa ROCK 3A（RK3568，4× Cortex-A55） |
 | 内存 | 2GB（可用 1.9GiB） |
-| 系统盘 | eMMC 58.3GB（`mmcblk0`，根分区 57.6GB） |
-| 数据盘 | USB 478GB（`sda1`，挂 `/mnt/tsf-storage`，存镜像与归档） |
-| 系统 | Armbian 26.8.1 trixie（Debian 13） |
-| 内核 | 6.18.44-current-rockchip64（aarch64） |
-| 无线网卡 | Intel Wi-Fi 6 AX200（`8086:2723`，iwlwifi，固件 `iwlwifi-cc-a0-77`） |
-| 蓝牙 | AX200 集成（`8087:0029`，hci0） |
-| 有线网卡 | `end0` 千兆，DHCP |
-| 风扇 | 板载 3-pin PWM（`pwm8 m0`，需 `rock3a-pwm8-fan` overlay） |
+| 系统盘 | eMMC 58.3GB（`mmcblk0`，根分区约 57GB） |
+| 数据盘 | USB 470GB（`sda1`，ext4，挂 `/mnt/tsf-storage`，存镜像/归档/缓存） |
+| 系统 | Radxa 官方 Debian 12 bookworm BSP |
+| 内核 | `6.1.84-15-rk2410-nocsf`（aarch64，BSP） |
+| 无线网卡 | Intel Wi-Fi 6 AX200（`8086:2723`，iwlwifi） |
+| 蓝牙 | AX200 集成 USB（`8087:0029`，正常枚举时 hci0/hci1） |
+| 有线网卡 | `end1` 千兆，NetworkManager DHCP（旧 Armbian 为 `end0`） |
+| 风扇 | BSP `pwm-fan` 驱动（hwmon `pwmfan` / `pwm1`，25kHz）；旧 mainline 需 `rock3a-pwm8-fan` overlay |
 | USB | USB3 OTG 口做 Gadget，接车机 |
 
-**已使用**：USB3 OTG（车机）、`end0`（有线）、AX200（WiFi STA + 2.4G 热点）、蓝牙、PWM 风扇座、eMMC（系统）、USB 数据盘（镜像/归档）。
+**已使用**：USB3 OTG（车机）、`end1`（有线）、AX200（WiFi STA + 2.4G 热点）、蓝牙、PWM 风扇座、eMMC（系统）、USB 数据盘（镜像/归档/缓存）。
 **未使用**：HDMI、USB Host、M.2、音频等接口本方案不依赖，保持空闲。
 
-**硬门槛**：`/sys/class/udc/` 非空、configfs + `USB_F_MASS_STORAGE`、内核 exFAT、loop / losetup、root，且车机 USB 口能供电。系统必须是 Debian 13 / Armbian systemd；Python 3.7+（查看器零第三方依赖）；ffmpeg 只影响缩略图与转码，缺失不阻塞安装。
+**硬门槛**：`/sys/class/udc/` 非空、configfs + `USB_F_MASS_STORAGE`、内核 exFAT、loop / losetup、root，且车机 USB 口能供电。系统必须是 Debian 12/13（BSP 或 Armbian）systemd；Python 3.7+（查看器零第三方依赖）；ffmpeg 只影响缩略图与转码，缺失不阻塞安装。
 
 装之前先自检（只读、不改系统）：
 
@@ -88,9 +88,13 @@ cd rock3a-tslyun
 sudo ./install.sh                                             # 不预建镜像；端口 80、归档 /archive、mDNS tsl.local
 sudo ./install.sh --size 120 --port 80 --archive /archive    # 可选：安装时预建 120G 镜像
 sudo ./install.sh --mdns mybox                                # 可选：改用 http://mybox.local
+
+# BSP 单盘（USB 数据盘挂 /mnt/tsf-storage）推荐把归档和缓存都放数据盘：
+sudo ./install.sh --archive /mnt/tsf-storage/tsf-data/archive \
+                  --cache   /mnt/tsf-storage/tsf-data/cache
 ```
 
-安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 尝试安装并启用 Avahi mDNS → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
+安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 尝试安装并启用 Avahi mDNS → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron；检测到 NetworkManager（BSP）时额外配置 `wlp1s0/ap0` unmanaged、`wpa_supplicant@wlp1s0`、`tsf-wifi-dhcp`、`tsf-bt-name` → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
 
 **2. 打开网页，自己创建虚拟U盘**：浏览器访问 `http://<设备IP>` 或 `http://tsl.local`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。打开 **「个性化 → 车机U盘」**，里面的「设备与存储」会提示「未配置虚拟U盘」：
 
@@ -114,20 +118,39 @@ sudo ./uninstall.sh --purge      # 连镜像和归档一起删（不可恢复）
 
 ---
 
+## RKMPP 硬解/硬编（可选）
+
+BSP 内核带 `/dev/mpp_service` 与 `/dev/rga`，仓库提供自编译的 ffmpeg-rockchip 产物：
+
+- `dist/rkmpp/rkmpp-bin.tar.gz`：`ffmpeg` / `ffprobe` 二进制（约 21MB，已 strip）
+- `dist/rkmpp/install-rkmpp.sh`：恢复脚本，自动检查运行时依赖、软链系统 `ffmpeg`/`ffprobe`，并写入 `TSF_FFMPEG` / `TSF_FFPROBE`
+- `dist/rkmpp/deps.txt`：运行时依赖清单（Debian 12）
+
+```sh
+cd dist/rkmpp
+sudo bash install-rkmpp.sh -y      # 缺依赖时自动 apt 安装
+sudo systemctl restart sentry-viewer
+```
+
+装好后 `ffmpeg -encoders | grep rkmpp` 应能看到 `h264_rkmpp`/`hevc_rkmpp`，`-filters | grep rkrga` 应能看到 `scale_rkrga`。没有 `/dev/mpp_service` 的 mainline 内核只能软解，硬解不可用。
+
+---
+
 ## 配置与常用设置
 
 主配置 `/etc/tesla-sentry.conf`（改完重启服务生效）：
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `TSF_IMG` / `TSF_ARCHIVE` | `/opt/tesla-sentry/teslacam.img` / `/archive` | 虚拟 U 盘镜像 / 归档区 |
+| `TSF_IMG` / `TSF_ARCHIVE` | `/opt/tesla-sentry/teslacam.img` / `/archive` | 虚拟 U 盘镜像 / 归档区；BSP 单盘部署为 `/mnt/tsf-storage/tsf-data/teslacam.img` / `.../archive` |
 | `TSF_PORT` | `80` | 网页端口 |
 | `TSF_LIVE_INTERVAL` | `15` | 在线只读同步轮询秒数 |
 | `TSF_IDLE` | `600` | 镜像空闲秒数，仅用于 cron 挂载写 Boombox 音频 |
 | `TSF_RECENT_ROLL_MIN` | `60` | RecentClips 滚动窗口（分钟），0 = 不滚动 |
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `0` / `0` | 旧方案 B 的盒子侧保留天数与单分类上限，默认关闭；归档保留统一走网页「个性化 → 文件 → 归档区」 |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | 空间兜底清理的触发阈值与目标 |
-| `TSF_CACHE` | 自动 | 缩略图 / 遥测 / 转码缓存目录 |
+| `TSF_CACHE` | `<安装目录>/cache` | 缩略图 / 遥测 / 合成临时缓存；BSP 部署为 `/mnt/tsf-storage/tsf-data/cache` |
+| `TSF_PREVIEW_CACHE` | `/opt/tesla-sentry/preview-cache` | 三档预缓冲缓存；默认在 eMMC，建议 BSP 改到数据盘（`/mnt/tsf-storage/tsf-data/preview-cache`） |
 | `TSF_MDNS_NAME` | `tsl` | mDNS 主机名，对应 `http://tsl.local`；改完重启 avahi-daemon |
 
 OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量（如 `TSF_OTA_SOURCES`、`TSF_OTA_REPO`）或网页配置。完整变量表与系统基线见 `docs/SYSTEM.md`。
@@ -146,9 +169,9 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 改完配置重启服务：
 
 ```sh
-/etc/init.d/tesla-viewer restart
-/etc/init.d/tesla-live restart
-/etc/init.d/tesla-gadget restart
+systemctl restart sentry-viewer
+systemctl restart tesla-live
+systemctl restart tesla-gadget
 ```
 
 ---
@@ -171,7 +194,7 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 
 ```bash
 echo 'TSF_OTA_SOURCES=https://ghfast.top/https://raw.githubusercontent.com/chyou38/rock3a-tslyun/main,https://gcore.jsdelivr.net/gh/chyou38/rock3a-tslyun@main' >> /etc/tesla-sentry.conf
-/etc/init.d/tesla-viewer restart
+systemctl restart sentry-viewer
 ```
 
 **老版本（2.8.12 及更早）连检查都失败、进不了升级入口**时，直接在设备上手动覆盖一次，之后就回到自动更新：
@@ -180,7 +203,7 @@ echo 'TSF_OTA_SOURCES=https://ghfast.top/https://raw.githubusercontent.com/chyou
 wget -O /tmp/sv.py https://ghfast.top/https://raw.githubusercontent.com/chyou38/rock3a-tslyun/main/sentry-viewer.py \
   || wget -O /tmp/sv.py https://gcore.jsdelivr.net/gh/chyou38/rock3a-tslyun@main/sentry-viewer.py
 python3 -m py_compile /tmp/sv.py && cp /tmp/sv.py /opt/tesla-sentry/sentry-viewer.py \
-  && chmod 755 /opt/tesla-sentry/sentry-viewer.py && /etc/init.d/tesla-viewer restart
+  && chmod 755 /opt/tesla-sentry/sentry-viewer.py && systemctl restart sentry-viewer
 ```
 
 ### 导出勾了水印，视频里却没有水印
@@ -200,7 +223,7 @@ wget -O /opt/tesla-sentry/fonts/NotoSansSC.ttf \
   || wget -O /opt/tesla-sentry/fonts/NotoSansSC.ttf \
   "https://ghfast.top/https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
 ls -l /opt/tesla-sentry/fonts/     # 应约 17MB
-/etc/init.d/tesla-viewer restart
+systemctl restart sentry-viewer
 ```
 
 

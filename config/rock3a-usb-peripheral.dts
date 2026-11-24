@@ -1,0 +1,21 @@
+/dts-v1/;
+/plugin/;
+
+/* ROCK 3A (RK3568) BSP: force the USB OTG (usbdrd / dwc3 @fcc00000) into
+ * peripheral mode so the configfs mass_storage gadget (virtual TeslaCam
+ * drive) is exported to the car. Default official image leaves it "otg"
+ * which, without a role-switch provider, never registers a UDC.
+ * Apply via /boot/extlinux/extlinux.conf: fdtoverlays <this .dtbo>.
+ */
+/ {
+	compatible = "radxa,rock-3a", "rockchip,rk3568";
+
+	fragment@0 {
+		target-path = "/usbdrd/usb@fcc00000";
+		__overlay__ {
+			dr_mode = "peripheral";
+			maximum-speed = "high-speed";
+			/delete-property/ extcon;
+		};
+	};
+};

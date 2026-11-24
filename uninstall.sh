@@ -15,10 +15,11 @@ PURGE=0
 : "${TSF_ARCHIVE:=/archive}"
 : "${TSF_MNT:=/tmp/teslamnt}"
 : "${TSF_CACHE:=$TSF_DIR/cache}"
+: "${TSF_PREVIEW_CACHE:=$TSF_DIR/preview-cache}"
 
 echo "==> 停止服务 (systemd)"
 if command -v systemctl >/dev/null 2>&1; then
-    for svc in tesla-gadget sentry-viewer tesla-live pwm-fan-control tsf-ap-policy.timer tsf-hotspot; do
+    for svc in tesla-gadget sentry-viewer tesla-live pwm-fan-control tsf-ap-policy.timer tsf-hotspot tsf-wifi-dhcp tsf-bt-name; do
         systemctl disable --now "$svc" 2>/dev/null || true
     done
     systemctl stop hostapd.service dnsmasq.service 2>/dev/null || true
@@ -42,7 +43,10 @@ rm -f /etc/systemd/system/tesla-gadget.service \
       /etc/systemd/system/pwm-fan-control.service \
       /etc/systemd/system/tsf-hotspot.service \
       /etc/systemd/system/tsf-ap-policy.service \
-      /etc/systemd/system/tsf-ap-policy.timer
+      /etc/systemd/system/tsf-ap-policy.timer \
+      /etc/systemd/system/tsf-wifi-dhcp.service \
+      /etc/systemd/system/tsf-bt-name.service
+rm -f /etc/NetworkManager/conf.d/99-tsf-unmanaged.conf
 rm -f /etc/cron.d/tesla-sentry
 [ -f /etc/crontab ] && sed -i '/tesla-sync.sh/d;/usb-selfheal.sh/d' /etc/crontab 2>/dev/null || true
 if command -v systemctl >/dev/null 2>&1; then
@@ -60,7 +64,8 @@ rm -f "$TSF_DIR/sentry-viewer.py" "$TSF_DIR/tesla-live-sync.py" \
       "$TSF_DIR/tsf-check.sh" "$TSF_DIR/uninstall.sh" "$TSF_DIR/auth.conf" \
       "$TSF_DIR"/*.log
 rm -rf "$TSF_DIR/fonts" "$TSF_CACHE/thumbs" "$TSF_CACHE/tel-cache" \
-       /etc/hostapd/tsf-ap.conf /etc/dnsmasq.d/tsf-ap.conf
+       "$TSF_CACHE/res-cache" "$TSF_CACHE/stitch-tmp" \
+       "$TSF_PREVIEW_CACHE" /etc/hostapd/tsf-ap.conf /etc/dnsmasq.d/tsf-ap.conf
 rm -f /etc/tesla-sentry.conf /etc/tsf-ap.conf /etc/default/pwm-fan
 
 if [ "$PURGE" = "1" ]; then

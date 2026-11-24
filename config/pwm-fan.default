@@ -1,4 +1,4 @@
-# /etc/default/pwm-fan  (ROCK 3A pwm8 m0 风扇)
+# /etc/default/pwm-fan  (ROCK 3A 风扇; BSP 走 pwm-fan hwmon, 旧 mainline 走 pwm8)
 # 模式: auto=温度曲线 / manual=固定占空比 (网页「风扇设置」可改, 立即生效)
 FAN_MODE=auto
 FAN_MANUAL_DUTY=50

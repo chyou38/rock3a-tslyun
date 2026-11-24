@@ -110,15 +110,15 @@ def lang_from_accept(hdr, default="zh"):
 CAT_NAMES = {"SentryClips": "哨兵告警", "SavedClips": "手动保存", "RecentClips": "行车记录"}
 # 注入页面用的 JSON (预生成, 避免每次请求都序列化)
 FAN_I18N = {
-    "en": {"风扇设置": "Fan", "自动温控": "Auto (temp)", "手动定速": "Manual speed", "风扇转速": "Fan speed", "当前温度": "Current temp", "当前占空比": "Current duty", "保存风扇设置": "Save fan settings", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Auto follows temperature: off below 45°C, full at 75°C; manual applies instantly", "风扇不可用: 未启用 overlay 或温控服务未运行": "Fan unavailable: overlay not enabled or control service not running", "读取风扇状态失败": "Failed to read fan state", "风扇设置已保存, 立即生效": "Fan settings saved, applied instantly"},
-    "de": {"风扇设置": "Lüfter", "自动温控": "Automatik (Temperatur)", "手动定速": "Manuelle Drehzahl", "风扇转速": "Lüfterdrehzahl", "当前温度": "Aktuelle Temperatur", "当前占空比": "Aktueller Tastgrad", "保存风扇设置": "Lüftereinstellungen speichern", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Automatik nach Temperatur: aus unter 45°C, voll bei 75°C; manuell sofort wirksam", "风扇不可用: 未启用 overlay 或温控服务未运行": "Lüfter nicht verfügbar: Overlay nicht aktiv oder Dienst läuft nicht", "读取风扇状态失败": "Lüfterstatus konnte nicht gelesen werden", "风扇设置已保存, 立即生效": "Lüftereinstellungen gespeichert, sofort wirksam"},
-    "fr": {"风扇设置": "Ventilateur", "自动温控": "Auto (température)", "手动定速": "Vitesse manuelle", "风扇转速": "Vitesse du ventilateur", "当前温度": "Température actuelle", "当前占空比": "Rapport cyclique actuel", "保存风扇设置": "Enregistrer les réglages du ventilateur", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Auto selon la température : arrêt sous 45°C, plein à 75°C ; manuel immédiat", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilateur indisponible : overlay non activé ou service arrêté", "读取风扇状态失败": "Échec de lecture de l'état du ventilateur", "风扇设置已保存, 立即生效": "Réglages du ventilateur enregistrés, appliqués immédiatement"},
-    "it": {"风扇设置": "Ventola", "自动温控": "Auto (temperatura)", "手动定速": "Velocità manuale", "风扇转速": "Velocità ventola", "当前温度": "Temperatura attuale", "当前占空比": "Duty cycle attuale", "保存风扇设置": "Salva impostazioni ventola", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Auto in base alla temperatura: spenta sotto 45°C, massima a 75°C; manuale immediato", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventola non disponibile: overlay non attivo o servizio non in esecuzione", "读取风扇状态失败": "Lettura stato ventola non riuscita", "风扇设置已保存, 立即生效": "Impostazioni ventola salvate, applicate subito"},
-    "es": {"风扇设置": "Ventilador", "自动温控": "Auto (temperatura)", "手动定速": "Velocidad manual", "风扇转速": "Velocidad del ventilador", "当前温度": "Temperatura actual", "当前占空比": "Ciclo de trabajo actual", "保存风扇设置": "Guardar ajustes del ventilador", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Auto según temperatura: apagado por debajo de 45°C, máximo a 75°C; manual inmediato", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilador no disponible: overlay no activado o servicio detenido", "读取风扇状态失败": "Error al leer el estado del ventilador", "风扇设置已保存, 立即生效": "Ajustes del ventilador guardados, aplicados al instante"},
-    "nl": {"风扇设置": "Ventilator", "自动温控": "Auto (temperatuur)", "手动定速": "Handmatige snelheid", "风扇转速": "Ventilatorsnelheid", "当前温度": "Huidige temperatuur", "当前占空比": "Huidige duty-cycle", "保存风扇设置": "Ventilatorinstellingen opslaan", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Auto op temperatuur: uit onder 45°C, vol op 75°C; handmatig direct", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilator niet beschikbaar: overlay niet actief of service draait niet", "读取风扇状态失败": "Ventilatorstatus lezen mislukt", "风扇设置已保存, 立即生效": "Ventilatorinstellingen opgeslagen, direct toegepast"},
-    "ru": {"风扇设置": "Вентилятор", "自动温控": "Авто (по температуре)", "手动定速": "Ручная скорость", "风扇转速": "Скорость вентилятора", "当前温度": "Текущая температура", "当前占空比": "Текущий ШИМ", "保存风扇设置": "Сохранить настройки вентилятора", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "Авто по температуре: выкл ниже 45°C, полностью при 75°C; ручной режим сразу", "风扇不可用: 未启用 overlay 或温控服务未运行": "Вентилятор недоступен: overlay не включён или служба не запущена", "读取风扇状态失败": "Не удалось прочитать состояние вентилятора", "风扇设置已保存, 立即生效": "Настройки вентилятора сохранены, применены сразу"},
-    "ja": {"风扇设置": "ファン", "自动温控": "自動(温度)", "手动定速": "手動速度", "风扇转速": "ファン回転数", "当前温度": "現在温度", "当前占空比": "現在デューティ", "保存风扇设置": "ファン設定を保存", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "自動は温度連動: 45°C未満停止、75°Cで全速; 手動は即時反映", "风扇不可用: 未启用 overlay 或温控服务未运行": "ファン利用不可: overlay未有効またはサービス未実行", "读取风扇状态失败": "ファンの状態取得に失敗", "风扇设置已保存, 立即生效": "ファン設定を保存、即時反映"},
-    "ko": {"风扇设置": "팬", "自动温控": "자동(온도)", "手动定速": "수동 속도", "风扇转速": "팬 속도", "当前温度": "현재 온도", "当前占空比": "현재 듀티", "保存风扇设置": "팬 설정 저장", "自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效": "자동은 온도 연동: 45°C 미만 정지, 75°C 최고속; 수동은 즉시 적용", "风扇不可用: 未启用 overlay 或温控服务未运行": "팬 사용 불가: overlay 미활성 또는 서비스 미실행", "读取风扇状态失败": "팬 상태 읽기 실패", "风扇设置已保存, 立即生效": "팬 설정 저장됨, 즉시 적용"},
+    "en": {"风扇设置": "Fan", "自动温控": "Auto (temp)", "手动定速": "Manual speed", "风扇转速": "Fan speed", "当前温度": "Current temp", "当前占空比": "Current duty", "保存风扇设置": "Save fan settings", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto follows temperature: off below 45°C, full at 75°C; manual applies instantly", "风扇不可用: 未启用 overlay 或温控服务未运行": "Fan unavailable: overlay not enabled or control service not running", "读取风扇状态失败": "Failed to read fan state", "风扇设置已保存, 立即生效": "Fan settings saved, applied instantly"},
+    "de": {"风扇设置": "Lüfter", "自动温控": "Automatik (Temperatur)", "手动定速": "Manuelle Drehzahl", "风扇转速": "Lüfterdrehzahl", "当前温度": "Aktuelle Temperatur", "当前占空比": "Aktueller Tastgrad", "保存风扇设置": "Lüftereinstellungen speichern", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Automatik nach Temperatur: aus unter 45°C, voll bei 75°C; manuell sofort wirksam", "风扇不可用: 未启用 overlay 或温控服务未运行": "Lüfter nicht verfügbar: Overlay nicht aktiv oder Dienst läuft nicht", "读取风扇状态失败": "Lüfterstatus konnte nicht gelesen werden", "风扇设置已保存, 立即生效": "Lüftereinstellungen gespeichert, sofort wirksam"},
+    "fr": {"风扇设置": "Ventilateur", "自动温控": "Auto (température)", "手动定速": "Vitesse manuelle", "风扇转速": "Vitesse du ventilateur", "当前温度": "Température actuelle", "当前占空比": "Rapport cyclique actuel", "保存风扇设置": "Enregistrer les réglages du ventilateur", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto selon la température : arrêt sous 45°C, plein à 75°C ; manuel immédiat", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilateur indisponible : overlay non activé ou service arrêté", "读取风扇状态失败": "Échec de lecture de l'état du ventilateur", "风扇设置已保存, 立即生效": "Réglages du ventilateur enregistrés, appliqués immédiatement"},
+    "it": {"风扇设置": "Ventola", "自动温控": "Auto (temperatura)", "手动定速": "Velocità manuale", "风扇转速": "Velocità ventola", "当前温度": "Temperatura attuale", "当前占空比": "Duty cycle attuale", "保存风扇设置": "Salva impostazioni ventola", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto in base alla temperatura: spenta sotto 45°C, massima a 75°C; manuale immediato", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventola non disponibile: overlay non attivo o servizio non in esecuzione", "读取风扇状态失败": "Lettura stato ventola non riuscita", "风扇设置已保存, 立即生效": "Impostazioni ventola salvate, applicate subito"},
+    "es": {"风扇设置": "Ventilador", "自动温控": "Auto (temperatura)", "手动定速": "Velocidad manual", "风扇转速": "Velocidad del ventilador", "当前温度": "Temperatura actual", "当前占空比": "Ciclo de trabajo actual", "保存风扇设置": "Guardar ajustes del ventilador", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto según temperatura: apagado por debajo de 45°C, máximo a 75°C; manual inmediato", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilador no disponible: overlay no activado o servicio detenido", "读取风扇状态失败": "Error al leer el estado del ventilador", "风扇设置已保存, 立即生效": "Ajustes del ventilador guardados, aplicados al instante"},
+    "nl": {"风扇设置": "Ventilator", "自动温控": "Auto (temperatuur)", "手动定速": "Handmatige snelheid", "风扇转速": "Ventilatorsnelheid", "当前温度": "Huidige temperatuur", "当前占空比": "Huidige duty-cycle", "保存风扇设置": "Ventilatorinstellingen opslaan", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto op temperatuur: uit onder 45°C, vol op 75°C; handmatig direct", "风扇不可用: 未启用 overlay 或温控服务未运行": "Ventilator niet beschikbaar: overlay niet actief of service draait niet", "读取风扇状态失败": "Ventilatorstatus lezen mislukt", "风扇设置已保存, 立即生效": "Ventilatorinstellingen opgeslagen, direct toegepast"},
+    "ru": {"风扇设置": "Вентилятор", "自动温控": "Авто (по температуре)", "手动定速": "Ручная скорость", "风扇转速": "Скорость вентилятора", "当前温度": "Текущая температура", "当前占空比": "Текущий ШИМ", "保存风扇设置": "Сохранить настройки вентилятора", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Авто по температуре: выкл ниже 45°C, полностью при 75°C; ручной режим сразу", "风扇不可用: 未启用 overlay 或温控服务未运行": "Вентилятор недоступен: overlay не включён или служба не запущена", "读取风扇状态失败": "Не удалось прочитать состояние вентилятора", "风扇设置已保存, 立即生效": "Настройки вентилятора сохранены, применены сразу"},
+    "ja": {"风扇设置": "ファン", "自动温控": "自動(温度)", "手动定速": "手動速度", "风扇转速": "ファン回転数", "当前温度": "現在温度", "当前占空比": "現在デューティ", "保存风扇设置": "ファン設定を保存", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "自動は温度連動: 45°C未満停止、75°Cで全速; 手動は即時反映", "风扇不可用: 未启用 overlay 或温控服务未运行": "ファン利用不可: overlay未有効またはサービス未実行", "读取风扇状态失败": "ファンの状態取得に失敗", "风扇设置已保存, 立即生效": "ファン設定を保存、即時反映"},
+    "ko": {"风扇设置": "팬", "自动温控": "자동(온도)", "手动定速": "수동 속도", "风扇转速": "팬 속도", "当前温度": "현재 온도", "当前占空比": "현재 듀티", "保存风扇设置": "팬 설정 저장", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "자동은 온도 연동: 45°C 미만 정지, 75°C 최고속; 수동은 즉시 적용", "风扇不可用: 未启用 overlay 或温控服务未运行": "팬 사용 불가: overlay 미활성 또는 서비스 미실행", "读取风扇状态失败": "팬 상태 읽기 실패", "风扇设置已保存, 立即生效": "팬 설정 저장됨, 즉시 적용"},
 }
 for _fl, _fm in FAN_I18N.items():
     LANG_TABLE.setdefault(_fl, {}).update(_fm)
@@ -1564,6 +1564,13 @@ html[data-style="pixel"] .stylepick button { border:2px solid var(--line); backg
 html[data-style="pixel"] .stylepick button.on { background:var(--pxhi); color:var(--pxink); border-color:var(--pxink); box-shadow:3px 3px 0 var(--pxshadow); }
 html[data-style="pixel"] .stylepick button.on::after { background:var(--pxink); color:var(--pxhi); }
 html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
+/* 我的作品: 后台合成/导出的成品列表 (下载/补推飞书/删除) */
+.librow { display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--line2); }
+.librow img { width:78px; height:46px; object-fit:cover; border-radius:6px; background:#000; flex:0 0 auto; }
+.lmeta { flex:1; min-width:0; }
+.lname { font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lsub { font-size:11px; color:var(--muted); margin-top:2px; }
+.lbtns { display:flex; gap:6px; flex:0 0 auto; }
 </style><script>
 /* 版本自检: 服务端升级后, 若当前页面仍是旧版本就自动重载 (看片时不打断, 最多 2 次防死循环) */
 (function () {
@@ -1618,7 +1625,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 </defs></svg>
 <header><h1><img class="blogo" id="blogo" src="/api/brand/logo" alt=""><span id="bname">TSL哨兵云盘</span></h1><span class="sub" id="stat"></span>
 <span id="live" title="车机在线只读同步状态" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:4px 10px;white-space:nowrap"><span id="livedot" style="width:7px;height:7px;border-radius:50%;background:#5f6b76"></span><span id="livetxt">同步状态</span></span>
-<nav class="tabs" id="tabs"></nav><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
+<nav class="tabs" id="tabs"></nav><button id="libbtn" title="我的作品" onclick="openLib()"><svg class="ic"><use href="#i-folder"/></svg></button><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
 <nav class="storwrap" id="storwrap">
   <div class="storcard open" id="storcard">
 <div class="storrow"><span class="storlab">虚拟U盘</span><span class="storval" id="storvusb"></span></div>
@@ -1868,7 +1875,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div id="skin-list"></div>
   </div>
   <div id="tab-fan" style="display:none">
-    <div class="hint">自动模式按温度调速: 45°C 以下停转, 75°C 全速; 手动模式立即生效</div>
+    <div class="hint">自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效</div>
     <div class="brandrow" style="margin-top:8px">
       <select id="fan-mode" class="storage-select" onchange="fanModeChange()">
         <option value="auto">自动温控</option>
@@ -2135,7 +2142,20 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="stt">正在合成多画面视频</div>
     <div class="stbar"><div class="stfill" id="stfill"></div></div>
     <div class="stpct" id="stpct">0%</div>
-    <div class="sthint" id="sthint">设备正在拼接各路画面, 请勿关闭页面</div>
+    <div class="sthint" id="sthint">任务在设备后台运行, 可以关掉这个窗口</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="mini" onclick="document.getElementById('stitch').classList.remove('open')">后台运行, 关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="stitch" id="lib">
+  <div class="stbox" style="width:min(640px,94vw)">
+    <div class="stt">我的作品 <span id="libmeta" style="font-size:12px;color:var(--muted);font-weight:400"></span></div>
+    <div id="librows" style="max-height:58vh;overflow:auto;margin:8px 0"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:10px">
+      <button class="mini" onclick="document.getElementById('lib').classList.remove('open')">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -2283,7 +2303,7 @@ if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListen
    局域网首次打开默认原画, 浏览器直接解码, 不触发设备端转码;
    非局域网首次打开默认 360p, 由设备生成低码率缓存后传输。
    两种网络分别记住手动选择, VPN/域名访问不可靠时不强行改档, 仍可由用户切换。 */
-const Q_LIST = [['orig', '原画'], ['720p', '720p'], ['480p', '480p'], ['360p', '360p']];
+const Q_LIST = [['orig', '原画'], ['1080p', '1080p'], ['720p', '720p'], ['480p', '480p'], ['360p', '360p']];
 const _host = location.hostname;
 /* 局域网直连(192.168/10.x/172.16-31/本机) 默认原画; Tailscale(100.64-127) 等远程一律默认 360p */
 const isLanNet = _host === 'localhost' || /^127\./.test(_host) || /^192\.168\./.test(_host)
@@ -2299,7 +2319,13 @@ let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAU
 if (!Q_LIST.some(x => x[0] === curQ)) { curQ = isLanNet ? 'orig' : '360p'; localStorage.setItem(Q_STORE_KEY, curQ); }
 /* 档位完全按用户选择走, 多路不再偷偷降档; 想省流量自己选 360p */
 let multiMode = false;
-function effQ() { return curQ; }
+/* 多路同播省解码: 局域网默认原画, 但 3 路以上就是 3×2896x1876, 手机浏览器解码直接卡死。
+   自动降一档用 720p 变体(肉眼差别不大, 起播和拖动快很多); 手动锁定画质时不干预。 */
+function effQ() {
+  if (qMode === 'auto' && curQ === 'orig'
+      && document.querySelectorAll('#vgrid video').length >= 3) return '720p';
+  return curQ;
+}
 /* 当前访问走的是哪条链路: 本机 / 局域网 / 远程(Tailscale) / 远程 */
 function netKind() {
   const h = location.hostname;
@@ -2557,6 +2583,7 @@ const REASON_LABEL = {
   sentry_panic: '遭遇袭击',
   sentry_trigger: '哨兵模式触发',
   user_interaction_dashcam_saved: '手动保存',
+  user_interaction_dashcam_icon_tapped: '点击行车记录仪图标保存',
   user_interaction_dashcam_menu: '行车记录仪菜单保存',
   user_interaction_dashcam_launcher_action_tapped: '点击行车记录仪图标',
   user_interaction_honk: '按喇叭保存'
@@ -2565,6 +2592,9 @@ function reasonLabel(r) {
   if (!r) return '';
   if (REASON_LABEL[r]) return t(REASON_LABEL[r]);
   for (const k in REASON_LABEL) if (r.indexOf(k) === 0) return t(REASON_LABEL[k]);
+  /* 兜底: 特斯拉新加的手动保存类 reason 不再原样漏英文 */
+  if (r.indexOf('user_interaction') === 0) return t('手动保存');
+  if (r.indexOf('sentry_') === 0) return t('哨兵模式触发');
   return r;
 }
 const EMPTY_HTML = document.getElementById('empty').innerHTML;
@@ -2791,6 +2821,8 @@ async function load() {
 /* 支持 ?ev=SentryClips/2026-11-04_12-30-00 直接打开某个事件 */
 function openDeepLink() {
   const q = new URLSearchParams(location.search);
+  /* ?lib=1 直接打开「我的作品库」(飞书推送卡片上的按钮用这个) */
+  if (q.get('lib') === '1' && typeof openLib === 'function') setTimeout(openLib, 50);
   /* ?date=2026-11-03 只看某一天 */
   const qd = q.get('date');
   if (/^\d{4}-\d{2}-\d{2}$/.test(qd || '')) { dateFilter = qd; render(currentCat); }
@@ -2892,10 +2924,30 @@ async function refreshLive() {
       const tc = tp == null ? '' : tp > 70 ? '#e8443f' : tp < 40 ? '#4cc38a' : '';
       const mem = (sy && sy.mem_total > 0)
         ? gb(sy.mem_used) + '<span class="u">/' + gb(sy.mem_total) + '</span>' : '—';
+      /* 转码 CPU: 与 CPU 格同口径(整机百分比), ×N 是当前转码进程数; 空闲显示"空闲" */
+      const trn = (sy && sy.trans_n) || 0;
+      const trv = (sy && sy.trans_pct != null)
+        ? (trn > 0 ? sy.trans_pct + '%<span class="u">×' + trn + '</span>' : '空闲') : '—';
+      const trc = (sy && sy.trans_pct > 60) ? '#e8a13f' : '';
+      /* 磁盘读写: USB盘+系统盘合计, MB/s 一位小数; 悬停看字节精确值 */
+      const ios = (sy && sy.io_read != null)
+        ? (sy.io_read / 1048576).toFixed(1) + '/' + (sy.io_write / 1048576).toFixed(1) +
+          '<span class="u">MB/s</span>' : '—';
+      /* 硬件转码自检: 正常=绿, 降级=红 (悬停看缺什么) */
+      const hw = sy && sy.hw;
+      const hwv = hw && hw.ok != null ? (hw.ok ? '正常' : '降级') : '—';
+      const hwc = hw && hw.ok === false ? '#e8443f' : (hw && hw.ok ? '#4cc38a' : '');
       syEl.innerHTML =
         cell('温度', tp != null ? tp + '°C' : '—', tc) +
         cell('CPU', (sy && sy.cpu_pct != null) ? sy.cpu_pct + '%' : '—') +
-        cell('内存', mem);
+        cell('内存', mem) +
+        cell('转码', trv, trc) +
+        cell('读写', ios) +
+        cell('硬转', hwv, hwc);
+      const trEl = syEl.children[3], ioEl = syEl.children[4], hwEl = syEl.children[5];
+      if (trEl) trEl.title = t('转码进程占整机 CPU 的百分比 (ffmpeg 硬解硬编), ×N 为进程数');
+      if (ioEl) ioEl.title = t('磁盘读取/写入速率 (USB 硬盘 + 系统盘合计)');
+      if (hwEl) hwEl.title = (hw && hw.detail) || 'rkmpp 硬解硬编自检';
     }
   } else {
     sw.style.display = 'none';
@@ -4188,8 +4240,9 @@ function doExport() {
   // 浏览器 canvas 合成只能出 webm (微信发不出去), iOS 上还会被截断
   startServerExport(sel, wm);
 }
-/* 设备端合成导出: 输出标准 H.264 mp4 (带 faststart), 微信/相册都能直接发 */
-function startServerExport(sel, wm) {
+/* 设备端合成导出: 提交后在设备后台跑, 页面可以关掉; 成品进「我的作品」随时下载 */
+let lastStitchPush = false;
+function startServerExport(sel, wm, push) {
   const parts = ((curVids()[0] || {}).url || '').replace(/^\/media\//, '').split('/');
   const cat = parts[0] || '', name = parts[1] || '';
   if (!name) { toast('取不到当前事件信息, 请刷新重试'); return; }
@@ -4201,13 +4254,17 @@ function startServerExport(sel, wm) {
   const st = document.getElementById('stitch');
   const fill = document.getElementById('stfill'), pct = document.getElementById('stpct'),
         hint = document.getElementById('sthint');
+  lastStitchPush = !!push;
   fill.style.width = '0%'; pct.textContent = '0%';
-  hint.textContent = '正在设备上合成 mp4 (约 1~3 分钟, 请保持页面打开)…';
+  hint.textContent = push
+    ? '已提交后台合成, 完成后自动推送到飞书 (可以关掉这个窗口)…'
+    : '已提交后台合成, 完成后进「我的作品」下载 (可以关掉这个窗口)…';
   st.classList.add('open');
   fetch('/api/export/burn', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cat: cat, name: name, cams: sel, wm: !!wm, files: files,
-                           q: ({ 'orig': 'orig', '720p': '720p', '480p': '480p', '360p': '360p' })[expQ] || '720p' })
+                           push: push ? 1 : 0,
+                           q: ({ 'orig': 'orig', '1080p': '1080p', '720p': '720p', '480p': '480p', '360p': '360p' })[expQ] || '720p' })
   }).then(r => r.json()).then(d => {
     if (!d.ok) { stitchFail(d.error || '导出失败'); return; }
     pollExport(d.id);
@@ -4220,9 +4277,15 @@ function pollExport(id) {
     document.getElementById('stfill').style.width = pct + '%';
     document.getElementById('stpct').textContent = pct + '%';
     if (d.state === 'done') {
-      document.getElementById('sthint').textContent = '合成完成, 开始下载…';
-      location.href = '/api/export/burn/dl?id=' + encodeURIComponent(id);
-      setTimeout(() => document.getElementById('stitch').classList.remove('open'), 2500);
+      const H = document.getElementById('sthint');
+      H.textContent = lastStitchPush ? '合成完成, 已保存并推送到飞书' : '合成完成, 已保存到「我的作品」';
+      document.getElementById('stfill').style.width = '100%';
+      document.getElementById('stpct').textContent = '100%';
+      setTimeout(() => {
+        document.getElementById('stitch').classList.remove('open');
+        toast(lastStitchPush ? '合成完成, 已推送飞书' : '合成完成, 已保存到「我的作品」');
+        openLib();
+      }, 1200);
       return;
     }
     setTimeout(() => pollExport(id), 1000);
@@ -4235,10 +4298,8 @@ function doPushFeishu() {
   const telOk = !!(TEL && TEL.frames && TEL.frames.length);
   const wm = document.getElementById('expwm').checked && telOk;
   closeExport();
-  const parts = ((curVids()[0] || {}).url || '').replace(/^\/media\//, '').split('/');
-  const cat = parts[0] || '', name = parts[1] || '';
-  if (!name) { toast('取不到当前事件信息, 请刷新重试'); return; }
-  startLocalStitch(sel, document.getElementById('stitch'), wm, { cat: cat, name: name, q: expQ });
+  /* 不再用浏览器 MediaRecorder 实时录制(会把页面锁住 1 分钟), 改交设备后台合成 + 自动推送 */
+  startServerExport(sel, wm, true);
 }
 function uploadPushVideo(blob, push) {
   const fill = document.getElementById('stfill'), pct = document.getElementById('stpct'),
@@ -4264,7 +4325,8 @@ function startLocalStitch(sel, st, wm, push) {
   const vids = camSort(curVids()).filter(v => sel.includes(v.cam));
   if (!vids.length) { toast('请至少选择一路'); return; }
   if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
-    toast('此浏览器不支持本机合成, 请使用打包下载'); return;
+    /* iOS/旧浏览器: 本机合成不可用, 转到设备端 rkmpp 硬解硬编合成 (最多 6 路) */
+    startDeviceStitch(vids); return;
   }
   const fill = document.getElementById('stfill'), pct = document.getElementById('stpct'),
         hint = document.getElementById('sthint');
@@ -4341,6 +4403,24 @@ function startLocalStitch(sel, st, wm, push) {
     })();
   });
 }
+function startDeviceStitch(vids) {
+  /* 设备端合成: 浏览器不支持 MediaRecorder 时兜底 (iOS Safari 录 webm 微信发不出,
+     iOS 26 录 mp4 还会截断)。设备已换成 rkmpp 硬解 + 顺序降采样 + 硬编, 4 路 29s 实测约 46s。 */
+  const st = document.getElementById('stitch');
+  const parts = ((curVids()[0] || {}).url || '').replace(/^\/media\//, '').split('/');
+  const cat = parts[0] || currentCat, name = parts[1] || (cur && cur.name);
+  if (!cat || !name) { toast('找不到当前片段'); return; }
+  document.getElementById('stfill').style.width = '0%';
+  document.getElementById('stpct').textContent = '0%';
+  document.getElementById('sthint').textContent = '浏览器不支持本机合成, 已转到设备端合成 ' + vids.length + ' 路 (约 1 分钟)';
+  st.classList.add('open');
+  fetch('/api/stitch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({cat: cat, name: name, cams: vids.map(v => v.cam)})})
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { stitchFail(d.error || '合成失败'); return; }
+      pollStitch(d.id);
+    }).catch(e => stitchFail('合成请求失败: ' + e));
+}
 function pollStitch(id) {
   fetch('/api/stitch/status?id=' + encodeURIComponent(id)).then(r => r.json()).then(d => {
     if (d.state === 'error') { stitchFail(d.err || t('合成失败')); return; }
@@ -4355,6 +4435,61 @@ function pollStitch(id) {
     }
     setTimeout(() => pollStitch(id), 800);
   }).catch(() => setTimeout(() => pollStitch(id), 1500));
+}
+/* ---------- 我的作品: 后台合成/导出的成品在这里下载、补推飞书、删除 ---------- */
+function fmtSize(n) {
+  n = Number(n) || 0;
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
+  return Math.max(1, Math.round(n / 1024)) + 'KB';
+}
+function openLib() {
+  const p = document.getElementById('lib');
+  if (!p) return;
+  p.classList.add('open');
+  document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">加载中…</div>';
+  fetch('/api/library', {cache: 'no-store'}).then(r => r.json())
+    .then(d => renderLib(d.items || []))
+    .catch(() => { document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">读取失败</div>'; });
+}
+function renderLib(items) {
+  const box = document.getElementById('librows');
+  document.getElementById('libmeta').textContent = items.length
+    ? '共 ' + items.length + ' 条 · ' + fmtSize(items.reduce((s, x) => s + (x.size || 0), 0)) : '';
+  if (!items.length) {
+    box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">还没有作品<br>去「合成视频」或「推送飞书」生成</div>';
+    return;
+  }
+  box.innerHTML = '';
+  items.forEach(it => {
+    const row = document.createElement('div');
+    row.className = 'librow';
+    row.innerHTML = '<img loading="lazy" src="/api/library/thumb?f=' + encodeURIComponent(it.f) + '">' +
+      '<div class="lmeta"><div class="lname"></div><div class="lsub"></div></div><div class="lbtns"></div>';
+    const w = (it.cams && it.cams.length) ? (it.cams.length + ' 路 · ') : '';
+    row.querySelector('.lname').textContent = (it.name || it.f).replace(/_/g, ' ');
+    let when = '';
+    try { when = new Date((it.ts || 0) * 1000).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'}); } catch (e) {}
+    row.querySelector('.lsub').textContent = w + (it.dur || 0) + 's · ' + fmtSize(it.size) + (when ? ' · ' + when : '');
+    const btns = row.querySelector('.lbtns');
+    const mk = (txt, fn) => { const b = document.createElement('button'); b.className = 'mini'; b.textContent = txt; b.onclick = fn; btns.appendChild(b); };
+    mk('下载', () => { location.href = '/api/library/dl?f=' + encodeURIComponent(it.f); });
+    mk('推飞书', () => libPush(it.f));
+    mk('删除', () => { if (confirm('删除这个作品?\n' + it.f)) libDel(it.f); });
+    box.appendChild(row);
+  });
+}
+function libPush(f) {
+  toast('正在推送到飞书…');
+  fetch('/api/library/push', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({f: f})})
+    .then(r => r.json()).then(d => toast(d.ok ? (d.msg || '已推送到飞书') : ('推送失败: ' + (d.msg || '未知错误'))))
+    .catch(e => toast('推送失败: ' + e));
+}
+function libDel(f) {
+  fetch('/api/library/del', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({f: f})})
+    .then(r => r.json()).then(() => openLib())
+    .catch(e => toast('删除失败: ' + e));
 }
 function stitchFail(msg) {
   document.getElementById('sthint').textContent = t('合成失败') + ': ' + msg;
@@ -5630,7 +5765,7 @@ async function storageInit() {
   const v = Math.floor(total * pct / 100), a = Math.floor(total) - v;
   if (total < 8 || v < 4 || a < 4) { toast('❌ 硬盘太小：整块盘至少 8G，且虚拟盘与归档区各需 4G 以上'); return; }
   if (storageData && storageData.host_connected) { toast('❌ OTG 已连接主机, 请先拔出数据线'); return; }
-  if (!confirm('第一遍确认：此操作会清空整块硬盘 ' + dev + '，包括全部分区。\n确定要继续吗？')) return;
+  if (!confirm('第一遍确认：此操作会清空整块硬盘 ' + dev + '，包括全部分区与归档区（所有录像不可恢复）。\n确定要继续吗？')) return;
   const serial = storageSerial(info);
   const c = prompt('第二遍确认：请输入该盘序列号完成最终确认。\n序列号: ' + serial);
   if (c === null) return;
@@ -5638,19 +5773,56 @@ async function storageInit() {
   storageBusy = true;
   const btn = document.querySelector('.storage-init');
   if (btn) btn.disabled = true;
-  let succeeded = false;
-  toast('⏳ 正在格式化并创建虚拟U盘, 请稍候...');
+  toast('⏳ 初始化已提交, 正在后台执行...');
   try {
     const j = await (await fetch('/api/storage/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({device: dev, percent: pct, confirm: c}) })).json();
-    succeeded = !!j.ok;
-    toast(j.ok ? '✅ ' + j.msg : '❌ ' + j.msg);
-    if (j.ok && j.msg.indexOf('刷新') >= 0) setTimeout(() => location.reload(), 4000);
-    else refreshStorage();
-  } catch (e) { toast('❌ 初始化失败'); }
-  finally {
+    if (!j.ok) {
+      toast('❌ ' + j.msg);
+      storageBusy = false;
+      if (btn) storageInitButtonOk(total >= 8 && v >= 4 && a >= 4);
+      return;
+    }
+    const parts = (j.msg || '').split(':');
+    initProgressStart(btn, parts[1] || '', parts[2] || '');
+  } catch (e) {
+    toast('❌ 初始化失败');
     storageBusy = false;
-    if (btn && !succeeded) storageInitButtonOk(total >= 8 && v >= 4 && a >= 4);
+    if (btn) storageInitButtonOk(total >= 8 && v >= 4 && a >= 4);
   }
+}
+function initProgressStart(btn, vg, ag) {
+  let box = document.getElementById('initProg');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'initProg';
+    box.style.cssText = 'margin:10px 0;padding:12px;border:1px solid rgba(128,128,128,.4);border-radius:10px;';
+    box.innerHTML = '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px"><span id="initProgStage">开始...</span><span id="initProgPct">0%</span></div>' +
+      '<div style="height:10px;background:rgba(128,128,128,.25);border-radius:5px;overflow:hidden"><div id="initProgFill" style="height:100%;width:0%;background:var(--accent,#4a9eff);transition:width .4s"></div></div>';
+    btn.parentNode.insertBefore(box, btn.nextSibling);
+  }
+  box.style.display = 'block';
+  const timer = setInterval(async () => {
+    try {
+      const st = await (await fetch('/api/storage/init/progress')).json();
+      const pct = Math.max(0, Math.min(100, st.pct | 0));
+      document.getElementById('initProgFill').style.width = pct + '%';
+      document.getElementById('initProgPct').textContent = pct + '%';
+      document.getElementById('initProgStage').textContent = st.stage || '处理中...';
+      if (st.done) {
+        clearInterval(timer);
+        storageBusy = false;
+        if (st.ok) {
+          document.getElementById('initProgStage').textContent = '✅ 完成: 虚拟U盘 ' + vg + 'G / 归档区 ' + ag + 'G';
+          toast('✅ 初始化完成');
+          setTimeout(() => location.reload(), 3000);
+        } else {
+          document.getElementById('initProgStage').textContent = '❌ 失败';
+          toast('❌ 初始化失败: ' + (st.msg || ''));
+          storageInitButtonOk(true);
+        }
+      }
+    } catch (e) {}
+  }, 1000);
 }
 async function storageUse(dev) {
   if (!confirm('把镜像和归档迁移到 ' + dev + ' ?\n过程中车机U盘会短暂断开, 完成后页面自动刷新。')) return;
@@ -5664,7 +5836,7 @@ async function storageUse(dev) {
 }
 async function storageFormat(dev) {
   if (storageData && storageData.host_connected) { toast('❌ OTG 已连接主机, 请先拔出数据线'); return; }
-  if (!confirm('第一遍确认：格式化会清空 ' + dev + ' 上的全部数据！\n确定要继续吗？')) return;
+  if (!confirm('第一遍确认：格式化会清空 ' + dev + ' 上的全部数据（含归档区录像，不可恢复）！\n确定要继续吗？')) return;
   const info = storageFindPart(dev), serial = storageSerial(info && info.disk);
   const c = prompt('第二遍确认：请输入该盘序列号完成最终确认。\n序列号: ' + serial);
   if (c === null) return;
@@ -6007,6 +6179,23 @@ def _udc():
         return None
 
 
+def _pick_loop():
+    """优先用配置的 loop, 已被占用则取系统空闲 loop。"""
+    try:
+        r = subprocess.run([LOSETUP, LOOPDEV], capture_output=True, text=True)
+        if not (r.stdout or "").strip():
+            return LOOPDEV
+    except Exception:
+        pass
+    try:
+        r = subprocess.run([LOSETUP, "-f"], capture_output=True, text=True)
+        d = (r.stdout or "").strip()
+        if d.startswith("/dev/loop"):
+            return d
+    except Exception:
+        pass
+    return LOOPDEV
+
 def _gadget_rebind(bind):
     udc = _udc()
     if not udc:
@@ -6073,12 +6262,15 @@ def usb_attach():
             _release_usb_flock()
             return False, "OTG 导出未能断开, 为避免与主机读写冲突本次未挂载"
         time.sleep(1)
-        r = subprocess.run([LOSETUP, LOOPDEV, IMG], capture_output=True, text=True)
+        global LOOPDEV
+        LOOPDEV = _pick_loop()
+        r = subprocess.run([LOSETUP, "-P", LOOPDEV, IMG], capture_output=True, text=True)
         if r.returncode != 0:
             _gadget_rebind(True)
             _release_usb_flock()
             return False, "losetup 失败: " + r.stderr.strip()[-120:]
-        r = subprocess.run(["mount", "-t", "exfat", LOOPDEV, MNT], capture_output=True, text=True)
+        loop_part = LOOPDEV + "p1" if os.path.exists(LOOPDEV + "p1") else LOOPDEV
+        r = subprocess.run(["mount", "-t", "exfat", loop_part, MNT], capture_output=True, text=True)
         if r.returncode != 0:
             subprocess.run([LOSETUP, "-d", LOOPDEV], capture_output=True)
             _gadget_rebind(True)
@@ -6136,7 +6328,8 @@ def usb_img_age():
 
 # ---------- 风扇温控 (ROCK 3A pwm8 m0) ----------
 FAN_CONF = "/etc/default/pwm-fan"
-FAN_PWM_GLOB = "/sys/devices/platform/fe6f0000.pwm/pwm/pwmchip*/pwm0"
+FAN_PWM_GLOB = "/sys/devices/platform/fe6f0000.pwm/pwm/pwmchip*/pwm0"  # mainline 裸 PWM (旧 Armbian)
+FAN_HWMON_GLOB = "/sys/class/hwmon/hwmon*"                             # BSP pwm-fan 驱动
 FAN_DEFAULTS = {"FAN_MODE": "auto", "FAN_MANUAL_DUTY": "50",
                 "FAN_CURVE": "45000:0 50000:35 60000:55 70000:80 75000:100",
                 "FAN_HYST": "3000", "FAN_PERIOD": "40000", "FAN_POLL": "10"}
@@ -6180,6 +6373,21 @@ def _fan_conf_set(updates):
     os.replace(tmp, FAN_CONF)
 
 
+def _fan_pwm():
+    """返回 (kind, path)：优先 BSP 的 pwm-fan hwmon(pwm1/pwm1_enable)，其次 mainline 裸 PWM(pwm0)。"""
+    for h in sorted(glob.glob(FAN_HWMON_GLOB)):
+        try:
+            with open(os.path.join(h, "name")) as f:
+                if f.read().strip() != "pwmfan":
+                    continue
+            if os.path.exists(os.path.join(h, "pwm1")):
+                return "hwmon", h
+        except OSError:
+            continue
+    pw = sorted(glob.glob(FAN_PWM_GLOB))
+    return ("pwm", pw[0]) if pw else (None, None)
+
+
 def fan_state():
     c = _fan_conf_read()
     try:
@@ -6188,27 +6396,41 @@ def fan_state():
         manual = 50
     st = {"ok": True, "mode": c.get("FAN_MODE", "auto"), "manual": manual,
           "curve": c.get("FAN_CURVE", ""), "present": False, "temp": None, "duty": None}
-    pw = sorted(glob.glob(FAN_PWM_GLOB))
-    if pw:
+    kind, p = _fan_pwm()
+    if kind:
         st["present"] = True
+        st["driver"] = kind
         try:
-            with open(pw[0] + "/period") as f:
-                period = int(f.read().strip() or 0)
-            with open(pw[0] + "/duty_cycle") as f:
-                duty = int(f.read().strip() or 0)
-            st["duty"] = int(round(duty * 100.0 / period)) if period else 0
+            if kind == "hwmon":
+                with open(p + "/pwm1") as f:
+                    st["duty"] = int(round(int(f.read().strip() or 0) * 100.0 / 255))
+                try:
+                    with open(p + "/pwm1_enable") as f:
+                        st["auto"] = (f.read().strip() == "2")
+                except OSError:
+                    pass
+            else:
+                with open(p + "/period") as f:
+                    period = int(f.read().strip() or 0)
+                with open(p + "/duty_cycle") as f:
+                    duty = int(f.read().strip() or 0)
+                st["duty"] = int(round(duty * 100.0 / period)) if period else 0
         except (OSError, ValueError):
             pass
+    temps = []
     for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
         try:
             with open(z + "/type") as f:
-                if f.read().strip() != "cpu-thermal":
+                if f.read().strip() not in ("cpu-thermal", "soc-thermal", "gpu-thermal"):
                     continue
             with open(z + "/temp") as f:
-                st["temp"] = int(f.read().strip()) / 1000.0
-            break
+                v = int(f.read().strip())
+            if 20000 < v < 150000:
+                temps.append(v / 1000.0)
         except (OSError, ValueError):
             continue
+    if temps:
+        st["temp"] = max(temps)
     return st
 
 
@@ -6220,6 +6442,30 @@ def fan_apply(mode, manual):
     except (TypeError, ValueError):
         return False, "转速无效"
     _fan_conf_set({"FAN_MODE": mode, "FAN_MANUAL_DUTY": str(manual)})
+    kind, p = _fan_pwm()
+    try:
+        if kind == "hwmon":
+            with open(p + "/pwm1_enable", "w") as f:
+                f.write("1")          # 手工模式，内核温控不再覆盖
+            if mode == "manual":
+                with open(p + "/pwm1", "w") as f:
+                    f.write(str(int(round(manual * 255 / 100.0))))
+        elif kind == "pwm" and mode == "manual":
+            try:
+                with open(p + "/period") as f:
+                    per = int(f.read().strip() or 0)
+            except (OSError, ValueError):
+                per = 40000
+            with open(p + "/duty_cycle", "w") as f:
+                f.write(str(int(per * manual / 100.0)))
+    except OSError as e:
+        return False, "写入风扇失败: %s" % e
+    if mode == "auto":
+        try:
+            subprocess.Popen(["systemctl", "restart", "pwm-fan-control"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
     return True, "ok"
 
 
@@ -6420,6 +6666,88 @@ def _wifi_iface():
     return None
 
 
+def _netplan_available():
+    """老 Armbian 用 netplan; Radxa 官方 BSP 没有 netplan(netplan 命令不存在)。"""
+    return os.path.exists("/usr/bin/netplan") or os.path.exists("/usr/sbin/netplan")
+
+
+def _tool(name):
+    for d in ("/usr/sbin/", "/usr/bin/", "/sbin/", "/bin/"):
+        if os.path.exists(d + name):
+            return d + name
+    return name
+
+
+def _wpa_esc(s):
+    return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _wpa_conf_file(n):
+    return "/etc/wpa_supplicant/wpa_supplicant-%s.conf" % n
+
+
+def _wpa_sync(n, store):
+    """按 store 生成 wpa_supplicant 配置(只写 auto=True 的网络)。
+    热点显式开启时把 STA 限制在 2.4G: AX200 在 2.4G 同频才能稳定 AP+STA 并存。"""
+    nets = (store or {}).get("networks") or {}
+    ap_on = False
+    try:
+        ap_on = _ap_conf().get("AP_ENABLE") == "1"
+    except Exception:
+        pass
+    out = ["country=CN", "ctrl_interface=/run/wpa_supplicant", "update_config=1", ""]
+    for ssid, info in nets.items():
+        if not isinstance(info, dict) or not info.get("auto", True):
+            continue
+        psk = info.get("psk") or ""
+        if not psk:
+            continue
+        out.append("network={")
+        out.append('    ssid="%s"' % _wpa_esc(ssid))
+        out.append('    psk="%s"' % _wpa_esc(psk))
+        if ap_on:
+            out.append("    freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462 2467 2472")
+        out.append("}")
+    path = _wpa_conf_file(n)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def _wpa_apply(n, store=None):
+    """重写 wpa 配置 -> 重启按网卡实例 -> 拉起 DHCP。"""
+    if store is None:
+        store = wifi_store()
+    try:
+        _wpa_sync(n, store)
+    except OSError as ex:
+        return False, "写入 WiFi 配置失败: %s" % ex
+    subprocess.run(["systemctl", "enable", "wpa_supplicant@%s" % n],
+                   capture_output=True, timeout=20)
+    subprocess.run(["systemctl", "restart", "wpa_supplicant@%s" % n],
+                   capture_output=True, timeout=30)
+    subprocess.run(["ip", "link", "set", n, "up"], capture_output=True, timeout=10)
+    subprocess.run(["systemctl", "restart", "tsf-wifi-dhcp"],
+                   capture_output=True, timeout=30)
+    time.sleep(2)
+    return True, "ok"
+
+
+def _nm_wired_con():
+    """找 NetworkManager 里绑定 end1 的连接名, 找不到就用默认名。"""
+    try:
+        r = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "con", "show"],
+                           capture_output=True, text=True, timeout=10).stdout
+        for ln in r.splitlines():
+            if ln.endswith(":end1"):
+                return ln.rsplit(":", 1)[0]
+    except Exception:
+        pass
+    return "Wired connection 1"
+
+
 def _ipv4_of(iface):
     try:
         aj = json.loads(subprocess.run(["ip", "-j", "addr", "show", iface],
@@ -6430,38 +6758,82 @@ def _ipv4_of(iface):
         return []
 
 
+def _wired_iface():
+    """BSP 上有线叫 end1(Armbian 叫 end0), 自动识别。"""
+    try:
+        names = [n for n in os.listdir("/sys/class/net") if n.startswith("end") or n.startswith("eth")]
+    except OSError:
+        names = []
+    for n in names:
+        try:
+            if open("/sys/class/net/%s/operstate" % n).read().strip() == "up":
+                return n
+        except OSError:
+            pass
+    return names[0] if names else "end0"
+
+
+def _nm_con_get(con, keys):
+    try:
+        r = subprocess.run(["nmcli", "-g", keys, "con", "show", con],
+                           capture_output=True, text=True, timeout=10)
+        return (r.stdout or "").strip().splitlines()
+    except Exception:
+        return []
+
+
 def net_state():
     st = {"ok": True, "roll_pending": _net_roll_timer is not None, "wired": {}, "wifi": {}}
-    net = _netplan_cfg().get("network") or {}
-    e = (net.get("ethernets") or {}).get("end0") or {}
+    n = _wired_iface()
     w = st["wired"]
-    w["iface"] = "end0"
-    w["dhcp"] = bool(e.get("dhcp4", True))
+    w["iface"] = n
+    w["link"], w["mac"] = "absent", ""
     try:
-        with open("/sys/class/net/end0/operstate") as f:
+        with open("/sys/class/net/%s/operstate" % n) as f:
             w["link"] = f.read().strip()
-        with open("/sys/class/net/end0/address") as f:
+        with open("/sys/class/net/%s/address" % n) as f:
             w["mac"] = f.read().strip()
     except OSError:
-        w["link"], w["mac"] = "absent", ""
-    w["ipv4"] = _ipv4_of("end0")
+        pass
+    w["ipv4"] = _ipv4_of(n)
     try:
         rj = json.loads(subprocess.run(["ip", "-j", "route", "show", "default"],
                                        capture_output=True, text=True, timeout=10).stdout or "[]")
-        w["gw"] = rj[0].get("gateway", "") if rj else ""
+        gw = ""
+        for r in rj:
+            if r.get("dev") == n and r.get("gateway"):
+                gw = r["gateway"]
+                break
+        w["gw"] = gw
     except Exception:
         w["gw"] = ""
-    try:
-        out = subprocess.run(["resolvectl", "dns", "end0"], capture_output=True, text=True, timeout=10).stdout
-        w["dns"] = out.split(":", 1)[-1].split() if ":" in out else []
-    except Exception:
-        w["dns"] = []
-    ad = e.get("addresses") or []
-    w["cfg_ip"] = ad[0].split("/")[0] if ad else ""
-    w["cfg_prefix"] = ad[0].split("/")[1] if ad and "/" in ad[0] else "24"
-    rt = e.get("routes") or []
-    w["cfg_gw"] = (rt[0].get("via", "") if rt else "") or e.get("gateway4") or ""
-    w["cfg_dns"] = (e.get("nameservers") or {}).get("addresses") or []
+    if _netplan_available():
+        e = ((_netplan_cfg().get("network") or {}).get("ethernets") or {}).get(n) or {}
+        w["dhcp"] = bool(e.get("dhcp4", True))
+        ad = e.get("addresses") or []
+        w["cfg_ip"] = ad[0].split("/")[0] if ad else ""
+        w["cfg_prefix"] = ad[0].split("/")[1] if ad and "/" in ad[0] else "24"
+        rt = e.get("routes") or []
+        w["cfg_gw"] = (rt[0].get("via", "") if rt else "") or e.get("gateway4") or ""
+        w["cfg_dns"] = (e.get("nameservers") or {}).get("addresses") or []
+        try:
+            out = subprocess.run(["resolvectl", "dns", n], capture_output=True, text=True, timeout=10).stdout
+            w["dns"] = out.split(":", 1)[-1].split() if ":" in out else []
+        except Exception:
+            w["dns"] = []
+    else:
+        con = _nm_wired_con()
+        v = _nm_con_get(con, "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns")
+        method = (v[0] if len(v) > 0 else "auto") or "auto"
+        addr = (v[1] if len(v) > 1 else "") or ""
+        gwcfg = (v[2] if len(v) > 2 else "") or ""
+        dns = (v[3] if len(v) > 3 else "") or ""
+        w["dhcp"] = method == "auto"
+        w["cfg_ip"] = addr.split("/")[0] if addr else ""
+        w["cfg_prefix"] = addr.split("/")[1] if "/" in addr else "24"
+        w["cfg_gw"] = gwcfg
+        w["cfg_dns"] = dns.replace(",", " ").split() if dns else []
+        w["dns"] = list(w["cfg_dns"])
     wi = st["wifi"]
     n = _wifi_iface()
     wi["iface"], wi["present"] = n, bool(n)
@@ -6473,7 +6845,7 @@ def net_state():
         except OSError:
             wi["link"] = "down"
         try:
-            out = subprocess.run(["iw", "dev", n, "link"], capture_output=True, text=True, timeout=10).stdout
+            out = subprocess.run([_tool("iw"), "dev", n, "link"], capture_output=True, text=True, timeout=10).stdout
             for ln in out.splitlines():
                 if ln.strip().startswith("SSID:"):
                     wi["ssid"] = ln.split(":", 1)[1].strip()
@@ -6492,9 +6864,39 @@ def net_state():
 
 def net_wired_apply(mode, ip, prefix, gw, dns):
     import ipaddress as _ipa
+    if not _netplan_available():
+        con = _nm_wired_con()
+        if mode == "dhcp":
+            cmds = [["nmcli", "con", "mod", con, "ipv4.method", "auto"],
+                    ["nmcli", "con", "up", con]]
+        elif mode == "static":
+            try:
+                _ipa.ip_address(ip)
+                pfx = int(prefix)
+                if not 0 <= pfx <= 32:
+                    raise ValueError
+                if gw:
+                    _ipa.ip_address(gw)
+                ds = [str(_ipa.ip_address(x)) for x in (dns or []) if x]
+            except (ValueError, TypeError):
+                return False, "参数无效"
+            cmds = [["nmcli", "con", "mod", con, "ipv4.method", "manual",
+                     "ipv4.addresses", "%s/%d" % (ip, pfx),
+                     "ipv4.gateway", gw or "",
+                     "ipv4.dns", " ".join(ds)],
+                    ["nmcli", "con", "up", con]]
+        else:
+            return False, "参数无效"
+        try:
+            for c in cmds:
+                r = subprocess.run(c, capture_output=True, text=True, timeout=60)
+                if r.returncode != 0:
+                    return False, (r.stderr or r.stdout).strip()[-160:]
+        except (OSError, subprocess.TimeoutExpired) as ex:
+            return False, "应用失败: %s" % ex
+        return True, "ok"
     cfg = _netplan_cfg()
     eth = cfg["network"].setdefault("ethernets", {})
-    # 原 Armbian 模板按 e* 匹配统配 DHCP; 改显式 end0 定义, 避免双重匹配冲突
     eth.pop("all-eth-interfaces", None)
     if mode == "dhcp":
         eth["end0"] = {"dhcp4": True, "dhcp6": True, "ipv6-privacy": True}
@@ -6528,9 +6930,16 @@ def net_wifi_apply(ssid, psk):
     store = wifi_store()
     if not psk:
         psk = ((store.get("networks") or {}).get(ssid) or {}).get("psk") or ""
+    if not _netplan_available():
+        with _WIFI_STORE_LOCK:
+            d = _wifi_store_read()
+            nets = d.setdefault("networks", {})
+            nets[ssid] = {"psk": psk, "auto": True}
+            _wifi_store_write(d)
+        return _wpa_apply(n, d)
     cfg = _netplan_cfg()
     wf = cfg["network"].setdefault("wifis", {}).setdefault(n, {"dhcp4": True, "dhcp6": True})
-    aps = dict(wf.get("access-points") or {})      # 合并保存, 不再覆盖掉以前连过的网络
+    aps = dict(wf.get("access-points") or {})
     aps[ssid] = ({"password": psk} if psk else {})
     wf["access-points"] = aps
     ok, msg = _netplan_apply(cfg)
@@ -6538,7 +6947,7 @@ def net_wifi_apply(ssid, psk):
         with _WIFI_STORE_LOCK:
             d = _wifi_store_read()
             nets = d.setdefault("networks", {})
-            nets[ssid] = {"psk": psk, "auto": True}   # 手动连上的网络默认自动连接
+            nets[ssid] = {"psk": psk, "auto": True}
             _wifi_store_write(d)
     return ok, msg
 
@@ -6550,6 +6959,14 @@ def net_wifi_forget(ssid=""):
     targets = [ssid] if ssid else list(nets.keys())
     if ssid and ssid not in nets:
         return False, "未找到该网络"
+    if not _netplan_available():
+        with _WIFI_STORE_LOCK:
+            for s in targets:
+                nets.pop(s, None)
+            _wifi_store_write(store)
+        if n:
+            return _wpa_apply(n, store)
+        return True, "ok"
     cfg = _netplan_cfg()
     wfs = (cfg.get("network") or {}).get("wifis") or {}
     if n and n in wfs:
@@ -6579,8 +6996,14 @@ def net_wifi_auto(ssid, auto):
     if ssid not in nets:
         return False, "未找到该网络"
     n = _wifi_iface()
-    cfg = _netplan_cfg()
     nets[ssid]["auto"] = bool(auto)
+    if not _netplan_available():
+        with _WIFI_STORE_LOCK:
+            _wifi_store_write(store)
+        if n:
+            return _wpa_apply(n, store)
+        return True, "ok"
+    cfg = _netplan_cfg()
     wf = _wifi_apply_store_aps(n, cfg, store) if n else None
     if n:
         ok, msg = _netplan_apply(cfg)
@@ -6609,7 +7032,7 @@ def net_wifi_scan():
     # 未接管时接口可能 DOWN, scan 会报 Network is down; 先拉起 (不关联)
     subprocess.run(["ip", "link", "set", n, "up"], capture_output=True, timeout=10)
     try:
-        r = subprocess.run(["iw", "dev", n, "scan"], capture_output=True, text=True, timeout=45)
+        r = subprocess.run([_tool("iw"), "dev", n, "scan"], capture_output=True, text=True, timeout=45)
     except subprocess.TimeoutExpired:
         return False, "应用失败: scan timeout", []
     if r.returncode != 0:
@@ -6737,7 +7160,7 @@ def ap_state():
           "up": os.path.isdir("/sys/class/net/ap0") and _ap_operstate() == "up", "clients": 0}
     if st["up"]:
         try:
-            out = subprocess.run(["iw", "dev", "ap0", "station", "dump"],
+            out = subprocess.run([_tool("iw"), "dev", "ap0", "station", "dump"],
                                  capture_output=True, text=True, timeout=10).stdout
             st["clients"] = out.count("Station ")
         except Exception:
@@ -6770,6 +7193,19 @@ def ap_apply(enable, ssid, psk, band="auto", ch_mode="auto", ch_manual=0):
         # 兜底策略: WiFi 或 有线网 任一可用则关热点, 两者都没有才开
         run = not (bool(_sta_freq()) or _wired_has_ip())
     if run:
+        if _wifi_driver() == "iwlwifi":
+            if band == "5g":
+                return False, "当前网卡不支持5G热点, 请选择2.4G"
+            if ch_mode == "manual" and ch_manual > 13:
+                return False, "当前网卡热点仅支持2.4G(信道1-13)"
+            band = "auto"
+            c["AP_ENABLE"], c["AP_BAND"] = mode, "2g"
+            with open(AP_CONF, "w") as fh:
+                fh.write("\n".join("%s=%s" % (k, c[k]) for k in AP_DEFAULTS) + "\n")
+            f0 = _sta_freq()
+            if f0 and f0 >= 5000:
+                _wpa_apply(_wifi_iface(), wifi_store())
+                time.sleep(10)
         f = _sta_freq()
         if f:
             # 与 STA 并发时硬件要求同信道: 频段/信道自选仅在未连 WiFi 时生效
@@ -6802,6 +7238,9 @@ def ap_apply(enable, ssid, psk, band="auto", ch_mode="auto", ch_manual=0):
                        capture_output=True, text=True, timeout=60)
     if run and r.returncode != 0:
         return False, "应用失败: " + (r.stderr or "").strip()[-160:]
+    if (not run) and _sta_freq():
+        # 关闭热点后解除 2.4G 限制, 让 STA 重新自由选频
+        _wpa_apply(_wifi_iface(), wifi_store())
     if run:
         time.sleep(2)
         if not os.path.isdir("/sys/class/net/ap0"):
@@ -6908,6 +7347,42 @@ STORAGE_MNT = "/mnt/tsf-storage"
 TSF_RUNTIME_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
 STORAGE_USE_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-use.sh")
 STORAGE_INIT_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-init.sh")
+
+
+def _exf_base(fd):
+    """镜像内 exFAT 卷的字节偏移: 0=无分区表, 否则取 MBR 第一个分区起点。"""
+    import struct as _st
+    try:
+        head = os.pread(fd, 512, 0)
+        if head[3:11] == b"EXFAT   ":
+            return 0
+        if len(head) == 512 and head[510:512] == b"\x55\xaa":
+            lba = _st.unpack_from("<I", head, 454)[0]
+            if lba:
+                return lba * 512
+    except Exception:
+        pass
+    return 0
+
+
+def _img_vbr():
+    """读取虚拟盘 VBR: 兼容 无分区表(superfloppy) 与 MBR 分区镜像。"""
+    import struct as _st
+    try:
+        with open(IMG, "rb") as f:
+            head = f.read(512)
+            if head[3:11] == b"EXFAT   ":
+                return head
+            if len(head) == 512 and head[510:512] == b"\x55\xaa":
+                lba = _st.unpack_from("<I", head, 446 + 8)[0]
+                if lba:
+                    f.seek(lba * 512)
+                    v = f.read(512)
+                    if v[3:11] == b"EXFAT   ":
+                        return v
+    except Exception:
+        pass
+    return b""
 
 
 def storage_ready():
@@ -7032,8 +7507,9 @@ def storage_status():
     try:
         with open(IMG, "rb") as f:
             img_configured = f.read(8)[3:8] == b"EXFAT"
-            f.seek(0x64)
-            volume_serial = "%08X" % int.from_bytes(f.read(4), "little")
+            img_configured = bool(_img_vbr())
+            vbr = _img_vbr()
+            volume_serial = ("%08X" % int.from_bytes(vbr[100:104], "little")) if len(vbr) >= 512 else ""
     except OSError:
         volume_serial = ""
     return {"ok": True, "storage_ready": storage_ready(), "storage_mount": STORAGE_MNT,
@@ -7115,14 +7591,47 @@ def storage_init(device, percent, confirm):
     if virtual_gb < 4 or archive_gb < 4:
         return False, "磁盘太小, 虚拟盘和归档区都至少需要 4G (整块盘建议 ≥8G)"
     try:
-        r = _run_cmd(["sh", STORAGE_INIT_SCRIPT, device, str(virtual_gb), str(archive_gb)], timeout=1800)
+        global _init_proc
+        if _init_proc is not None and _init_proc.poll() is None:
+            return False, "初始化正在进行中, 请查看进度条"
+        open(INIT_PROGRESS, "w").write("1|开始初始化")
+        _init_log = open(INIT_LOG, "w")
+        _init_proc = subprocess.Popen(["sh", STORAGE_INIT_SCRIPT, device, str(virtual_gb), str(archive_gb)],
+                                      stdout=_init_log, stderr=subprocess.STDOUT)
     except Exception as e:
         return False, str(e)
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()[-300:]
-    subprocess.Popen(["sh", "-c", "sleep 1; systemctl restart sentry-viewer.service"],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True, "initialized:%d:%d" % (virtual_gb, archive_gb)
+    return True, "started:%d:%d" % (virtual_gb, archive_gb)
+
+
+INIT_PROGRESS = "/tmp/tsf-init.progress"
+INIT_LOG = "/tmp/tsf-init.log"
+_init_proc = None
+
+
+def storage_init_progress():
+    pct, stage = 0, "等待开始"
+    try:
+        with open(INIT_PROGRESS, encoding="utf-8", errors="ignore") as f:
+            raw = f.read().strip()
+        if "|" in raw:
+            a, b = raw.split("|", 1)
+            pct, stage = int(a), b
+    except Exception:
+        pass
+    p = _init_proc
+    running = bool(p is not None and p.poll() is None)
+    done = bool(p is not None and not running)
+    ok = bool(done and p.returncode == 0)
+    msg = ""
+    if done and not ok:
+        try:
+            with open(INIT_LOG, encoding="utf-8", errors="ignore") as f:
+                msg = f.read().strip()[-300:]
+        except Exception:
+            msg = "初始化脚本失败"
+    if ok:
+        pct, stage = 100, "完成"
+    return {"running": running, "done": done, "ok": ok, "pct": pct, "stage": stage, "msg": msg}
 
 
 # ---------- 车机U盘「幽灵占用」回收 (位图自愈) ----------
@@ -7144,7 +7653,9 @@ def _exf_collect_refs(fd):
     """只读按 exFAT 规范走一遍目录树。
     返回 (引用簇集合, 位图簇链, FAT 数组, 几何 dict)。
     任何结构异常直接抛出 —— 调用方放弃本次操作, 绝不带着疑问写盘。"""
-    vbr = os.pread(fd, 512, 0)
+    base = _exf_base(fd)
+    pr = lambda n, off: os.pread(fd, n, off + base)
+    vbr = pr(512, 0)
     if len(vbr) < 512 or vbr[3:11] != b"EXFAT   ":
         raise ValueError("bad VBR")
     g = {
@@ -7158,7 +7669,7 @@ def _exf_collect_refs(fd):
     }
     g["csz"] = g["bps"] * g["spc"]
     g["cl_max"] = g["cl_cnt"] + 2
-    fat_raw = os.pread(fd, g["fat_len"] * g["bps"], g["fat_off"] * g["bps"])
+    fat_raw = pr(g["fat_len"] * g["bps"], g["fat_off"] * g["bps"])
     if len(fat_raw) < g["fat_len"] * g["bps"]:
         raise ValueError("short FAT")
     fat = struct.unpack("<%dI" % (len(fat_raw) // 4), fat_raw)
@@ -7166,7 +7677,7 @@ def _exf_collect_refs(fd):
     def rd_cl(c):
         if c < 2 or c >= g["cl_max"]:
             raise ValueError("cluster out of range: %d" % c)
-        d = os.pread(fd, g["csz"], (g["heap_off"] + (c - 2) * g["spc"]) * g["bps"])
+        d = pr(g["csz"], (g["heap_off"] + (c - 2) * g["spc"]) * g["bps"])
         if len(d) < g["csz"]:
             raise ValueError("short cluster read")
         return d
@@ -7759,7 +8270,9 @@ def _exfat_used(path):
     fd = None
     try:
         fd = os.open(path, os.O_RDONLY)
-        vbr = os.pread(fd, 512, 0)
+        base = _exf_base(fd)
+        pr = lambda n, off: os.pread(fd, n, off + base)
+        vbr = pr(512, 0)
         if len(vbr) >= 512 and vbr[3:11] == b"EXFAT   ":
             bps = 1 << vbr[108]
             csize = bps << vbr[109]
@@ -7774,14 +8287,14 @@ def _exfat_used(path):
             hi = ccnt + 2
 
             def nextc(c):
-                e = os.pread(fd, 4, fat_at + c * 4)
+                e = pr(4, fat_at + c * 4)
                 return struct.unpack("<I", e)[0] if len(e) == 4 else 0xFFFFFFFF
 
             # 根目录簇链里找 Allocation Bitmap 目录项
             bm_cl = bm_len = 0
             c, guard = root, 0
             while 2 <= c < hi and guard < 8192 and not bm_cl:
-                buf = os.pread(fd, csize, heap + (c - 2) * csize)
+                buf = pr(csize, heap + (c - 2) * csize)
                 if not buf:
                     break
                 for i in range(0, len(buf) - 31, 32):
@@ -7802,7 +8315,7 @@ def _exfat_used(path):
                 used = 0
                 while got < need and 2 <= c < hi and guard < 65536:
                     n = min(csize, need - got)
-                    buf = os.pread(fd, n, heap + (c - 2) * csize)
+                    buf = pr(n, heap + (c - 2) * csize)
                     if not buf:
                         break
                     for b in buf:
@@ -7843,19 +8356,85 @@ def archive_size():
 _SYS_CACHE = {"t": 0.0, "v": {}}
 
 
+def _disk_io_pair():
+    """物理盘累计读/写扇区数 (USB 硬盘 sda + 系统盘 mmcblk0), 扇区恒为 512B。
+    只统计整盘设备, 不加分区, 避免同一 IO 被计两遍。"""
+    r = w = 0
+    with open("/proc/diskstats") as f:
+        for ln in f:
+            p = ln.split()
+            if len(p) < 14 or p[2] not in ("sda", "mmcblk0"):
+                continue
+            r += int(p[5])
+            w += int(p[9])
+    return r, w
+
+
+def _trans_sample():
+    """转码进程 (ffmpeg) 的数量与逐进程 CPU ticks (utime+stime)。"""
+    per = {}
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/%s/comm" % pid) as f:
+                if f.read().strip() != "ffmpeg":
+                    continue
+            with open("/proc/%s/stat" % pid) as f:
+                parts = f.read().rsplit(")", 1)[1].split()
+            per[pid] = int(parts[11]) + int(parts[12])
+        except (OSError, ValueError, IndexError):
+            continue
+    return per
+
+
+HW_STATUS = {"ok": None, "detail": "尚未检测", "ts": 0.0}
+
+
+def hw_probe():
+    """硬解硬编链路自检: 内核 MPP 节点 + ffmpeg 的 rkmpp 编码器 + RGA 缩放滤镜。
+    结果缓存 10 分钟。缺任何一项就标记"降级"并写明缺什么 —— 内核/固件升级后如果 rkmpp
+    悄悄没了, 转码会静默退回 libx264 变慢 5 倍, 没有这个自检根本发现不了。"""
+    now = time.time()
+    if HW_STATUS["ts"] and now - HW_STATUS["ts"] < 600:
+        return HW_STATUS
+    ok, miss = True, []
+    if not os.path.exists("/dev/mpp_service"):
+        ok = False
+        miss.append("无 /dev/mpp_service")
+    for args, need, label in ((["-hide_banner", "-encoders"], "h264_rkmpp", "ffmpeg 无 h264_rkmpp"),
+                              (["-hide_banner", "-filters"], "scale_rkrga", "ffmpeg 无 scale_rkrga")):
+        try:
+            out = subprocess.run([FFMPEG_BIN] + args, capture_output=True, timeout=20
+                                 ).stdout.decode("utf-8", "ignore")
+            if need not in out:
+                ok = False
+                miss.append(label)
+        except Exception:
+            ok = False
+            miss.append(label + " (探测失败)")
+    HW_STATUS.update(ok=ok, detail="; ".join(miss) or "rkmpp 硬解 + RGA 缩放 + 硬编可用", ts=now)
+    return HW_STATUS
+
+
 def sys_status():
-    """系统状态一行: CPU 温度 / CPU 占用 / 内存占用 (给存储卡折叠区显示)。
+    """系统状态: CPU 温度 / CPU 占用 / 内存 / 转码 CPU / 磁盘读写速率 (存储卡折叠区)。
 
     存储卡每 10 秒轮询一次, 可能多个端同时打开 —— 结果缓存 3 秒;
-    CPU 占用必须两次采样 /proc/stat 求差, 睡 150ms 就当是采样窗口。"""
+    CPU/IO/转码都靠两次采样求差, 睡 300ms 当采样窗口 (进程 ticks 粒度 4ms,
+    窗口太短转码占用会一格一格跳)。"""
     now = time.time()
     if _SYS_CACHE["t"] and now - _SYS_CACHE["t"] < 3:
         return _SYS_CACHE["v"]
-    d = {"cpu_temp": None, "cpu_pct": None, "mem_total": 0, "mem_used": 0}
+    d = {"cpu_temp": None, "cpu_pct": None, "mem_total": 0, "mem_used": 0,
+         "io_read": None, "io_write": None, "trans_pct": None, "trans_n": 0}
     # CPU 温度: thermal_zone 里取读数合理的热区最大值 (SoC 通常只有一两个)
     temps = []
     for i in range(8):
         try:
+            with open("/sys/class/thermal/thermal_zone%d/type" % i) as f:
+                if f.read().strip() not in ("cpu-thermal", "soc-thermal", "gpu-thermal"):
+                    continue
             with open("/sys/class/thermal/thermal_zone%d/temp" % i) as f:
                 v = int(f.read().strip())
         except (OSError, ValueError):
@@ -7872,11 +8451,27 @@ def sys_status():
         return sum(vals), idle
     try:
         t1, i1 = _cpu_pair()
-        time.sleep(0.15)
+        io1 = _disk_io_pair()
+        tr1 = _trans_sample()
+        w1 = time.time()
+        time.sleep(0.3)
         t2, i2 = _cpu_pair()
+        io2 = _disk_io_pair()
+        tr2 = _trans_sample()
+        w2 = time.time()
         dt = t2 - t1
         if dt > 0:
             d["cpu_pct"] = round(max(0.0, min(100.0, (dt - (i2 - i1)) / dt * 100)), 1)
+        wall = max(0.05, w2 - w1)
+        d["io_read"] = max(0, (io2[0] - io1[0]) * 512) / wall     # B/s
+        d["io_write"] = max(0, (io2[1] - io1[1]) * 512) / wall
+        # 转码 CPU: 两次采样间各进程 utime+stime 增量 / 窗口秒 / HZ, 折算成整机百分比
+        # (与 cpu_pct 同口径, 4 核跑满 1 核 = 25%); 窗口内新起的进程从 0 计。
+        hz = os.sysconf("SC_CLK_TCK") or 100
+        ncpu = os.cpu_count() or 4
+        ticks = sum(v - tr1.get(pid, 0) for pid, v in tr2.items())
+        d["trans_n"] = len(tr2)
+        d["trans_pct"] = round(max(0.0, min(100.0, ticks / hz / wall * 100 / ncpu)), 1)
     except Exception:
         pass
     # 内存: MemTotal - MemAvailable (MemAvailable 才是内核估计的真正可用量)
@@ -7891,6 +8486,7 @@ def sys_status():
         d["mem_used"] = max(0, mi.get("MemTotal", 0) - avail)
     except Exception:
         pass
+    d["hw"] = hw_probe()
     _SYS_CACHE.update(t=now, v=d)
     return d
 
@@ -8013,6 +8609,12 @@ FFMPEG_BIN = os.environ.get("TSF_FFMPEG") or "ffmpeg"
 FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or "ffprobe"
 STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
 STITCH_JOBS = {}
+# 作品库: 合成/导出成品原来留在 stitch-tmp, 1~2 小时就被清掉, 用户只能当场下载。
+# 现在成品移到外接盘 exports/, 网页「作品」里随时下载、补推飞书; 7 天或 20GB 淘汰最旧。
+LIB_DIR = os.environ.get("TSF_LIB", "/mnt/tsf-storage/tsf-data/exports")
+LIB_TTL = 7 * 86400
+LIB_MAX = 20 * 1024 * 1024 * 1024
+_LIB_CLEAN_LAST = {"t": 0.0}
 STITCH_LOCK = threading.Lock()
 # 视频流并发上限: 事件多的时候浏览器会一口气请求上百个预览, 不限流会拖死设备
 MEDIA_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_MEDIA_CONN", "16")))  # 媒体流并发上限: 4路视频+封面+接口要同时走, 太小会让新请求排队
@@ -8151,20 +8753,34 @@ def thumb_file(fp, ss_t=1.0, kind="list"):
             _thumb_write_meta(out, fp, kind, ss_t)
             return out
         # 指定秒数可能落在片段末尾之外(触发帧偏移略超时长), 逐级回落
-        for ss in ("%.1f" % ss_t, "1", "0"):
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-                subprocess.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
-                                "-ss", ss, "-i", fp, "-frames:v", "1",
-                                "-vf", "scale=%d:-2" % THUMB_W, "-q:v", "7", tmp],
-                               capture_output=True, timeout=30)
-                if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
-                    os.replace(tmp, out)
-                    _thumb_write_meta(out, fp, kind, ss_t)
-                    return out
-            except Exception:
-                pass
+        # 先整轮走硬件(rkmpp 硬解 + RGA 缩放), 全失败再整轮软解兜底:
+        # 特斯拉原片 2896x1876 软解抽一帧约 0.9s, 列表一次几十张就是好几秒转圈;
+        # 硬解约 0.35s。整体 90s 预算, 防止坏文件把 6 次 30s 超时全耗光。
+        deadline = time.time() + 90
+        for hw in (True, False):
+            for ss in ("%.1f" % ss_t, "1", "0"):
+                if time.time() > deadline:
+                    return None
+                try:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    if hw:
+                        cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                               "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                               "-ss", ss, "-i", fp, "-frames:v", "1",
+                               "-vf", "scale_rkrga=w=%d:h=-2,hwdownload,format=nv12" % THUMB_W,
+                               "-q:v", "7", tmp]
+                    else:
+                        cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                               "-ss", ss, "-i", fp, "-frames:v", "1",
+                               "-vf", "scale=%d:-2" % THUMB_W, "-q:v", "7", tmp]
+                    subprocess.run(cmd, capture_output=True, timeout=30)
+                    if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                        os.replace(tmp, out)
+                        _thumb_write_meta(out, fp, kind, ss_t)
+                        return out
+                except Exception:
+                    pass
         return None
     finally:
         THUMB_SEM.release()
@@ -8312,13 +8928,15 @@ def _thumb_stats():
 # 導致 480p/360p 轉碼永遠失敗、播放器只能一直發 7Mbps 原畫(遠端必卡)。實測見 docs。
 # RK3568 4xA55 實測: 軟解+縮放+編碼 比 rkvdec 硬解+管道搬運更快(硬解全分辨率 NV12 過管道 sys 開銷大),
 # 故遠端檔位走軟解; 縮放用 bilinear 比 lanczos 快 ~23%(60s 前視 80s->62s), 畫質差異在 500kbps 預覽下可忽略。
-RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 900), "720p": (960, 720, 1500)}  # 宽,高,kbps
+RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 900), "720p": (960, 720, 1500),
+             "1080p": (1440, 1080, 2600)}  # 宽,高,kbps (等比缩放到框内)
 # 播放帧率: 用户要求流畅优先(2026-11-23), 360p/480p 从 15 提到 24, 与 720p 一致。
 # 实测 360p 10s 预缓冲 15→24fps 仅慢 6% (4.73s→5.03s), 代价可忽略。
 # 帧率参与缓存 key: 改帧率自动换 key, 旧缓存由 _variant_play 兜底读取, 后台逐步升级。
-RES_FPS = {"360p": 24, "480p": 24, "720p": 24}
-# 编码参数版本号: 参与缓存 key。v4: 修復奇數高度 + 遠端縮放改 bilinear。
-RES_ENC_VER = "4"
+RES_FPS = {"360p": 24, "480p": 24, "720p": 24, "1080p": 24}
+# 编码参数版本号: 参与缓存 key。v5: 主转码换 ffmpeg-rockchip(rkmpp 硬解+RGA 缩放+硬编),
+# 旧 v4 缓存由旧的软件编码管道产出, 尺寸与码率模式不同, 提升版本号让它们自然重建。
+RES_ENC_VER = "5"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
@@ -8329,9 +8947,49 @@ PREVIEW_HOT = {}               # 最近正在被点播的预缓冲路径 -> 最�
 _PREVIEW_CLEAN_LAST = {"t": 0.0}  # 预缓冲全量扫描节流, 避免每 15 秒翻 2000+ 个文件
 VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-transcode.sh")
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
-Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))  # 2 个预览/预热 + 1 个用户请求; 预览只转 10 秒, 并发高一点起播更快
+# 并发上限保持 3 (不是越高越好): RK3568 只有一路硬编实例, 实测单路 720p 7.5s,
+# 4 路同时跑每路都拖到 48s、总吞吐反而下降, 排队(3 槽)比全放开更快; 内存也只在排队时可控。
+Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))  # 2 个预览/预热 + 1 个用户请求
 USER_TRANS = [0]      # 正在排队/占用转码槽的用户请求数; 后台预热看到 >0 就让位
-RES_MAX = 2 * 1024 * 1024 * 1024  # 清晰度缓存总量上限 2GB, 超了从最旧开始删
+RES_MAX = 4 * 1024 * 1024 * 1024  # 清晰度缓存上限 4GB(外接盘 445G 可用, 1080p 档体积翻倍)
+
+
+def cache_version_gc():
+    """编码版本号变化时清空旧的清晰度缓存和预缓冲: 旧 key 的文件永远不会再被命中,
+    留着只占空间 (预缓冲还在 eMMC 上)。用 PREVIEW_DIR/.enc_ver 记录上次生效的版本。"""
+    try:
+        probe = os.path.join(PREVIEW_DIR, ".enc_ver")
+        old = ""
+        try:
+            with open(probe, encoding="utf-8") as f:
+                old = f.read().strip()
+        except OSError:
+            pass
+        if old and old != RES_ENC_VER:
+            n = 0
+            for d in (PREVIEW_DIR, RES_DIR):
+                try:
+                    for fn in os.listdir(d):
+                        if fn.startswith("."):
+                            continue
+                        p = os.path.join(d, fn)
+                        if os.path.isfile(p):
+                            try:
+                                os.unlink(p)
+                                n += 1
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+            print("[cache] 编码版本 %s -> %s, 清理旧缓存 %d 个文件" % (old, RES_ENC_VER, n), flush=True)
+        try:
+            os.makedirs(PREVIEW_DIR, exist_ok=True)
+            with open(probe, "w", encoding="utf-8") as f:
+                f.write(RES_ENC_VER)
+        except OSError:
+            pass
+    except Exception:
+        pass
 
 
 def res_cleanup():
@@ -8762,9 +9420,32 @@ def health_logger():
                         continue
             except OSError:
                 pass
+            # 磁盘读写速率 + 转码 CPU (0.5 秒采样窗): 复盘卡死前是 IO 打满还是转码吃满
+            io_s = trans_s = "?"
+            try:
+                r1, w1 = _disk_io_pair()
+                p1 = _trans_sample()
+                t1 = time.time()
+                time.sleep(0.5)
+                r2, w2 = _disk_io_pair()
+                p2 = _trans_sample()
+                wall = max(0.05, time.time() - t1)
+                io_s = "%.1f/%.1fMB/s" % ((r2 - r1) * 512 / wall / 1048576,
+                                          (w2 - w1) * 512 / wall / 1048576)
+                hz = os.sysconf("SC_CLK_TCK") or 100
+                ticks = sum(v - p1.get(pid, 0) for pid, v in p2.items())
+                trans_s = "%d%%x%d" % (round(ticks / hz / wall * 100 / (os.cpu_count() or 4)),
+                                       len(p2))
+            except Exception:
+                pass
+            hw_s = "?"
+            try:
+                hw_s = "ok" if hw_probe().get("ok") else "DEGRADED"
+            except Exception:
+                pass
             with open(fp, "a", encoding="utf-8") as f:
-                f.write("%s mem=%s load=%s ffmpeg=%d\n" % (
-                    time.strftime("%m-%d %H:%M"), mem, load, ff))
+                f.write("%s mem=%s load=%s ffmpeg=%d io=%s trans=%s hw=%s\n" % (
+                    time.strftime("%m-%d %H:%M"), mem, load, ff, io_s, trans_s, hw_s))
             if os.path.getsize(fp) > 300 * 1024:      # 环形截断, 只留最近 ~2000 行
                 try:
                     with open(fp, encoding="utf-8") as f:
@@ -8819,6 +9500,9 @@ _NC_DEFAULT = {
 }
 _TOK = {"v": "", "exp": 0}
 CAM_NUM = {0: "前视", 3: "左B柱", 4: "右B柱", 5: "左翼子板", 6: "右翼子板", 7: "后视"}
+# 相机英文名 -> 中文 (和网页 CAM_NAME 保持一致, 飞书卡片里不再出现 front/left_repeater 这种英文)
+CAM_CN = {"front": "前视", "back": "后视", "left_repeater": "左B柱", "right_repeater": "右B柱",
+          "left_pillar": "左前翼", "right_pillar": "右前翼"}
 CAM_SUFFIX = {0: "front", 3: "left_pillar", 4: "right_pillar",
               5: "left_repeater", 6: "right_repeater", 7: "back"}
 REASON_DETAIL = {
@@ -8831,6 +9515,8 @@ REASON_DETAIL = {
     "user_interaction_honk": "按喇叭保存",
     "user_interaction_dashcam_saved": "手动保存",
     "user_interaction_dashcam_menu": "行车记录仪菜单保存",
+    "user_interaction_dashcam_icon_tapped": "点击行车记录仪图标保存",
+    "user_interaction_dashcam_launcher_action_tapped": "点击行车记录仪图标",
 }
 
 
@@ -9041,7 +9727,7 @@ def _feishu_upload(conf, jpg):
     return key
 
 
-VID_Q = {"720p": (720, 1500), "480p": (480, 800), "360p": (360, 500)}   # 输出高度, 目标码率 kbps
+VID_Q = {"1080p": (1080, 2600), "720p": (720, 1500), "480p": (480, 800), "360p": (360, 500)}   # 输出高度, 目标码率 kbps
 
 FONT_DIR = os.environ.get("TSF_FONTS") or "/opt/tesla-sentry/fonts"
 FONT_EXTS = (".ttf", ".otf", ".ttc")
@@ -9563,17 +10249,30 @@ def _make_push_video(fp, off, quality="480p", dur=30):
     if not os.path.isfile(FFMPEG_BIN):
         raise RuntimeError("设备上没有 ffmpeg")
     tmp = out + ".%d.tmp" % os.getpid()
-    vf = "scale=-2:%d" % h
+    sub_chain = ""
     if ass:
-        vf += ",subtitles='%s':fontsdir='%s'" % (ass.replace(":", "\\:").replace("'", ""),
-                                                 _font_dir().replace("'", ""))
-    cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
-           FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "4",
-           "-ss", "%.2f" % ss, "-t", str(dur), "-i", fp,
-           "-vf", vf,
-           "-c:v", "libx264", "-preset", "superfast",
-           "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
-           "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+        sub_chain = ",subtitles='%s':fontsdir='%s'" % (ass.replace(":", "\\:").replace("'", ""),
+                                                       _font_dir().replace("'", ""))
+    # 硬解 + RGA 缩放 + 硬编: 8 秒片段实测 2.4s (原来是 libx264 软解软编, 约 10s)。
+    # 字幕是软件滤镜, 先 hwdownload 成内存帧烧字幕, h264_rkmpp 直接吃软件帧(无需 hwupload)。
+    hw_vf = "scale_rkrga=w=-2:h=%d,hwdownload,format=nv12%s" % (h, sub_chain)
+    hw_cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+              FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
+              "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+              "-ss", "%.2f" % ss, "-t", str(dur), "-i", fp,
+              "-vf", hw_vf, "-pix_fmt", "yuv420p",
+              "-c:v", "h264_rkmpp",
+              "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
+              "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+    vf = "scale=-2:%d" % h + sub_chain
+    sw_cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+              FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "4",
+              "-ss", "%.2f" % ss, "-t", str(dur), "-i", fp,
+              "-vf", vf,
+              "-c:v", "libx264", "-preset", "superfast",
+              "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
+              "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+    r = None
     try:
         env = dict(os.environ)
         if ass:
@@ -9581,19 +10280,26 @@ def _make_push_video(fp, off, quality="480p", dur=30):
             if fc:
                 env["FONTCONFIG_FILE"] = fc
         with Q_SEM:        # 与点播转码共用并发闸门: 设备上 ffmpeg 总数恒定, 叠加会触发内核 lockup 重启
-            r = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
+            for cmd in (hw_cmd, sw_cmd):   # 硬编失败(老片非 H.264 等)自动回退软编
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                r = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
+                if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                    break
     except subprocess.TimeoutExpired:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise RuntimeError("转码超时 (>5 分钟)")
-    if r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+    if r is None or r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise RuntimeError("转码失败: %s" % (r.stderr or b"")[:100].decode("utf-8", "ignore"))
+        raise RuntimeError("转码失败: %s" % ((r.stderr if r else b"") or b"")[:100].decode("utf-8", "ignore"))
     os.replace(tmp, out)
     try:
         res_cleanup()          # 推送视频也走同一个缓存目录, 超 2GB 从最旧删
@@ -9617,27 +10323,43 @@ def _transcode_push_upload(src, quality="480p"):
     if not os.path.isfile(FFMPEG_BIN):
         raise RuntimeError("设备上没有 ffmpeg")
     tmp = out + ".%d.tmp" % os.getpid()
-    cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
-           FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
-           "-i", src, "-vf", "scale=-2:%d" % h,
-           "-c:v", "libx264", "-preset", "superfast",
-           "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
-           "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+    # 输入是浏览器合成的 webm/mp4(多为 VP8/VP9, rkmpp 硬解不支持), 但编码可以走硬编:
+    # 省掉 libx264 占的 3 个核, 整机在推流的同时还能继续播放/转码。失败回退软编。
+    hw_cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+              FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
+              "-i", src, "-vf", "scale=-2:%d,format=nv12" % h, "-pix_fmt", "yuv420p",
+              "-c:v", "h264_rkmpp",
+              "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
+              "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+    sw_cmd = ["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+              FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
+              "-i", src, "-vf", "scale=-2:%d" % h,
+              "-c:v", "libx264", "-preset", "superfast",
+              "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2), "-bufsize", "%dk" % (kbps * 3),
+              "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
+    r = None
     try:
         with Q_SEM:        # 与点播转码共用并发闸门, 防止多路 ffmpeg 叠加触发内核 lockup 重启
-            r = subprocess.run(cmd, capture_output=True, timeout=900)
+            for cmd in (hw_cmd, sw_cmd):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                r = subprocess.run(cmd, capture_output=True, timeout=900)
+                if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                    break
     except subprocess.TimeoutExpired:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise RuntimeError("转码超时 (>15 分钟)")
-    if r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
+    if r is None or r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise RuntimeError("转码失败: %s" % (r.stderr or b"")[:120].decode("utf-8", "ignore"))
+        raise RuntimeError("转码失败: %s" % ((r.stderr if r else b"") or b"")[:120].decode("utf-8", "ignore"))
     os.replace(tmp, out)
     try:
         res_cleanup()
@@ -9689,12 +10411,16 @@ def _feishu_upload_file(conf, path, dur=30):
     return key
 
 
-def _feishu_send_media(conf, file_key, image_key=""):
-    """给本人发一条视频消息 (media)"""
+def _feishu_send_media(conf, file_key, image_key="", file_name="", duration=0):
+    """给本人发一条视频消息 (media); image_key 是封面, file_name/duration 让飞书里能看到名字和时长"""
     rid, rtype = _dm_target(conf)
     content = {"file_key": file_key}
     if image_key:
         content["image_key"] = image_key
+    if file_name:
+        content["file_name"] = file_name
+    if duration:
+        content["duration"] = int(max(1, duration) * 1000)
     j = _post_json(FEISHU_API + "/im/v1/messages?receive_id_type=" + urllib.parse.quote(rtype),
                    {"receive_id": rid, "msg_type": "media", "content": json.dumps(content)},
                    timeout=60, headers={"Authorization": "Bearer " + _feishu_token(conf)})
@@ -9751,6 +10477,81 @@ def _feishu_card(conf, cat, name, img_key=None, test=False):
         "header": {"template": color, "title": {"tag": "plain_text", "content": title}},
         "elements": els,
     }
+
+
+def _feishu_media_card(m, img_key=None, size=0):
+    """作品库成品的说明卡: 和旧「手动保存」卡片长一样(时间/位置/片段/按钮), 再加时长大小。
+    只发 media 消息时飞书里是条没缩略图、没文字的裸视频, 认不出是哪个, 所以配一张说明卡。"""
+    raw_cams = [str(c) for c in (m.get("cams") or [])]
+    cams = ", ".join(CAM_CN.get(c, c) for c in raw_cams) or "—"
+    dur = float(m.get("dur") or 0)
+    mb = float(size or m.get("size") or 0) / 1048576.0
+    # 位置/时间沿用事件 event.json, 和旧「手动保存」卡片显示的一致
+    ev = {}
+    try:
+        with open(os.path.join(ARCHIVE, str(m.get("cat") or ""), str(m.get("name") or ""),
+                               "event.json"), encoding="utf-8", errors="ignore") as f:
+            ev = json.load(f) or {}
+    except Exception:
+        ev = {}
+    loc = " ".join(x for x in (ev.get("city") or "", ev.get("street") or "") if x).strip() or "位置未知"
+    when = str(ev.get("timestamp") or "").replace("T", " ")[:19]
+    try:
+        dt = datetime.datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
+        when = "%d月%d日 %02d:%02d:%02d" % (dt.month, dt.day, dt.hour, dt.minute, dt.second)
+    except Exception:
+        when = time.strftime("%m-%d %H:%M", time.localtime(float(m.get("ts") or time.time())))
+    n = len(raw_cams)
+    els = []
+    if img_key:
+        els.append({"tag": "img", "img_key": img_key, "alt": {"tag": "plain_text", "content": "合成画面"}})
+    els.append({"tag": "div", "fields": [
+        {"is_short": True, "text": {"tag": "lark_md", "content": "**时间**\n%s" % when}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": "**位置**\n%s" % loc}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": "**镜头**\n%d 路" % (n or 1)}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": "**时长/大小**\n%.1fs · %.1fMB" % (dur, mb)}},
+    ]})
+    link = (notify_conf().get("public_url") or "").rstrip("/")
+    cat = str(m.get("cat") or "")
+    name = str(m.get("name") or "")
+    if link and cat and name:
+        # 直接打开「查看录像」那个播放页(6 路分格画面), 不再先落到作品库列表再点一次
+        els.append({"tag": "action", "actions": [
+            {"tag": "button", "text": {"tag": "plain_text", "content": "查看录像"},
+             "url": "%s/?ev=%s/%s" % (link, urllib.parse.quote(cat), urllib.parse.quote(name)),
+             "type": "primary"}]})
+    elif link:
+        els.append({"tag": "action", "actions": [
+            {"tag": "button", "text": {"tag": "plain_text", "content": "打开我的作品库"},
+             "url": link + "/?lib=1", "type": "primary"}]})
+    title = ("🎬 后台合成 · %d 路" % n) if n > 1 else ("🎬 后台合成 · " + (CAM_CN.get(raw_cams[0], raw_cams[0]) if raw_cams else "视频"))
+    return {"config": {"wide_screen": True},
+            "header": {"template": "blue",
+                       "title": {"tag": "plain_text", "content": title}},
+            "elements": els}
+
+
+def _lib_send_to_feishu(conf, path, meta, size=None):
+    """封面 + 说明卡 + 视频消息一次发完: 封面取视频首帧, media 消息带 image_key 才有缩略图。"""
+    img_key = ""
+    try:
+        jpg = thumb_file(path, 0.5, "lib")
+        if jpg and os.path.isfile(jpg):
+            img_key = _feishu_upload(conf, jpg)
+    except Exception as ex:
+        print("[LIB] 封面失败(不影响推送): %s" % ex, flush=True)
+    m = dict(meta or {})
+    if size:
+        m["size"] = size
+    try:
+        _feishu_send_dm(conf, _feishu_media_card(m, img_key))
+    except Exception as ex:
+        print("[LIB] 说明卡失败(不影响推送): %s" % ex, flush=True)
+    dur = float(m.get("dur") or 0) or probe_duration(path) or 30
+    fk = _feishu_upload_file(conf, path, dur)
+    _feishu_send_media(conf, fk, img_key,
+                       file_name=str(m.get("name") or os.path.basename(path)),
+                       duration=dur)
 
 
 def _dm_target(conf):
@@ -10129,12 +10930,12 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
                     "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2),
                     "-bufsize", "%dk" % (kbps * 3),
                     "-c:a", "copy", "-movflags", "+faststart", "-f", "mp4", "-y", tmp]
-        # 实测(id=2026-11-23): 这条 4K 源走 v4l2 硬解 + CPU 缩放 15 秒要 37~48 秒,
-        # 纯软解(3 线程, -t 前置)只要 18 秒 —— 缩放没有 RGA 加速时硬解反而更慢, 默认关掉。
-        # 以后 mainline 装上 rgaconvert/mpp 插件, 置 TSF_VPU_TRANSCODE_ON=1 再开。
-        use_vpu = (qv == "360p" and os.environ.get("TSF_VPU_TRANSCODE_ON", "0") == "1"
+        # BSP(官方 Radxa 镜像)有 /dev/mpp_service 时走硬件转码脚本。
+        # 脚本已从 GStreamer 换成 ffmpeg-rockchip(rkmpp/rkrga), 不再依赖 gst-launch-1.0,
+        # 只看 MPP 节点和脚本本身; 失败自动回退软件(libx264)。
+        use_vpu = (os.environ.get("TSF_VPU_TRANSCODE_ON", "0") == "1"
                    and os.access(VPU_TRANSCODE, os.X_OK)
-                   and shutil.which("gst-launch-1.0") and shutil.which("media-ctl"))
+                   and os.path.exists("/dev/mpp_service"))
         vpu_cmd = ["sh", "-c",
                    'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
                    VPU_TRANSCODE, fp, tmp, str(w), str(h), str(fps), str(kbps),
@@ -10488,7 +11289,7 @@ def prewarm_loop():
 # 有人播放/媒体请求/360p 预缓冲在跑时立即取消让路; 硬解失败自动回退软解, 补档进度不受影响。
 NIGHT_HW = {"on": os.environ.get("TSF_NIGHT_HW", "1") != "0",
             "done": 0, "last": "", "skip": {}, "busy": False, "qidx": 0}
-NIGHT_HW_QS = ["480p", "720p"]
+NIGHT_HW_QS = ["480p", "720p", "1080p"]
 
 
 def _night_window():
@@ -10496,100 +11297,6 @@ def _night_window():
     return True
 
 
-def _rkvdec_nodes():
-    """rkvdec 的 video/media 设备号重启后会变, 每次现场解析, 不写死。"""
-    try:
-        out = subprocess.run(["v4l2-ctl", "--list-devices"],
-                             capture_output=True, timeout=10).stdout.decode()
-    except Exception:
-        return None
-    vid = med = ""
-    for chunk in out.split("\n\n"):
-        if not chunk.strip().startswith("rkvdec"):
-            continue
-        for line in chunk.splitlines():
-            s = line.strip()
-            if s.startswith("/dev/video"):
-                vid = s
-            elif s.startswith("/dev/media"):
-                med = s
-        break
-    return (vid, med) if vid and med else None
-
-
-def _hw_preview(fp, qv, seconds, cancel):
-    """硬解+RGA缩放+x264编码生成前 N 秒预览, 写入与软解相同的缓存 key。成功返回 True。
-    帧率转换放在 RGA 缩放之前: 4K 帧只缩放需要的 15/24fps, 不白缩 36fps。"""
-    nodes = _rkvdec_nodes()
-    gst = shutil.which("gst-launch-1.0")
-    if not nodes or not gst:
-        return False
-    vid, med = nodes
-    try:
-        out = subprocess.run([FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
-                              "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate",
-                              "-of", "csv=s=,:p=0", fp],
-                             capture_output=True, timeout=20).stdout.decode().strip()
-        parts = out.splitlines()[0].split(",")
-        w0, h0 = int(parts[0]), int(parts[1])
-        sfps = 0.0
-        for fr in parts[2:4]:   # r_frame_rate 可能是容器时基假值(如 10000/1), avg 兜底
-            num, _, den = fr.partition("/")
-            try:
-                v = float(num) / (float(den) if den else 1.0)
-            except (TypeError, ValueError, ZeroDivisionError):
-                continue
-            if 0 < v < 240:
-                sfps = v
-                break
-        if not sfps:
-            sfps = 36.0         # 特斯拉源典型帧率; 只影响 eos 截断帧数, 宁可多解不可少解
-    except Exception:
-        return False
-    if w0 <= 0 or h0 <= 0:
-        return False
-    w, h, kbps = RES_SCALE[qv]
-    if w0 * h > w * h0:                      # 保持比例, 与软解 force_original_aspect_ratio=decrease 一致
-        h = max(2, (w * h0 // w0) // 2 * 2)
-    else:
-        w = max(2, (h * w0 // h0) // 2 * 2)
-    fps = RES_FPS.get(qv, 24)
-    frames = int(seconds * sfps) + int(sfps)   # 多解约 1 秒, 保证预览不短于 N 秒
-    outp = _variant_path(fp, qv, seconds)
-    if not outp:
-        return False
-    tmp = outp + ".%d_%d.hwn.tmp" % (os.getpid(), threading.get_ident())
-    cmd = ["sh", "-c",
-           'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
-           gst, "-q", "-e",
-           "filesrc", "location=" + fp, "!", "qtdemux", "!", "h264parse", "!",
-           "v4l2slh264dec", "video-device=" + vid, "media-device=" + med, "!",
-           "identity", "eos-after=%d" % frames, "!",
-           "videorate", "!", "video/x-raw,framerate=%d/1" % fps, "!",
-           "v4l2convert", "!", "video/x-raw,format=NV12,width=%d,height=%d" % (w, h), "!",
-           "videoconvert", "!", "video/x-raw,format=I420", "!",
-           "x264enc", "speed-preset=superfast", "bitrate=%d" % kbps,
-           "key-int-max=%d" % (fps * 2), "threads=2", "!",
-           "h264parse", "!", "mp4mux", "faststart=true", "!",
-           "filesink", "location=" + tmp]
-    try:
-        rc = _run_transcode_cmd(cmd, cancel, timeout=240)
-        if rc == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
-            os.replace(tmp, outp)
-            try:
-                with open(outp + ".src", "w", encoding="utf-8") as sf:
-                    sf.write(fp)
-            except OSError:
-                pass
-            _variant_drop_legacy(fp, qv, seconds)
-            _write_meta(outp, qv, seconds, fps)
-            return True
-        return False
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
 
 
 def night_hw_loop():
@@ -10642,19 +11349,14 @@ def night_hw_loop():
 
             threading.Thread(target=_watch_idle, daemon=True).start()
             try:
-                hw_ok = False
-                try:
-                    hw_ok = _hw_preview(fp, qv, preview_seconds(), job_cancel)
-                except Exception:
-                    hw_ok = False
-                if not hw_ok and not job_cancel.is_set():
-                    # 硬解不可用/失败: 回退软解, 保证补档进度
+                # 预缓冲统一走 ffmpeg-rockchip 硬转 (get_variant → tsf-vpu-transcode.sh)
+                if not job_cancel.is_set():
                     get_variant(fp, qv, slot=False, seconds=preview_seconds(), cancel=job_cancel)
                 if job_cancel.is_set():
                     time.sleep(5)
                 elif _variant_ready(fp, qv, preview_seconds()):
                     NIGHT_HW["done"] += 1
-                    NIGHT_HW["last"] = "%s/%s · %s · %ds · %s" % (cat, name, qv, preview_seconds(), "硬解" if hw_ok else "软解")
+                    NIGHT_HW["last"] = "%s/%s · %s · %ds · %s" % (cat, name, qv, preview_seconds(), "硬转")
                     NIGHT_HW["skip"].pop((fp, qv), None)
                 else:
                     NIGHT_HW["skip"][(fp, qv)] = NIGHT_HW["skip"].get((fp, qv), 0) + 1
@@ -11087,6 +11789,8 @@ def mem_available_mb():
 
 
 def _stitch_worker(job_id, paths, out_path, total):
+    """[已停用] 老的多路合成实现: 所有画面同时解码 + libx264 软编, 6 路会吃满内存并触发内核
+    lockup/重启。start_stitch 现在改走 _export_worker(逐路硬解降采样 + 硬编 xstack), 这里只留作参考。"""
     n = len(paths)
     cols = 1 if n == 1 else (2 if n <= 4 else 3)
     # 每格分辨率: 默认 640x360 (4 路整幅 1280x720)。设备只有 1.4G 内存,
@@ -11172,13 +11876,14 @@ def _stitch_worker(job_id, paths, out_path, total):
                 job["err"] = str(e)[:300]
 
 
-def start_stitch(cat, name, cams):
+def start_stitch(cat, name, cams, push=False):
     """创建合成任务, 返回 (job_id, 错误信息)"""
-    # 本机系统盘 IO 与内存有限, 实测 ffmpeg 多路 1080p 解码+编码会触发
-    # 内核 soft/hard lockup -> panic=5 自动重启, 已用 2/4 路真实素材复现两次。
-    # 前端默认走浏览器本机合成, 这里仅保留 TSF_STITCH=1 的实验开关。
-    if os.environ.get("TSF_STITCH", "0") != "1":
-        return None, "设备端合成已停用(该负载会触发设备内核重启), 请使用浏览器合成或打包下载"
+    # 历史: 软解软编 4 路 1080p 会把 1.4G 内存吃光并触发内核 lockup -> panic=5 重启,
+    # 已用 2/4 路真实素材复现两次, 所以当时默认停用、前端改走浏览器本机合成。
+    # 现在解码走 rkmpp 硬解、逐路顺序降采样、编码走 h264_rkmpp, 峰值大幅下降
+    # (实测 3 路 20s 降采样共 8s, 可用内存仍 1.4G), 默认重新开启; TSF_STITCH=0 可关。
+    if os.environ.get("TSF_STITCH", "1") != "1":
+        return None, "设备端合成已被 TSF_STITCH=0 关闭, 请使用浏览器合成或打包下载"
     if not os.path.isfile(FFMPEG_BIN):
         return None, "设备上未安装 ffmpeg (预期 %s)" % FFMPEG_BIN
     evdir = safe_archive_dir(os.path.join(ARCHIVE, cat, name))
@@ -11191,6 +11896,10 @@ def start_stitch(cat, name, cams):
     files = order_files(files)
     if len(files) < 2:
         return None, "至少需要选择两路画面"
+    # 6 路也放开: 3x2 格子 1440x720, 解码走 rkmpp 硬解且逐路顺序降采样,
+    # 峰值 = 单路解码 + 6 个小文件, 与路数不是线性关系; 硬解时代不再套用软编的 4 路上限。
+    if len(files) > 6:
+        return None, "设备端合成最多 6 路 (选了 %d 路)" % len(files)
     paths = [os.path.join(evdir, f) for f in files]
     os.makedirs(STITCH_DIR, exist_ok=True)
     # 内存与并发保护: 设备只有 1.4G, 同时跑两个合成会直接 OOM 拖垮整机
@@ -11199,7 +11908,7 @@ def start_stitch(cat, name, cams):
     if running:
         return None, "已有合成任务在进行, 请等待完成后再试"
     avail = mem_available_mb()
-    if 0 < avail < 300:
+    if 0 < avail < 200:      # 只在"已经快没内存"时拒绝, 硬解本身占用低, 不必像软编时代留 300MB 余量
         return None, "设备可用内存不足(%dMB), 暂停合成以免影响录像同步" % avail
     now = time.time()
     for old_f in os.listdir(STITCH_DIR):
@@ -11214,8 +11923,14 @@ def start_stitch(cat, name, cams):
     total = probe_duration(paths[0])
     with STITCH_LOCK:
         STITCH_JOBS[job_id] = {"state": "running", "pct": 0, "path": None,
-                               "name": "%s_%d路.mp4" % (name, len(files)), "total": total}
-    threading.Thread(target=_stitch_worker, args=(job_id, paths, out_path, total), daemon=True).start()
+                               "name": "%s_%d路.mp4" % (name, len(files)), "total": total,
+                               "cams": list(cams or []), "cat": cat, "src_name": name,
+                               "push": bool(push)}
+    # 走 _export_worker 的"逐路硬解顺序降采样 + 硬编 xstack"路径:
+    # 旧 _stitch_worker 是 6 路同时解码, 这才是当年把内存打爆/内核重启的原因。
+    threading.Thread(target=_export_worker,
+                     args=(job_id, paths, out_path, total, False, "720p"),
+                     daemon=True).start()
     return job_id, None
 
 
@@ -11225,7 +11940,185 @@ def start_stitch(cat, name, cams):
 # 负载控制: 多路时先逐路单独降采样成小文件(同时只解 1 路 1080p), 再拼小文件,
 # 避免 2~4 路 1080p 同时解码触发内核 lockup。
 # 0 表示"原画": 按源分辨率出片 (单路 1280x960 就是 1280x960, 不再降到 720 行)
-EXPORT_Q = {"720p": 720, "480p": 480, "360p": 360, "orig": 0}
+EXPORT_Q = {"1080p": 1080, "720p": 720, "480p": 480, "360p": 360, "orig": 0}
+
+
+def _lib_ensure():
+    try:
+        os.makedirs(LIB_DIR, exist_ok=True)
+    except OSError:
+        pass
+
+
+def _lib_meta_path(fn):
+    return os.path.join(LIB_DIR, fn + ".meta.json")
+
+
+def lib_add(path, kind="stitch", cams=None, cat="", name="", dur=0.0):
+    """成品入库: 移到 LIB_DIR 并写 sidecar 元数据, 返回库内文件名。
+    失败不抛异常(已经做好的视频不能因为写元数据失败就丢); 文件已移入库时即使 meta 写失败也返回文件名。"""
+    base = ""
+    try:
+        _lib_ensure()
+        base = os.path.basename(path)
+        if not base.lower().endswith(".mp4"):
+            base += ".mp4"
+        if not base.startswith("lib-"):
+            base = "lib-" + base
+        dst = os.path.join(LIB_DIR, base)
+        if os.path.abspath(path) != os.path.abspath(dst):
+            try:
+                os.replace(path, dst)
+            except OSError:
+                shutil.move(path, dst)
+        meta = {"f": base, "kind": kind, "cams": cams or [], "cat": cat, "name": name,
+                "dur": round(float(dur or 0), 1), "size": os.path.getsize(dst),
+                "ts": int(time.time())}
+        with open(_lib_meta_path(base), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        lib_cleanup()
+    except Exception:
+        pass
+    return base
+
+
+def lib_list():
+    _lib_ensure()
+    rows = []
+    try:
+        for fn in os.listdir(LIB_DIR):
+            if not fn.endswith(".meta.json"):
+                continue
+            try:
+                with open(os.path.join(LIB_DIR, fn), encoding="utf-8") as f:
+                    m = json.load(f)
+            except Exception:
+                continue
+            p = os.path.join(LIB_DIR, m.get("f") or fn.replace(".meta.json", ".mp4"))
+            if not os.path.isfile(p):
+                continue
+            m["size"] = os.path.getsize(p)
+            rows.append(m)
+        rows.sort(key=lambda x: x.get("ts", 0), reverse=True)
+    except Exception:
+        pass
+    return rows
+
+
+def lib_del(fn):
+    fn = os.path.basename(str(fn or ""))
+    if not fn or not fn.lower().endswith(".mp4"):
+        return False
+    for p in (os.path.join(LIB_DIR, fn), _lib_meta_path(fn)):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    return True
+
+
+def lib_cleanup(force=False):
+    """作品库淘汰: 超 7 天或总量超 20GB, 从最旧删。"""
+    now = time.time()
+    if not force and now - _LIB_CLEAN_LAST["t"] < 600:
+        return
+    _LIB_CLEAN_LAST["t"] = now
+    try:
+        vids = []
+        for fn in os.listdir(LIB_DIR):
+            if not fn.endswith(".meta.json"):
+                continue
+            mp = os.path.join(LIB_DIR, fn)
+            try:
+                with open(mp, encoding="utf-8") as f:
+                    m = json.load(f)
+            except Exception:
+                continue
+            p = os.path.join(LIB_DIR, m.get("f") or "")
+            if not os.path.isfile(p):
+                try:
+                    os.unlink(mp)
+                except OSError:
+                    pass
+                continue
+            if now - os.path.getmtime(p) > LIB_TTL:
+                for x in (p, mp):
+                    try:
+                        os.unlink(x)
+                    except OSError:
+                        pass
+                continue
+            vids.append((os.path.getmtime(p), os.path.getsize(p), p, mp))
+        total = sum(v[1] for v in vids)
+        if total > LIB_MAX:
+            for mt, sz, p, mp in sorted(vids):
+                if total <= LIB_MAX:
+                    break
+                for x in (p, mp):
+                    try:
+                        os.unlink(x)
+                    except OSError:
+                        continue
+                total -= sz
+    except Exception:
+        pass
+
+
+def lib_push(fn, conf=None):
+    """把作品库里的成品推到飞书私聊: 已是标准 H.264 mp4, 不再二次转码。
+    先发说明卡(带封面), 再发带 image_key 的视频消息 —— 否则飞书里就是个没缩略图没文字的裸视频。"""
+    p = os.path.join(LIB_DIR, os.path.basename(str(fn or "")))
+    if not os.path.isfile(p):
+        return False, "作品不存在或已被清理"
+    conf = conf or notify_conf()
+    if not _dm_ready(conf):
+        return False, "飞书私聊未就绪: 需要在「推送」里配好 App ID/Secret + 接收人"
+    try:
+        with open(_lib_meta_path(os.path.basename(p)), encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        meta = {}
+    mb = os.path.getsize(p) / 1048576.0
+    if mb > 28:
+        # 飞书单文件 30MB 上限: 1080p/多路合成很容易超, 自动降到 720p 硬转一份再推,
+        # 不再直接报错让用户自己回去改清晰度重做一遍
+        dur = probe_duration(p) or 30
+        tmp = os.path.join(LIB_DIR, ".push-%d.mp4" % int(time.time()))
+        try:
+            if os.access(VPU_TRANSCODE, os.X_OK) and os.path.exists("/dev/mpp_service"):
+                subprocess.run(["sh", "-c", 'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"',
+                                VPU_TRANSCODE, p, tmp, "960", "720", "24", "1500", "2250", "4500", "0"],
+                               timeout=max(180, dur * 12), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.run([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", p,
+                                "-vf", "scale=960:720:force_original_aspect_ratio=decrease,force_divisible_by=2,fps=24",
+                                "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1500k",
+                                "-c:a", "copy", "-movflags", "+faststart", tmp],
+                               timeout=max(180, dur * 12), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                sz = os.path.getsize(tmp)
+                if sz / 1048576.0 <= 28:
+                    _lib_send_to_feishu(conf, tmp, meta, size=sz)
+                    return True, "已推送到飞书 (%.0fMB 超限, 已转 720p %.1fMB)" % (mb, sz / 1048576.0)
+        except Exception as ex:
+            print("[LIB] 降档推送失败: %s" % ex, flush=True)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False, "视频 %.0fMB 超过飞书 30MB 上限, 自动降档也没成功, 请改选更低清晰度" % mb
+    _lib_send_to_feishu(conf, p, meta)
+    return True, "已推送到飞书 (%.1fMB)" % mb
+
+
+def _lib_push_bg(fn):
+    """后台推飞书(合成完自动推送用), 结果只写日志, 不阻塞任务状态。"""
+    try:
+        ok, msg = lib_push(fn)
+        print("[LIB] push %s -> %s %s" % (fn, "OK" if ok else "FAIL", msg), flush=True)
+    except Exception as ex:
+        print("[LIB] push %s 异常: %s" % (fn, ex), flush=True)
 
 
 def _ffrun(cmd, timeout=900):
@@ -11284,7 +12177,9 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
             OH -= OH % 2
             OW = max(2, int(round(sw * float(OH) / sh / 2.0)) * 2)
         else:
-            cols, rows = 2, (n + 1) // 2
+            # 6 路用 3x2 格子(1440x720), 不再按 2 列往上堆成 2x3(每格只剩 320x240)
+            cols = 2 if n <= 4 else 3
+            rows = (n + cols - 1) // cols
             base = target or min(960, sh)             # 多路"原画"封顶 960: 4 路同时解 1080p 会吃满内存
             CH = max(2, (base // rows) - (base // rows) % 2)
             CW = max(2, int(round(sw * float(CH) / sh / 2.0)) * 2)
@@ -11296,24 +12191,37 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 CW = max(2, int(round(sw * float(CH) / sh / 2.0)) * 2)
             OW, OH = CW * cols, CH * rows
             cell = [(CW, CH)] * n
-            pos = [((i % 2) * CW, (i // 2) * CH) for i in range(n)]
+            pos = [((i % cols) * CW, (i // cols) * CH) for i in range(n)]
             if n == 3:
                 # 3 路: 第三路铺满下面一整行, 不留一块黑格子
                 cell[2] = (CW * 2, CH)
                 pos[2] = (0, CH)
 
-        # 第一步: 逐路降采样 (顺序执行, 峰值只有 1 路 1080p 解码)
+        # 第一步: 逐路降采样 (顺序执行, 峰值只有 1 路解码)
+        # 解码走 rkmpp 硬解(1080p 软解才是 CPU 主开销); 缩放/裁剪/fps 仍是软件滤镜,
+        # 但源已降到帧内存, 640x360 的缩放开销很小; 编码用 h264_rkmpp 硬编。
         small = []
         if n > 1:
             for i, fp in enumerate(paths):
                 sp = os.path.join(tmpdir, "c%d.mp4" % i)
                 cw, ch = cell[i] if i < len(cell) else (CW, CH)
-                vf = ("scale=%d:%d:force_original_aspect_ratio=increase,"
-                      "crop=%d:%d,setsar=1,fps=%d" % (cw, ch, cw, ch, fps))
+                # 格子按源宽高比算出, 绝大多数情况比例一致 -> 直接 RGA 硬件缩放(2896x1876
+                # 软缩放一路要 20s, RGA 只要 2~3s); 只有 3 路时"第三路铺满整行"这种非等比格子
+                # 才回退软件 increase+crop(裁边不变形)。
+                src_ar = sw / float(sh)
+                ar_ok = abs((cw / float(ch)) - src_ar) <= src_ar * 0.02
+                if ar_ok:
+                    vf = ("scale_rkrga=w=%d:h=%d,hwdownload,format=nv12,fps=%d,format=nv12"
+                          % (cw, ch, fps))
+                else:
+                    vf = ("hwdownload,format=nv12,"
+                          "scale=%d:%d:force_original_aspect_ratio=increase,"
+                          "crop=%d:%d,setsar=1,fps=%d,format=nv12" % (cw, ch, cw, ch, fps))
                 code, err = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
-                                    "-threads", "2", "-i", fp, "-vf", vf, "-an",
-                                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
-                                    "-threads", "2", "-y", sp], timeout=600)
+                                    "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                                    "-i", fp, "-vf", vf, "-an",
+                                    "-c:v", "h264_rkmpp", "-b:v", "%dk" % max(600, cw * ch // 300),
+                                    "-g", str(max(12, fps)), "-y", sp], timeout=600)
                 if code != 0 or not os.path.isfile(sp):
                     fail(err or ("第 %d 路降采样失败" % (i + 1)))
                     return
@@ -11361,8 +12269,8 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
             fc.append("%s%s[vout]" % (last, sub))
             last = "[vout]"
         cmd += ["-filter_complex", ";".join(fc), "-map", last, "-map", "0:a?",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-pix_fmt", "yuv420p",
-                "-threads", "2", "-c:a", "aac", "-b:a", "96k",
+                "-c:v", "h264_rkmpp", "-b:v", "%dk" % max(900, (OW * OH) // 800),
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
                 "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", out_path]
         env = dict(os.environ)
         if ass:
@@ -11394,12 +12302,23 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
         code = p.wait()
         if code == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
             with STITCH_LOCK:
+                j0 = dict(STITCH_JOBS.get(job_id) or {})
+            lib_fn = lib_add(out_path, "export" if wm else "stitch",
+                             cams=j0.get("cams") or [], cat=j0.get("cat") or "",
+                             name=j0.get("src_name") or "", dur=probe_duration(out_path) or 0)
+            with STITCH_LOCK:
                 job = STITCH_JOBS.get(job_id)
                 if job:
                     job["state"] = "done"
                     job["pct"] = 100
-                    job["path"] = out_path
-                    job["size"] = os.path.getsize(out_path)
+                    job["lib"] = lib_fn
+                    job["path"] = os.path.join(LIB_DIR, lib_fn) if lib_fn else out_path
+                    try:
+                        job["size"] = os.path.getsize(job["path"])
+                    except OSError:
+                        job["size"] = 0
+            if j0.get("push") and lib_fn:
+                threading.Thread(target=_lib_push_bg, args=(lib_fn,), daemon=True).start()
         else:
             tail = [x for x in (err or "").strip().splitlines() if x.strip()]
             fail(tail[-1] if tail else ("ffmpeg 退出码 %d" % code))
@@ -11414,7 +12333,7 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
             pass
 
 
-def start_export(cat, name, cams, wm=True, q="720p", files=None):
+def start_export(cat, name, cams, wm=True, q="720p", files=None, push=False):
     """创建"服务端带水印导出"任务, 返回 (job_id, 错误)
     files: 前端指定要导出的具体片段文件名 (用户正在看的那一分钟),
            不传则退回"最新一组"的行为。"""
@@ -11469,7 +12388,9 @@ def start_export(cat, name, cams, wm=True, q="720p", files=None):
     total = probe_duration(paths[0]) or 60
     with STITCH_LOCK:
         STITCH_JOBS[job_id] = {"state": "running", "pct": 0, "path": None, "size": 0,
-                               "name": "%s_%d路.mp4" % (name, len(files))}
+                               "name": "%s_%d路.mp4" % (name, len(files)),
+                               "cams": list(cams or []), "cat": cat, "src_name": name,
+                               "push": bool(push)}
     threading.Thread(target=_export_worker,
                      args=(job_id, paths, out_path, total, bool(wm), q), daemon=True).start()
     return job_id, None
@@ -12312,6 +13233,58 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"on": PREWARM["on"], "done": PREWARM["done"], "last": PREWARM["last"],
                         "q": PREWARM_Q, "busy_users": USER_TRANS[0],
                         "media_active": MEDIA_ACTIVE[0]})
+        elif path == "/api/library":
+            # 作品库: 合成/导出成品列表 (后台任务完成后就落在这里, 关掉页面也能回来下)
+            self._json({"ok": True, "items": lib_list(), "total": sum(i.get("size", 0) for i in lib_list())})
+        elif path == "/api/library/dl":
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            fn = os.path.basename(qs.get("f", [""])[0])
+            p = os.path.join(LIB_DIR, fn)
+            if not fn.lower().endswith(".mp4") or not os.path.isfile(p):
+                self._send(404, b"not found")
+                return
+            try:
+                sz = os.path.getsize(p)
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(sz))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s"' % urllib.parse.quote(fn))
+                self.end_headers()
+                with open(p, "rb") as f:
+                    while True:
+                        chunk = f.read(262144)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+        elif path == "/api/library/thumb":
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            fn = os.path.basename(qs.get("f", [""])[0])
+            p = os.path.join(LIB_DIR, fn)
+            if not fn.lower().endswith(".mp4") or not os.path.isfile(p):
+                self._send(404, b"not found")
+                return
+            out = thumb_file(p, 1.0, kind="lib")
+            if not out:
+                self._send(404, b"no thumb")
+                return
+            try:
+                with open(out, "rb") as f:
+                    data = f.read()
+            except OSError:
+                self._send(404, b"not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=604800")
+            self.end_headers()
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         elif path == "/api/prewarm_stats":
             # 归档页进度条: 系统盘占用 + 预缓冲(按当前预解码时长统计) + 列表缩略图
             src = _archive_src_cached()
@@ -12505,6 +13478,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif os.path.isfile(ep):
                     files.append({"name": e, "size": os.path.getsize(ep)})
             self._json({"ok": True, "dir": _unmap_archive(d), "dirs": dirs, "files": files})
+        elif path == "/api/storage/init/progress":
+            self._json(storage_init_progress())
         elif path == "/api/storage/status":
             self._json(storage_status())
         elif path == "/api/usb/browse":
@@ -12650,7 +13625,8 @@ class Handler(BaseHTTPRequestHandler):
                                               wait_for=(src, qv, hit), urgent=False)
                         else:
                             # 目标档还没转好时, 先用已缓存的低档预览顶上, 不让用户干看原画
-                            alt = ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ())
+                            alt = (("720p", "480p", "360p") if qv == "1080p" else (
+                                  ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ())))
                             for fq in alt:
                                 for sec in (want_preview_sec, preview_seconds(), 15, 10):
                                     pp = _variant_play(src, fq, sec) if sec else ""
@@ -13173,6 +14149,24 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as ex:
                 self._json({"ok": False, "msg": "写入失败: %s" % ex}, 500)
             return
+        if path == "/api/library/del":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "error": "参数错误"}, 400)
+                return
+            self._json({"ok": lib_del(body.get("f") or "")})
+            return
+        if path == "/api/library/push":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "error": "参数错误"}, 400)
+                return
+            try:
+                ok, msg = lib_push(body.get("f") or "")
+            except Exception as ex:
+                ok, msg = False, str(ex)
+            self._json({"ok": ok, "msg": msg})
+            return
         if path == "/api/export/burn":
             body = self._read_json()
             if body == "TOOBIG":
@@ -13183,7 +14177,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             jid, err = start_export(body.get("cat") or "", body.get("name") or "",
                                     body.get("cams") or [], body.get("wm", True),
-                                    body.get("q") or "720p", body.get("files"))
+                                    body.get("q") or "720p", body.get("files"),
+                                    bool(body.get("push")))
             if not jid:
                 self._json({"ok": False, "error": err}, 400)
                 return
@@ -13197,7 +14192,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 self._json({"ok": False, "error": "参数错误"}, 400)
                 return
-            jid, err = start_stitch(body.get("cat") or "", body.get("name") or "", body.get("cams") or [])
+            jid, err = start_stitch(body.get("cat") or "", body.get("name") or "",
+                                    body.get("cams") or [], bool(body.get("push")))
             if not jid:
                 self._json({"ok": False, "error": err}, 400)
                 return
@@ -13543,6 +14539,10 @@ if __name__ == "__main__":
         print("为避免无认证暴露, 服务不启动。修复 %s 后重启 (或重跑 install.sh 重新生成密码)。" % AUTH_FILE)
         sys.exit(2)
     ensure_dirs()
+    try:
+        cache_version_gc()      # 编码版本变了就清旧缓存(key 已失效, 留着白占盘)
+    except Exception:
+        pass
     # 降低自身被 OOM 杀掉的概率 (合成任务会自己调高优先级先死)
     try:
         with open("/proc/self/oom_score_adj", "w") as f:

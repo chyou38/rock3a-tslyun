@@ -18,7 +18,7 @@
 
 Plug a Radxa ROCK 3A (RK3568, 2GB) into the glovebox USB port instead of the factory USB drive: the car keeps recording as usual, and you open a web page over the box's Wi-Fi to review 4 / 6 synchronized camera angles, read the SEI telemetry embedded in the video bitstream frame by frame (gear / speed / accelerator / brake / steering angle / turn signals / Autopilot / GPS), and export clips with a driving-info watermark burned in.
 
-This repository is maintained for exactly one hardware/OS combination: **Armbian 26.8.1 trixie (Debian 13) / kernel 6.18.44-current-rockchip64 / Intel AX200 Wi-Fi card**. Other boards, routers or NAS devices are not adapted; they will not install or will lack features, and are out of scope.
+This repository is maintained for exactly one hardware/OS combination: **Radxa official Debian 12 bookworm BSP / kernel 6.1.84-15-rk2410-nocsf / Intel AX200 Wi-Fi card**. The legacy Armbian mainline build (Debian 13 / 6.18.x) remains supported in code, but new deployments and measurements use the BSP. Other boards, routers or NAS devices are not adapted; they will not install or will lack features, and are out of scope.
 
 ---
 
@@ -28,7 +28,7 @@ This repository is maintained for exactly one hardware/OS combination: **Armbian
 |---|---|
 | 🗂 Virtual USB drive | **The installer does not create an image by default.** After deployment, open the web UI → **Personalization → Car USB**, then "Device & Storage"; insert any USB disk (whole disk ≥8 GB) → select it → set the virtual-drive percentage → enter its serial number to format and create. It creates a sparse exFAT image pre-populated with `TeslaCam` and exports it through USB Gadget `mass_storage`, coexisting with the network interface and serial console. You can still pre-create during install with `--size`. |
 | ⚡ Live view | `tesla-live-sync.py` parses exFAT **read-only** every 15 seconds (no mount, no USB disconnect), so the car writes while the web page reads; new clips usually show up within 15–30 seconds. The `*/10` cron job only writes Boombox audio. |
-| 📦 Archive & rolling window | Video lands in a separate ext4 archive, never fighting the car for the image. `RecentClips` follows the car's rolling buffer and keeps only the last 60 minutes; the box-side copies of `SentryClips` / `SavedClips` are pruned by age/size (default 14 days / 12GB) while the drive-side originals stay untouched. `.pruned` tombstones prevent the "delete → re-copy" loop. |
+| 📦 Archive & rolling window | Video lands in a separate archive directory (USB data drive on BSP, standalone ext4 `/archive` on legacy Armbian), never fighting the car for the image. `RecentClips` follows the car's rolling buffer and keeps only the last 60 minutes; archive retention for the box-side copies of `SentryClips` / `SavedClips` is configured in **Personalization → Files → Archive** by capacity watermark, with `.pruned` tombstones preventing the "delete → re-copy" loop. |
 | 🎬 Playback | **Single camera by default**: opening an event plays the camera that triggered it (a switcher bar below the player offers front / rear / left B-pillar / right B-pillar / grid — only the selected angle loads, and switching keeps your position). Grid view auto-fits 4 angles as 2×2 and 6 as 3×2, with 250ms sync correction, one shared progress bar and 0.5–4x speed. **Playback lands on the minute containing the trigger and starts 5 seconds before it** (marked with a red dot in the clip list). |
 | 📊 Telemetry & metadata | Reads the SEI protobuf embedded in the bitstream: gear / speed / accelerator / brake / steering angle / turn signals / Autopilot state / GPS / 3-axis acceleration, updating frame by frame with playback. `event.json` supplies time / city / street / trigger reason / trigger frame. |
 | 🔍 Filtering & preview | Trigger-reason and date chips combine as filters. Deep links via `?ev=` `?date=` `?cat=` `?cam=` `?exp=1`. 📡 The near-live preview sits on the same level as the other categories (one click, no back-navigation) with Original / 720p / 480p / 360p quality choice. Storage bars (the virtual drive counts actual written bytes inside the volume, not the sparse image's apparent size; the bar is colour-coded by usage: <30% green / 30–85% blue / >85% red) plus a live sync status. |
@@ -52,20 +52,20 @@ This repository is maintained and verified for the **Radxa ROCK 3A (RK3568)** on
 |---|---|
 | Board | Radxa ROCK 3A (RK3568, 4× Cortex-A55) |
 | RAM | 2GB (1.9GiB usable) |
-| System storage | 58.3GB eMMC (`mmcblk0`, 57.6GB root partition) |
-| Data storage | 478GB USB drive (`sda1`, mounted at `/mnt/tsf-storage`, holds image + archive) |
-| OS | Armbian 26.8.1 trixie (Debian 13) |
-| Kernel | 6.18.44-current-rockchip64 (aarch64) |
-| Wi-Fi card | Intel Wi-Fi 6 AX200 (`8086:2723`, iwlwifi, firmware `iwlwifi-cc-a0-77`) |
-| Bluetooth | AX200 integrated (`8087:0029`, hci0) |
-| Ethernet | `end0` gigabit, DHCP |
-| Fan | On-board 3-pin PWM (`pwm8 m0`, needs the `rock3a-pwm8-fan` overlay) |
+| System storage | 58.3GB eMMC (`mmcblk0`, ~57GB root partition) |
+| Data storage | 470GB USB drive (`sda1`, ext4, mounted at `/mnt/tsf-storage`, holds image/archive/cache) |
+| OS | Radxa official Debian 12 bookworm BSP |
+| Kernel | `6.1.84-15-rk2410-nocsf` (aarch64, BSP) |
+| Wi-Fi card | Intel Wi-Fi 6 AX200 (`8086:2723`, iwlwifi) |
+| Bluetooth | AX200 integrated USB (`8087:0029`, normally hci0/hci1) |
+| Ethernet | `end1` gigabit, NetworkManager DHCP (legacy Armbian uses `end0`) |
+| Fan | BSP `pwm-fan` driver (hwmon `pwmfan` / `pwm1`, 25kHz); legacy mainline needs the `rock3a-pwm8-fan` overlay |
 | USB | USB3 OTG port as Gadget, connected to the car |
 
-**Used**: USB3 OTG (car), `end0` (Ethernet), AX200 (Wi-Fi STA + 2.4G hotspot), Bluetooth, PWM fan header, eMMC (system), USB data drive (image/archive).
+**Used**: USB3 OTG (car), `end1` (Ethernet), AX200 (Wi-Fi STA + 2.4G hotspot), Bluetooth, PWM fan header, eMMC (system), USB data drive (image/archive/cache).
 **Unused**: HDMI, USB host ports, M.2 and audio are not required and stay idle.
 
-**Hard requirements**: non-empty `/sys/class/udc/`, configfs + `USB_F_MASS_STORAGE`, kernel exFAT, loop / losetup, root, and a car USB port that can supply power. Debian 13 / Armbian systemd is required. Python 3.7+ (the viewer has zero third-party dependencies). ffmpeg only affects thumbnails and transcoding — missing it does not block installation.
+**Hard requirements**: non-empty `/sys/class/udc/`, configfs + `USB_F_MASS_STORAGE`, kernel exFAT, loop / losetup, root, and a car USB port that can supply power. Debian 12/13 (BSP or Armbian) systemd is required. Python 3.7+ (the viewer has zero third-party dependencies). ffmpeg only affects thumbnails and transcoding — missing it does not block installation.
 
 Check before installing (read-only, changes nothing):
 
@@ -88,9 +88,13 @@ cd rock3a-tslyun
 sudo ./install.sh                                             # no image; port 80, archive /archive, mDNS tsl.local
 sudo ./install.sh --size 120 --port 80 --archive /archive    # optional: pre-create a 120G image
 sudo ./install.sh --mdns mybox                                # optional: use http://mybox.local
+
+# BSP single-disk layout (USB data drive at /mnt/tsf-storage): keep archive and cache on it
+sudo ./install.sh --archive /mnt/tsf-storage/tsf-data/archive \
+                  --cache   /mnt/tsf-storage/tsf-data/cache
 ```
 
-The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → try to install and enable Avahi mDNS → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
+The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → try to install and enable Avahi mDNS → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs; when NetworkManager is present (BSP), also mark `wlp1s0/ap0` unmanaged and install `wpa_supplicant@wlp1s0`, `tsf-wifi-dhcp` and `tsf-bt-name` → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
 
 **2. Open the web UI and create the virtual drive**: browse to `http://<device-ip>` or `http://tsl.local` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Open **Personalization → Car USB**; the "Device & Storage" card inside shows "No virtual drive configured":
 
@@ -114,20 +118,39 @@ sudo ./uninstall.sh --purge      # also delete image and archive (irreversible)
 
 ---
 
+## RKMPP hardware decode/encode (optional)
+
+The BSP kernel exposes `/dev/mpp_service` and `/dev/rga`; the repository ships a self-built ffmpeg-rockchip bundle:
+
+- `dist/rkmpp/rkmpp-bin.tar.gz`: stripped `ffmpeg` / `ffprobe` binaries (~21MB)
+- `dist/rkmpp/install-rkmpp.sh`: restore script; checks runtime deps, symlinks system `ffmpeg`/`ffprobe`, and writes `TSF_FFMPEG` / `TSF_FFPROBE`
+- `dist/rkmpp/deps.txt`: runtime dependency list for Debian 12
+
+```sh
+cd dist/rkmpp
+sudo bash install-rkmpp.sh -y      # auto-install missing deps
+sudo systemctl restart sentry-viewer
+```
+
+After installation, `ffmpeg -encoders | grep rkmpp` should list `h264_rkmpp`/`hevc_rkmpp`, and `-filters | grep rkrga` should list `scale_rkrga`. Mainline kernels without `/dev/mpp_service` can only software-decode.
+
+---
+
 ## Configuration
 
 Main config: `/etc/tesla-sentry.conf` (restart services after editing):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TSF_IMG` / `TSF_ARCHIVE` | `/opt/tesla-sentry/teslacam.img` / `/archive` | Virtual drive image / archive root |
+| `TSF_IMG` / `TSF_ARCHIVE` | `/opt/tesla-sentry/teslacam.img` / `/archive` | Virtual drive image / archive root; BSP single-disk layout uses `/mnt/tsf-storage/tsf-data/teslacam.img` / `.../archive` |
 | `TSF_PORT` | `80` | Web port |
 | `TSF_LIVE_INTERVAL` | `15` | Live read-only sync poll interval, seconds |
 | `TSF_IDLE` | `600` | Image idle seconds; only used by the cron job that mounts to write Boombox audio |
 | `TSF_RECENT_ROLL_MIN` | `60` | `RecentClips` rolling window in minutes, 0 = no rolling |
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `0` / `0` | Legacy Plan B box-side retention and per-category cap; disabled by default. Archive retention is configured in **Personalization → Files → Archive** |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | Free-space fallback cleanup: trigger threshold and target |
-| `TSF_CACHE` | automatic | Thumbnail / telemetry / transcode cache directory |
+| `TSF_CACHE` | `<install-dir>/cache` | Thumbnail / telemetry / stitch temp cache; BSP deployment uses `/mnt/tsf-storage/tsf-data/cache` |
+| `TSF_PREVIEW_CACHE` | `/opt/tesla-sentry/preview-cache` | Three-quality prebuffer cache; defaults to eMMC, recommended to move to the data drive on BSP (`/mnt/tsf-storage/tsf-data/preview-cache`) |
 | `TSF_MDNS_NAME` | `tsl` | mDNS host name, i.e. `http://tsl.local`; restart avahi-daemon after changing |
 
 OTA, Feishu push and authentication settings are **not** written to this file — they use environment variables (such as `TSF_OTA_SOURCES`, `TSF_OTA_REPO`) or the web UI. The full variable table and system baseline are in `docs/SYSTEM.md`.
@@ -145,9 +168,9 @@ The web **⚙ Personalization** panel has 11 sub-tabs: Network, Files, Lock chim
 Restart services after changing configuration:
 
 ```sh
-/etc/init.d/tesla-viewer restart
-/etc/init.d/tesla-live restart
-/etc/init.d/tesla-gadget restart
+systemctl restart sentry-viewer
+systemctl restart tesla-live
+systemctl restart tesla-gadget
 ```
 
 ---
@@ -170,7 +193,7 @@ To add your own source, put a working mirror in the config (comma-separated, in 
 
 ```bash
 echo 'TSF_OTA_SOURCES=https://ghfast.top/https://raw.githubusercontent.com/chyou38/rock3a-tslyun/main,https://gcore.jsdelivr.net/gh/chyou38/rock3a-tslyun@main' >> /etc/tesla-sentry.conf
-/etc/init.d/tesla-viewer restart
+systemctl restart sentry-viewer
 ```
 
 **On old versions (2.8.12 and earlier) where even the check fails and the update page is unreachable**, overwrite the program manually once on the device; automatic updates resume afterwards:
@@ -179,7 +202,7 @@ echo 'TSF_OTA_SOURCES=https://ghfast.top/https://raw.githubusercontent.com/chyou
 wget -O /tmp/sv.py https://ghfast.top/https://raw.githubusercontent.com/chyou38/rock3a-tslyun/main/sentry-viewer.py \
   || wget -O /tmp/sv.py https://gcore.jsdelivr.net/gh/chyou38/rock3a-tslyun@main/sentry-viewer.py
 python3 -m py_compile /tmp/sv.py && cp /tmp/sv.py /opt/tesla-sentry/sentry-viewer.py \
-  && chmod 755 /opt/tesla-sentry/sentry-viewer.py && /etc/init.d/tesla-viewer restart
+  && chmod 755 /opt/tesla-sentry/sentry-viewer.py && systemctl restart sentry-viewer
 ```
 
 ### Watermark checked but missing from the exported video
@@ -199,7 +222,7 @@ wget -O /opt/tesla-sentry/fonts/NotoSansSC.ttf \
   || wget -O /opt/tesla-sentry/fonts/NotoSansSC.ttf \
   "https://ghfast.top/https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
 ls -l /opt/tesla-sentry/fonts/     # should be about 17MB
-/etc/init.d/tesla-viewer restart
+systemctl restart sentry-viewer
 ```
 
 

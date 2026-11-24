@@ -1,0 +1,11 @@
+[Unit]
+Description=TeslaSentry Bluetooth identity (AX200)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for i in $(seq 1 15); do if /usr/bin/bluetoothctl list 2>/dev/null | grep -q "Controller"; then /usr/bin/bluetoothctl power on; /usr/bin/bluetoothctl system-alias TeslaSentry; /usr/bin/bluetoothctl discoverable off; exit 0; fi; sleep 2; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target

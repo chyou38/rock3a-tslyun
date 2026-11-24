@@ -3,7 +3,8 @@
 # 用法: sudo ./install.sh [选项]
 #   --size GB        可选: 安装时预先创建虚拟U盘镜像; 不填则装完后到网页选择硬盘创建
 #   --port PORT      网页端口, 默认 80
-#   --archive DIR    归档区路径, 默认 /archive
+#   --archive DIR    归档区路径, 默认 /archive; BSP 单盘建议 /mnt/tsf-storage/tsf-data/archive
+#   --cache DIR      缓存目录, 默认 <安装目录>/cache; BSP 建议 /mnt/tsf-storage/tsf-data/cache
 #   --dir DIR        安装目录, 默认 /opt/tesla-sentry
 #   --mdns NAME      mDNS 主机名 (默认 tsl, 即 http://tsl.local)
 #   -h, --help       显示帮助
@@ -13,6 +14,7 @@ SIZE_GB=
 PORT=80
 ARCHIVE=/archive
 TSF_DIR=/opt/tesla-sentry
+CACHE_DIR=
 MDNS_NAME=tsl
 
 while [ $# -gt 0 ]; do
@@ -20,6 +22,7 @@ while [ $# -gt 0 ]; do
         --size)    SIZE_GB="$2"; shift 2 ;;
         --port)    PORT="$2"; shift 2 ;;
         --archive) ARCHIVE="$2"; shift 2 ;;
+        --cache)   CACHE_DIR="$2"; shift 2 ;;
         --dir)     TSF_DIR="$2"; shift 2 ;;
         --mdns)    MDNS_NAME="$2"; shift 2 ;;
         -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
@@ -27,6 +30,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+[ -n "$CACHE_DIR" ] || CACHE_DIR="$TSF_DIR/cache"
 IMG="$TSF_DIR/teslacam.img"
 CONF=/etc/tesla-sentry.conf
 
@@ -103,8 +107,7 @@ if [ -n "$SIZE_GB" ] && [ "$FREE_MB" != "?" ]; then
     fi
 fi
 
-# 缓存目录 (缩略图/遥测/合成临时文件): 固定在安装目录下
-CACHE_DIR="$TSF_DIR/cache"
+# 缓存目录 (缩略图/遥测/合成临时文件/预缓冲): 默认安装目录, BSP 建议放数据盘
 mkdir -p "$CACHE_DIR/thumbs" "$CACHE_DIR/tel-cache" 2>/dev/null || true
 
 # ffmpeg 探测: 缩略图与部分导出功能依赖, 缺了只是没有缩略图
@@ -193,6 +196,7 @@ TSF_USB_TIMEOUT=300
 TSF_LOSETUP=
 TSF_GADGET=$GADGET
 TSF_CACHE=$CACHE_DIR
+TSF_PREVIEW_CACHE=$CACHE_DIR/preview-cache
 TSF_FFMPEG=$FFMPEG
 TSF_FFPROBE=$FFPROBE
 TSF_MDNS_NAME=$MDNS_NAME
@@ -241,7 +245,7 @@ if [ -f "$AUTH_CONF" ]; then
 else
     AUTH_PASS=$(head -c 96 /dev/urandom | tr -dc 'a-z2-9' | head -c 10)
     cat > "$AUTH_CONF" <<EOF
-# 网页登录凭据 (改完执行 /etc/init.d/tesla-viewer restart 生效)
+# 网页登录凭据 (改完执行 systemctl restart sentry-viewer 生效)
 # 删掉本文件 = 关闭认证, 只有内网使用时才建议这么干
 user=admin
 pass=$AUTH_PASS
@@ -294,7 +298,7 @@ else
 fi
 
 # ---------------- 4. 服务 ----------------
-[ -d /etc/systemd/system ] || die "本脚本仅支持 systemd (Armbian / Debian 13); 其他 init 系统未适配"
+[ -d /etc/systemd/system ] || die "本脚本仅支持 systemd (Debian 12/13、Armbian); 其他 init 系统未适配"
 say "安装 systemd 服务 ..."
 cat > /etc/systemd/system/tesla-gadget.service <<EOF
 [Unit]
@@ -339,6 +343,30 @@ EOF
 for u in tsf-hotspot.service tsf-ap-policy.service tsf-ap-policy.timer pwm-fan-control.service; do
     sed "s|/opt/tesla-sentry|$TSF_DIR|g" "$SRC_DIR/systemd/$u" > "/etc/systemd/system/$u"
 done
+
+# BSP (Radxa 官方 Debian 12, NetworkManager) 的网络栈: NM 只接管有线 end1,
+# wlp1s0/ap0 标记 unmanaged; WiFi 由 wpa_supplicant@wlp1s0 + udhcpc 单独管理。
+# 旧 Armbian (netplan/systemd-networkd) 不进入这个分支。
+if [ -d /etc/NetworkManager ] && command -v nmcli >/dev/null 2>&1 \
+        && systemctl is-active --quiet NetworkManager; then
+    say "配置 BSP 网络 (NetworkManager + wpa_supplicant@wlp1s0 + udhcpc) ..."
+    install -Dm644 "$SRC_DIR/config/NetworkManager-99-tsf-unmanaged.conf" \
+        /etc/NetworkManager/conf.d/99-tsf-unmanaged.conf
+    systemctl reload NetworkManager >/dev/null 2>&1 || systemctl restart NetworkManager >/dev/null 2>&1 || true
+    mkdir -p /etc/wpa_supplicant
+    if [ ! -f /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf ]; then
+        cp "$SRC_DIR/config/wpa_supplicant-wlp1s0.conf.example" \
+            /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf
+        chmod 600 /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf
+        echo "  [提示] 已放置 wpa 模板; 请打开网页「个性化 → 网络设置」填写 WiFi"
+    fi
+    for u in tsf-wifi-dhcp.service tsf-bt-name.service; do
+        cp "$SRC_DIR/systemd/$u" "/etc/systemd/system/$u"
+    done
+    # 单实例 wpa_supplicant 会与 per-interface 实例抢 wlp1s0, 必须 mask
+    systemctl mask wpa_supplicant.service >/dev/null 2>&1 || true
+fi
+
 # hostapd 只在热点需要时由 tsf-ap.sh 拉起, 禁止开机抢跑 (旧版曾因此反复重启)
 systemctl disable --now hostapd.service >/dev/null 2>&1 || true
 command -v hostapd >/dev/null 2>&1 || echo "  [提示] 未安装 hostapd, 个人热点不可用 (apt install hostapd dnsmasq)"
@@ -350,6 +378,11 @@ EOF
 systemctl daemon-reload
 systemctl enable tesla-gadget.service sentry-viewer.service tesla-live.service \
     pwm-fan-control.service tsf-ap-policy.timer >/dev/null 2>&1
+if [ -d /etc/NetworkManager ] && command -v nmcli >/dev/null 2>&1 \
+        && systemctl is-active --quiet NetworkManager; then
+    systemctl enable wpa_supplicant@wlp1s0.service tsf-wifi-dhcp.service \
+        tsf-bt-name.service >/dev/null 2>&1 || true
+fi
 # ---------------- 5. 启动 ----------------
 if [ -f "$IMG" ]; then
     say "启动虚拟U盘 ..."

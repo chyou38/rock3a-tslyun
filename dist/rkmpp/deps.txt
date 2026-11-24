@@ -1,0 +1,9 @@
+# ffmpeg-rockchip 运行时依赖 (Radxa Debian 12 / RK3568)
+libdrm2 zlib1g libharfbuzz0b libfribidi0 libass9 librga2 libfontconfig1 libfreetype6
+libexpat1 libpng16-16 libxml2 libssl3 libvpx7 libwebpmux3 libwebp7 libmp3lame0 libopus0
+libvorbis0a libvorbisenc2 libx264-164 libx265-199 librockchip-mpp1 libglib2.0-0 libicu72
+liblzma5 libogg0 libnuma1 libpcre2-8-0 libbrotli1 libgraphite2-3 libstdc++6 libgcc-s1 libc6
+
+# 编译时需要的 dev 包(只是重建才装, 恢复运行不需要)
+librockchip-mpp-dev librga-dev libdrm-dev libass-dev libharfbuzz-dev libssl-dev
+libx264-dev libx265-dev nasm libtool autoconf

@@ -4,7 +4,16 @@ CONF=/etc/tsf-ap.conf
 [ -f "$CONF" ] && . "$CONF"
 [ "${AP_ENABLE:-0}" = "auto" ] || exit 0
 STA=$(ls /sys/class/net | grep '^wl' | head -1)
-WAN=end0
+# 有线接口名随内核变: 旧 Armbian 是 end0, Radxa BSP 是 end1; 按默认路由识别,
+# 避免新系统上 auto 策略把已经插着网线的状态误判成“无网络”而白开热点。
+pick_wan() {
+    for n in $(ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p'); do
+        case "$n" in end*|eth*) echo "$n"; return ;; esac
+    done
+    ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1
+}
+WAN=$(pick_wan)
+[ -n "$WAN" ] || WAN=end1
 WIFI_ON=0
 [ -n "$STA" ] && iw dev "$STA" link 2>/dev/null | grep -q 'Connected to' && WIFI_ON=1
 WIRED_ON=0

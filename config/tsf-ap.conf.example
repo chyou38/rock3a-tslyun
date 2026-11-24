@@ -14,3 +14,7 @@ AP_CH_MODE=auto
 AP_CH_MANUAL=6
 AP_CHANNEL=6
 AP_BAND=auto
+
+# 可选: 热点下发的上游 DNS; 默认只写公共 DNS, 留空 AP_DNS2 表示不追加
+AP_DNS1=223.5.5.5
+AP_DNS2=

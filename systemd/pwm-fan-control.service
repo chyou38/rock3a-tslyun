@@ -1,5 +1,5 @@
 [Unit]
-Description=ROCK 3A PWM fan temperature control (pwm8 m0)
+Description=ROCK 3A PWM fan temperature control (pwm-fan / pwm8 fallback)
 After=multi-user.target
 
 [Service]

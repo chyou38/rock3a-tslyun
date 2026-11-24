@@ -1,0 +1,13 @@
+[Unit]
+Description=DHCP client for WiFi STA (wlp1s0)
+After=wpa_supplicant@wlp1s0.service network.target
+BindsTo=wpa_supplicant@wlp1s0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/udhcpc -i wlp1s0 -f -t 5 -T 3
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
