@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**A virtual Sentry USB drive · multi-camera synchronized playback · SEI driving telemetry · watermarked export — for Radxa ROCK 3A (RK3568) only.**
+**V3 (3.0.0)** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -33,14 +33,40 @@ This repository is maintained for exactly one hardware/OS combination: **Radxa o
 | 📊 Telemetry & metadata | Reads the SEI protobuf embedded in the bitstream: gear / speed / accelerator / brake / steering angle / turn signals / Autopilot state / GPS / 3-axis acceleration, updating frame by frame with playback. `event.json` supplies time / city / street / trigger reason / trigger frame. |
 | 🔍 Filtering & preview | Trigger-reason and date chips combine as filters. Deep links via `?ev=` `?date=` `?cat=` `?cam=` `?exp=1`. 📡 The near-live preview sits on the same level as the other categories (one click, no back-navigation) with Original / 720p / 480p / 360p quality choice. Storage bars (the virtual drive counts actual written bytes inside the volume, not the sparse image's apparent size; the bar is colour-coded by usage: <30% green / 30–85% blue / >85% red) plus a live sync status. |
 | 📶 Quality | Playback offers original / 720p / 480p / 360p (server-side transcode cache, 2GB cap). **480p is the default** — the same resolution used as the default for Feishu push and export; a single 480p stream starts in 0.08s over the public internet in testing. Manual choices are remembered and preferred next time. When a new Sentry / manually saved event lands, the background transcodes the triggering camera's trigger segment ± adjacent segments to 480p (3 files per event) so it plays instantly — only when nobody is watching. **Dashcam and near-live preview are never pre-transcoded**: those clips are added every minute and scroll away quickly, so the cache would be wasted, and constant transcoding would keep a fanless box pegged and hot. They are transcoded on demand when you actually open them. **A missing cache never makes you wait**: the player starts with any existing lower-quality variant (falling back to the original only if none exists) and switches to the target quality on the next segment or next open, while the transcode runs in the background. |
-| 🎞 Export | Single-clip download, zip bundle, or multi-camera composite (2×2, or the third angle filling the bottom row when there are 3). Quality: original / 720p / 480p / 360p. **Composites take 4:3 cells from the source with no letterboxing** (single-clip original exports at 1280×960 with the source frame rate). Watermarked exports are always rendered on-device by ffmpeg to H.264 mp4 (+faststart, so WeChat and the photo library accept them directly). The overlay matches the web player (time / location on the left; speed / turn signal / gear / brake / accelerator on the right, plus an **Autopilot steering-wheel icon** that is blue when engaged and grey when not). Clips without driving telemetry (parked Sentry recordings) degrade to time + location only rather than silently dropping the watermark. |
+| 🎞 Export | Single-clip download, zip bundle, or multi-camera composite (2-up 2×1 / 3-up bottom row filled / 4-up 2×2 / **6-up 3×2**). Quality: original / 720p / 480p / 360p. **Composites take 4:3 cells from the source with no letterboxing** (single-clip original exports at 1280×960 with the source frame rate). Watermarked exports are always rendered on-device by ffmpeg to H.264 mp4 (+faststart, so WeChat and the photo library accept them directly). The overlay matches the web player (time / location on the left; speed / turn signal / gear / brake / accelerator on the right, plus an **Autopilot steering-wheel icon** that is blue when engaged and grey when not). Clips without driving telemetry (parked Sentry recordings) degrade to time + location only rather than silently dropping the watermark. **The whole path runs on ffmpeg-rockchip** (rkmpp decode + RGA scale + `h264_rkmpp` encode): a 50-second 4K-class source takes ~7 s; a 6-camera 50 s watermarked composite takes ~54 s. |
+| 💾 My library | Composite / export outputs land in a persistent library (no longer wiped with the 1–2 h temp dir); the header folder button lets you download, push to Feishu or delete at any time. **Retention is selectable in the web UI from 1 to 180 days (default 7)**, shrinking it cleans expired items immediately, and a background job sweeps every 30 minutes; 20 GB hard cap with day-first, then size-based eviction. |
 | 📂 File management | Browse, upload and download on the drive or archive; multi-select batch delete / move / copy / rename (realpath-guarded). One click clears every recording under `TeslaCam/` while keeping the directory structure and leaving Boombox / Wraps alone. Drive management mode reverts to export automatically after 5 minutes idle. |
-| 🔔 Feishu push | Direct message (self only) or group bot webhook: cover card of the trigger frame, or a short clip starting 5 seconds before the trigger, optionally with the driving watermark burned in. Deduplicated, 20-second delay, 3 retries on failure. The export sheet can push too. |
+| 🔔 Feishu push | Direct message (self only) or group bot webhook: a library push sends a **detail card first** (cover from the composite's first frame, time / location / camera (N-up) / duration·size, plus a **“View recording” button** that deep-links to the 6-up split player), followed by the video message with the cover. Live alerts send a trigger-frame cover card or a clip starting 5 s before the trigger, optionally with the driving watermark burned in. Deduplicated, 20-second delay, 3 retries. |
 | 🔐 Login protection | `install.sh` generates a random 10-character password (user `admin`) by default. HMAC-signed cookie valid for 30 days plus HTTP Basic. 8 wrong attempts from one IP within 10 minutes returns 429. Settings → Account lets you change the password or sign out. |
 | 🌐 Fixed LAN address | The installer tries to install and enable Avahi mDNS and advertises `http://tsl.local` on the LAN (default host name `tsl`; change with `--mdns NAME`), so IP changes do not change the address. LAN only; standard mDNS supports only the `.local` suffix. |
 | 🔄 Online update | Multiple sources raced in parallel with a GitHub API fallback; after download it verifies → backs up → swaps atomically → restarts, with one-click rollback. Settings → Update has an **auto-update** toggle (on by default: upgrades when a new version appears and nobody is watching). |
 | 🎨 Personalization | Custom title icon and name (defaults to 「TSL哨兵云盘」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. |
+
+---
+
+## V3 changes (3.0.0, 2026-11-25)
+
+V3 is the first release on the **Radxa official Debian 12 BSP (kernel 6.1.84)** line: hardware acceleration end to end, plus a persistent library.
+
+**Hardware decode / encode**
+
+- The system ffmpeg is replaced by self-built **ffmpeg-rockchip 9.1** (`/opt/rkmpp/bin/ffmpeg|ffprobe`, GPL v3, statically linked libav*); `install.sh` installs it automatically from the bundled `dist/rkmpp` package
+- Every transcode path now runs on hardware: thumbnails, three-quality prebuffer (360p/480p/720p), push clips, in-browser clips, 6-camera composite export; output via `h264_rkmpp`, scaling via `scale_rkrga`
+- Same 29 s 4K-class source: software x264 36 s → GStreamer 11.8 s → **ffmpeg-rkmpp 7.4 s**
+- 6 cameras, 50.6 s, watermarked composite: **54.4 s** (1668×720, peak ~45 °C, 1.5 GB RAM still free). Subtitle burn itself costs only 0.2 s — the bottleneck is decoding the 4K-class sources; **3-way parallel downsampling measured slower (single MPP instance queueing), so it stays sequential**
+
+**Features**
+
+- Library: outputs persist under `/mnt/tsf-storage/tsf-data/exports`; **My library** in the web UI downloads / pushes / deletes; retention 1–180 days (default 7), swept every 30 minutes in the background, 20 GB hard cap
+- Feishu library push: detail card (time / location / camera (N-up) / duration·size) with cover and a **View recording** button that deep-links to the `?ev=` 6-up split player
+- 6-camera composite enabled (3×2 cells, 1668×720): per-camera RGA downsample + xstack + a single watermark burn
+- New-system cleanup: removed the dead `tesla-sync` cron and `_hw_preview/_rkvdec_nodes` code (BSP has no `/dev/media*`), stats only count ffmpeg, GStreamer wording dropped from the UI
+
+**System**
+
+- AX200 (`iwlwifi`): Wi-Fi STA + 2.4 GHz hotspot coexist (NetworkManager only owns `end1`; `wlp1s0/ap0` unmanaged, `wpa_supplicant@wlp1s0` + `udhcpc`)
+- Hostname, Asia/Shanghai timezone, BSP `pwm-fan` cooling, USB Gadget writing `mass_storage.0/lun.0/file` directly
 
 ---
 
@@ -94,7 +120,7 @@ sudo ./install.sh --archive /mnt/tsf-storage/tsf-data/archive \
                   --cache   /mnt/tsf-storage/tsf-data/cache
 ```
 
-The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → try to install and enable Avahi mDNS → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus two cron jobs; when NetworkManager is present (BSP), also mark `wlp1s0/ap0` unmanaged and install `wpa_supplicant@wlp1s0`, `tsf-wifi-dhcp` and `tsf-bt-name` → generate a random login password → start everything and print status. Missing ffmpeg, fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
+The installer will: verify the board is a ROCK 3A (RK3568) → check kernel gadget / exFAT / Python → **install the bundled ffmpeg-rockchip (`dist/rkmpp`, hardware decode/encode; failures only warn)** → install into `/opt/tesla-sentry/` and write `/etc/tesla-sentry.conf` → try to install and enable Avahi mDNS → register the `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` systemd services plus one cron job (`*/2` LUN self-heal); when NetworkManager is present (BSP), also mark `wlp1s0/ap0` unmanaged and install `wpa_supplicant@wlp1s0`, `tsf-wifi-dhcp` and `tsf-bt-name` → generate a random login password → create the library directory → start everything and print status. Missing fonts or optional kernel features produce warnings, not aborts. **By default no drive is created; you choose the disk and capacity in the web UI.**
 
 **2. Open the web UI and create the virtual drive**: browse to `http://<device-ip>` or `http://tsl.local` (join the box's hotspot, connect through a USB network interface, or add Tailscale / frp yourself). The first login is `admin` with the password printed by the installer or stored in `/opt/tesla-sentry/auth.conf`. Open **Personalization → Car USB**; the "Device & Storage" card inside shows "No virtual drive configured":
 
@@ -118,7 +144,7 @@ sudo ./uninstall.sh --purge      # also delete image and archive (irreversible)
 
 ---
 
-## RKMPP hardware decode/encode (optional)
+## RKMPP hardware decode / encode (required on BSP)
 
 The BSP kernel exposes `/dev/mpp_service` and `/dev/rga`; the repository ships a self-built ffmpeg-rockchip bundle:
 
@@ -150,6 +176,8 @@ Main config: `/etc/tesla-sentry.conf` (restart services after editing):
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `0` / `0` | Legacy Plan B box-side retention and per-category cap; disabled by default. Archive retention is configured in **Personalization → Files → Archive** |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | Free-space fallback cleanup: trigger threshold and target |
 | `TSF_CACHE` | `<install-dir>/cache` | Thumbnail / telemetry / stitch temp cache; BSP deployment uses `/mnt/tsf-storage/tsf-data/cache` |
+| `TSF_LIB` | `/mnt/tsf-storage/tsf-data/exports` | Library directory (composite / export outputs); retention is set in the web UI under **My library** (1–180 days, stored as `lib_ttl_days` in `settings.json`), 20 GB hard cap |
+| `TSF_VPU_TRANSCODE_ON` / `TSF_TR_CODES` | `1` / `3` | Hardware transcode switch / concurrency; RK3568 has a single hardware encoder instance, and 3 is the long-tested sweet spot |
 | `TSF_PREVIEW_CACHE` | `/opt/tesla-sentry/preview-cache` | Three-quality prebuffer cache; defaults to eMMC, recommended to move to the data drive on BSP (`/mnt/tsf-storage/tsf-data/preview-cache`) |
 | `TSF_MDNS_NAME` | `tsl` | mDNS host name, i.e. `http://tsl.local`; restart avahi-daemon after changing |
 

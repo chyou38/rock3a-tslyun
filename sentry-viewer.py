@@ -729,7 +729,8 @@ BRAND_LOGO_B64 = (
 
 def load_settings():
     d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
-         "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10}
+         "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10,
+         "lib_ttl_days": 7}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -751,6 +752,11 @@ def load_settings():
                 d["preview_low_water_pct"] = max(5, min(int(j.get("preview_low_water_pct") or 10), 30))
             except (TypeError, ValueError):
                 d["preview_low_water_pct"] = 10
+            # 作品库保留天数 (1-180, 默认 7); 上限与 LIB_TTL_DAYS_MAX 保持一致
+            try:
+                d["lib_ttl_days"] = max(1, min(int(j.get("lib_ttl_days") or 7), 180))
+            except (TypeError, ValueError):
+                d["lib_ttl_days"] = 7
             # 预缓冲策略: 播放停止后恢复分钟数与预解码秒数 (之前没读回, 保存后又被默认值盖掉)
             try:
                 d["prewarm_resume_min"] = max(1, min(int(j.get("prewarm_resume_min") or 2), 1440))
@@ -2152,6 +2158,12 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <div class="stitch" id="lib">
   <div class="stbox" style="width:min(640px,94vw)">
     <div class="stt">我的作品 <span id="libmeta" style="font-size:12px;color:var(--muted);font-weight:400"></span></div>
+    <div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;font-size:12px;color:var(--muted)">
+      保留
+      <select id="libttl" onchange="libSetTtl(this.value)"
+        style="background:transparent;color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:2px 6px;font-size:12px"></select>
+      天（1~180 天，超期自动清理）
+    </div>
     <div id="librows" style="max-height:58vh;overflow:auto;margin:8px 0"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:10px">
       <button class="mini" onclick="document.getElementById('lib').classList.remove('open')">关闭</button>
@@ -4442,19 +4454,42 @@ function fmtSize(n) {
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
   return Math.max(1, Math.round(n / 1024)) + 'KB';
 }
+function libTtlSel(days) {
+  const sel = document.getElementById('libttl');
+  if (!sel) return;
+  let opts = [1, 3, 7, 14, 30, 60, 90, 180];
+  if (days && opts.indexOf(days) < 0) opts.push(days);
+  opts = opts.sort((a, b) => a - b);
+  sel.innerHTML = opts.map(v => '<option value="' + v + '"' + (v === days ? ' selected' : '') + '>' + v + '</option>').join('');
+  window.__libTtl = days;
+}
+function libSetTtl(v) {
+  const days = Number(v) || 7;
+  toast('正在设置作品保留 ' + days + ' 天…');
+  fetch('/api/library/ttl', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({days: days})})
+    .then(r => r.json()).then(d => {
+      if (!d.ok) { toast('设置失败: ' + (d.msg || '未知错误')); return; }
+      toast('作品保留 ' + d.days + ' 天，超期的已清理');
+      openLib();
+    })
+    .catch(e => toast('设置失败: ' + e));
+}
 function openLib() {
   const p = document.getElementById('lib');
   if (!p) return;
   p.classList.add('open');
   document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">加载中…</div>';
   fetch('/api/library', {cache: 'no-store'}).then(r => r.json())
-    .then(d => renderLib(d.items || []))
+    .then(d => { libTtlSel(d.ttl_days || 7); renderLib(d.items || []); })
     .catch(() => { document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">读取失败</div>'; });
 }
 function renderLib(items) {
   const box = document.getElementById('librows');
-  document.getElementById('libmeta').textContent = items.length
-    ? '共 ' + items.length + ' 条 · ' + fmtSize(items.reduce((s, x) => s + (x.size || 0), 0)) : '';
+  const ttl = window.__libTtl || 7;
+  document.getElementById('libmeta').textContent =
+    (items.length ? '共 ' + items.length + ' 条 · ' + fmtSize(items.reduce((s, x) => s + (x.size || 0), 0)) : '') +
+    ' · 保留 ' + ttl + ' 天';
   if (!items.length) {
     box.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">还没有作品<br>去「合成视频」或「推送飞书」生成</div>';
     return;
@@ -8610,11 +8645,37 @@ FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or "ffprobe"
 STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
 STITCH_JOBS = {}
 # 作品库: 合成/导出成品原来留在 stitch-tmp, 1~2 小时就被清掉, 用户只能当场下载。
-# 现在成品移到外接盘 exports/, 网页「作品」里随时下载、补推飞书; 7 天或 20GB 淘汰最旧。
+# 现在成品移到外接盘 exports/, 网页「作品」里随时下载、补推飞书; 保留天数可在网页里改(1~180 天),
+# 容量上限 20GB 是硬顶, 先按天数淘汰再按容量淘汰。
 LIB_DIR = os.environ.get("TSF_LIB", "/mnt/tsf-storage/tsf-data/exports")
-LIB_TTL = 7 * 86400
+LIB_TTL_DAYS_DEFAULT = 7
+LIB_TTL_DAYS_MAX = 180
 LIB_MAX = 20 * 1024 * 1024 * 1024
 _LIB_CLEAN_LAST = {"t": 0.0}
+
+
+def lib_ttl_days():
+    """作品保留天数: 网页设置里可改, 默认 7, 夹在 1~180 之间。"""
+    try:
+        v = int(load_settings().get("lib_ttl_days", LIB_TTL_DAYS_DEFAULT) or LIB_TTL_DAYS_DEFAULT)
+    except (TypeError, ValueError):
+        v = LIB_TTL_DAYS_DEFAULT
+    return max(1, min(v, LIB_TTL_DAYS_MAX))
+
+
+def lib_ttl():
+    return lib_ttl_days() * 86400
+
+
+def lib_cleaner_loop():
+    """后台每 30 分钟按保留天数/容量清一次作品库: 之前只在入库和打开页面时清,
+    长期不开网页的话过期成品会一直躺着占盘。"""
+    while True:
+        try:
+            lib_cleanup(force=True)
+        except Exception:
+            pass
+        time.sleep(1800)
 STITCH_LOCK = threading.Lock()
 # 视频流并发上限: 事件多的时候浏览器会一口气请求上百个预览, 不限流会拖死设备
 MEDIA_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_MEDIA_CONN", "16")))  # 媒体流并发上限: 4路视频+封面+接口要同时走, 太小会让新请求排队
@@ -12041,7 +12102,7 @@ def lib_cleanup(force=False):
                 except OSError:
                     pass
                 continue
-            if now - os.path.getmtime(p) > LIB_TTL:
+            if now - os.path.getmtime(p) > lib_ttl():
                 for x in (p, mp):
                     try:
                         os.unlink(x)
@@ -12200,6 +12261,8 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
         # 第一步: 逐路降采样 (顺序执行, 峰值只有 1 路解码)
         # 解码走 rkmpp 硬解(1080p 软解才是 CPU 主开销); 缩放/裁剪/fps 仍是软件滤镜,
         # 但源已降到帧内存, 640x360 的缩放开销很小; 编码用 h264_rkmpp 硬编。
+        # 2026-11-25 实测: 6 路 2896x1876 源降采样串行 43.8s vs 3 路并行 2 批 55s,
+        # 并行反而更慢(MPP 解码/编码实例串行排队, 并行只增加争用), 保持顺序执行。
         small = []
         if n > 1:
             for i, fp in enumerate(paths):
@@ -13235,7 +13298,10 @@ class Handler(BaseHTTPRequestHandler):
                         "media_active": MEDIA_ACTIVE[0]})
         elif path == "/api/library":
             # 作品库: 合成/导出成品列表 (后台任务完成后就落在这里, 关掉页面也能回来下)
-            self._json({"ok": True, "items": lib_list(), "total": sum(i.get("size", 0) for i in lib_list())})
+            items = lib_list()
+            self._json({"ok": True, "items": items, "total": sum(i.get("size", 0) for i in items),
+                        "ttl_days": lib_ttl_days(), "ttl_max": LIB_TTL_DAYS_MAX,
+                        "limit": LIB_MAX})
         elif path == "/api/library/dl":
             qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             fn = os.path.basename(qs.get("f", [""])[0])
@@ -14156,6 +14222,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": lib_del(body.get("f") or "")})
             return
+        if path == "/api/library/ttl":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "error": "参数错误"}, 400)
+                return
+            try:
+                days = int(body.get("days"))
+            except (TypeError, ValueError):
+                self._json({"ok": False, "msg": "天数必须是数字"}, 400)
+                return
+            days = max(1, min(days, LIB_TTL_DAYS_MAX))
+            save_settings({"lib_ttl_days": days})
+            try:
+                lib_cleanup(force=True)     # 缩短天数后立即生效, 超期的现在删
+            except Exception:
+                pass
+            self._json({"ok": True, "days": days})
+            return
         if path == "/api/library/push":
             body = self._read_json()
             if not isinstance(body, dict):
@@ -14606,6 +14690,7 @@ if __name__ == "__main__":
     threading.Thread(target=thumb_prewarm_loop, daemon=True).start()
     threading.Thread(target=thumb_migrate_legacy, daemon=True).start()  # 旧缩略图补 .src 侧车, 统计按源片算
     threading.Thread(target=archive_cleanup_loop, daemon=True).start()
+    threading.Thread(target=lib_cleaner_loop, daemon=True).start()   # 作品库按保留天数定时清理
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     srv.serve_forever()
 

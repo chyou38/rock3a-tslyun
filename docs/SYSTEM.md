@@ -28,7 +28,7 @@
 |---|---|
 | 发行版 | Radxa 官方 Debian 12 bookworm BSP（Debian GNU/Linux 12） |
 | 内核 | `6.1.84-15-rk2410-nocsf`（aarch64，BSP） |
-| 主机名 | `tsl-sentry` |
+| 主机名 | `<hostname>`（示例，已脱敏） |
 | Python | 3.11.2（查看器仅用标准库） |
 | 硬件加速 | `/dev/mpp_service` + `/dev/rga`；RKMPP ffmpeg/ffprobe 在 `/opt/rkmpp/bin`（见 `dist/rkmpp/`） |
 

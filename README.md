@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**虚拟哨兵 U 盘 · 多路同步回放 · SEI 行车遥测 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。**
+**V3（3.0.0）** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -27,20 +27,46 @@
 | 能力 | 说明 |
 |---|---|
 | 🗂 虚拟 U 盘 | **安装时不预建镜像**；部署后打开网页「个性化 → 车机U盘」里的「设备与存储」，插入任意容量 USB 硬盘（整盘 ≥8G）→ 选择整块盘 → 拖动虚拟U盘占比 → 输入序列号格式化创建。创建的是稀疏 exFAT 镜像并预置 `TeslaCam` 目录，通过 USB Gadget `mass_storage` 导出；网卡 / 串口共存。也可在安装时用 `--size` 显式预建。 |
-| ⚡ 实时查看 | `tesla-live-sync.py` 每 15 秒**只读解析 exFAT**（不挂载、不断 USB），车机边写网页边看，新片段通常 15–30 秒出现；cron `*/10` 只负责写 Boombox 音频 |
+| ⚡ 实时查看 | `tesla-live-sync.py` 每 15 秒**只读解析 exFAT**（不挂载、不断 USB），车机边写网页边看，新片段通常 15–30 秒出现；BSP 版不再需要 cron 同步，只剩 `*/2` 的 U 盘 LUN 自愈 |
 | 📦 归档与滚动窗口 | 视频落到独立归档目录（BSP 在 USB 数据盘，旧 Armbian 为独立 ext4 `/archive`），不与车机同时读写镜像；`RecentClips` 跟随车机滚动缓冲只留最近 60 分钟，`SentryClips` / `SavedClips` 的**盒子副本**归档保留统一走网页「个性化 → 文件 → 归档区」按容量水位清理，`.pruned` 墓碑避免「删除→重抄」死循环 |
 | 🎬 播放 | **默认单路**: 点开事件直接播触发摄像头那一路 (画面下方切换条可选 前视/后视/左B柱/右B柱/全览, 点哪个才加载哪个, 切换保留播放进度)；全览 4 路 2×2 / 6 路 3×2 自适应，250ms 同步校正、统一进度条、0.5–4x；**自动落在触发时刻所在的那一分钟、从触发前 5 秒起播**（片段栏红点标记） |
 | 📊 遥测与元数据 | 直读码流内嵌 SEI protobuf：挡位 / 车速 / 油门 / 刹车 / 方向盘角度 / 转向灯 / AP 状态 / 坐标 / 三轴加速度，随进度逐帧跳动；`event.json` 提供时间 / 城市 / 街道 / 触发原因 / 触发画面 |
 | 🔍 筛选与预览 | 触发原因 + 日期胶囊叠加筛选；`?ev=` `?date=` `?cat=` `?cam=` `?exp=1` 深链；📡 实时预览与其它分类同级（点页签即切换，不用返回），带 原画 / 720p / 480p / 360p 画质选择；存储条（虚拟U盘按卷内实际写入量计，不是镜像预分配占用；进度条按占用比例配色：<30% 绿 / 30–85% 蓝 / >85% 红）与在线同步状态 |
 | 📶 清晰度 | 播放可选 原画 / 720p / 480p / 360p（服务端转码缓存，上限 2GB）。**默认 480p**：与飞书推送 / 导出的默认档位同一分辨率，单路 480p 公网起播实测 0.08s；手动改过就记住你的选择，下次优先用记忆值。哨兵 / 手动保存的新事件落盘后，后台会先把「触发摄像头那一路」的触发段±相邻段预转成 480p（点开即播；每事件 3 个文件），只在没人看视频时跑。**行车记录 / 准实时预览不预转**：这类片段每分钟新增、很快滚动淘汰，预转的缓存立刻作废，还会让无风扇设备持续满载转码、核心温度长期偏高；真点开时由服务端按需后台转码。**缓存没赶上的文件不会让人干等**：播放器先用已有的压缩档（都没有才用原画）开播，不必等转码；转码放后台，切段或下次打开自动用上目标档位 |
-| 🎞 导出 | 单路下载、zip 打包、多路合成（2×2 / 3 路时第三路铺满下排）；清晰度 原画 / 720p / 480p / 360p，**多画面按原片 4:3 取格子，不留黑边**（原画单路直接出 1280×960 + 源帧率）；带水印时一律由设备端 ffmpeg 直出 H.264 mp4（+faststart，微信 / 相册可直接发）；水印与网页播放器同款（左侧时间 / 地点，右侧车速 / 转向灯 / 挡位 / 刹车 / 油门，外加 **AP 方向盘图标**：辅助驾驶启动时蓝色、未启动时灰色）；片段没有行车遥测（停车哨兵录制）时水印退化成只显示时间 + 地点，不会悄悄不出水印 |
+| 🎞 导出 | 单路下载、zip 打包、多路合成（2 路 2×1 / 3 路下排铺满 / 4 路 2×2 / **6 路 3×2**）；清晰度 原画 / 720p / 480p / 360p，**多画面按原片 4:3 取格子，不留黑边**（原画单路直接出 1280×960 + 源帧率）；带水印时一律由设备端 ffmpeg 直出 H.264 mp4（+faststart，微信 / 相册可直接发）；水印与网页播放器同款（左侧时间 / 地点，右侧车速 / 转向灯 / 挡位 / 刹车 / 油门，外加 **AP 方向盘图标**：辅助驾驶启动时蓝色、未启动时灰色）；片段没有行车遥测（停车哨兵录制）时水印退化成只显示时间 + 地点，不会悄悄不出水印。**全程 ffmpeg-rockchip 硬解 + RGA 缩放 + h264_rkmpp 硬编**：单路 50 秒 4K 级源片约 7 秒，6 路 50 秒素材带水印合成约 54 秒 |
+| 💾 我的作品库 | 合成 / 导出成品统一落作品库（不再随临时目录 1~2 小时被清），网页 header 文件夹按钮随时下载、补推飞书、删除；**保留天数网页可选 1~180 天（默认 7 天）**，改小立即清超期，另有后台每 30 分钟兜底清理；容量硬顶 20GB，先按天数再按容量淘汰 |
 | 📂 文件管理 | U 盘 / 归档区浏览上传下载，多选批量删除 / 移动 / 复制 / 重命名（realpath 防逃逸）；一键清空 `TeslaCam/` 全部录像（保留目录结构、不动 Boombox / Wraps）；U 盘管理模式 5 分钟无操作自动恢复导出 |
-| 🔔 飞书推送 | 私聊（仅本人）/ 群机器人，触发那一帧封面卡片或触发点前 5 秒短视频，可烧行车信息水印；去重、延迟 20 秒、失败重试 3 次，导出浮层也能直接推送 |
+| 🔔 飞书推送 | 私聊（仅本人）/ 群机器人：作品推送先发**说明卡**（封面取合成首帧 + 时间 / 位置 / 镜头（N 路）/ 时长·大小 + **「查看录像」按钮**，直达 6 路分格播放页），再发带封面的视频消息；触发那一帧封面卡片或触发点前 5 秒短视频，可烧行车信息水印；去重、延迟 20 秒、失败重试 3 次 |
 | 🔐 登录保护 | `install.sh` 默认生成随机 10 位密码（admin），HMAC 签名 cookie 保留 30 天 + HTTP Basic；10 分钟内连错 8 次返回 429；设置 → 账号可改密码 / 退出 |
 | 🌐 内网固定地址 | 安装时尝试启用 Avahi mDNS，在局域网广播 `http://tsl.local`（默认主机名 `tsl`，`--mdns NAME` 可改）；换 IP 不用重新记地址。仅同一局域网有效，标准 mDNS 只支持 `.local` 后缀 |
 | 🔄 在线升级 | 多源并发竞速 + GitHub API 实时兜底，下载后校验 → 备份 → 原子替换 → 自动重启，出问题一键回滚；设置 → 更新里可勾选**自动更新**（默认开启，检测到新版且没人看视频时自动升） |
 | 🎨 个性化 | 标题图标与名称可自定义（默认「TSL哨兵云盘」）、深 / 浅 / 自动主题，4 套界面风格（默认 / Apple / Claude / 像素），10 种界面语言、网页背景换肤、锁车音（`LockChime.wav`）、涂装 `Wraps/` |
 | 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、LUN 被弹出后 cron `*/2` 自动重挂、断电自愈 |
+
+---
+
+## V3 变更（3.0.0，2026-11-25）
+
+V3 是切到 **Radxa 官方 Debian 12 BSP（内核 6.1.84）** 后的第一个发布版本，主线是「全链路硬件化 + 作品库」：
+
+**硬解 / 硬编**
+
+- 系统 ffmpeg 换成自编译 **ffmpeg-rockchip 9.1**（`/opt/rkmpp/bin/ffmpeg|ffprobe`，GPL v3，静态链 libav*），`install.sh` 自动安装，`dist/rkmpp` 带离线包
+- 所有转码路径切硬解：缩略图、预缓冲三档（360p/480p/720p）、推送短视频、浏览器片段、6 路合成导出；输出用 `h264_rkmpp`，缩放用 `scale_rkrga`
+- 同一 29s 4K 级源片实测：软编 36s → GStreamer 11.8s → **ffmpeg-rkmpp 7.4s**
+- 6 路 50.6s 素材带水印合成 **54.4s**（1668×720，峰值温度约 45°C，可用内存剩 1.5G）；水印字幕本身只占 0.2s，瓶颈是 4K 级源片解码；**3 路并行降采样实测反而更慢（MPP 实例排队），保持顺序执行**
+
+**功能**
+
+- 作品库：成品落 `/mnt/tsf-storage/tsf-data/exports`，网页「我的作品」下载 / 推飞书 / 删除；保留天数 1~180 天可选（默认 7 天），后台每 30 分钟定时清理，20GB 容量硬顶
+- 飞书作品推送：说明卡（时间 / 位置 / 镜头（N 路）/ 时长·大小）+ 封面 + **「查看录像」** 按钮（直达 `?ev=` 6 路分格播放页）
+- 6 路合成放开（3×2 格子 1668×720），逐路 RGA 降采样 + xstack + 统一烧一次水印
+- 清理新系统遗留：删掉失效的 `tesla-sync` cron 与 `_hw_preview/_rkvdec_nodes` 死代码（BSP 无 `/dev/media*`），统计只认 ffmpeg，前端去掉 GStreamer 文案
+
+**系统**
+
+- 网卡 AX200（`iwlwifi`）：WiFi STA + 2.4G 热点共存（NM 只接管 `end1`，`wlp1s0/ap0` unmanaged，`wpa_supplicant@wlp1s0` + `udhcpc`）
+- 主机名、时区（Asia/Shanghai）、风扇（BSP `pwm-fan`）、USB Gadget 直写 `mass_storage.0/lun.0/file`
 
 ---
 
@@ -94,7 +120,7 @@ sudo ./install.sh --archive /mnt/tsf-storage/tsf-data/archive \
                   --cache   /mnt/tsf-storage/tsf-data/cache
 ```
 
-安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 尝试安装并启用 Avahi mDNS → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与两条 cron；检测到 NetworkManager（BSP）时额外配置 `wlp1s0/ap0` unmanaged、`wpa_supplicant@wlp1s0`、`tsf-wifi-dhcp`、`tsf-bt-name` → 生成随机登录密码 → 启动并打印状态。ffmpeg、字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
+安装会：先校验主板是否为 ROCK 3A（RK3568）→ 检查内核 gadget / exFAT / Python → **自动安装仓库自带的 ffmpeg-rockchip（`dist/rkmpp`，硬解硬编，失败只警告）** → 装到 `/opt/tesla-sentry/`、写 `/etc/tesla-sentry.conf` → 尝试安装并启用 Avahi mDNS → 注册 `tesla-gadget` / `sentry-viewer` / `tesla-live` / `pwm-fan-control` / `tsf-ap-policy.timer` 等 systemd 服务与一条 cron（`*/2` 的 U 盘 LUN 自愈）；检测到 NetworkManager（BSP）时额外配置 `wlp1s0/ap0` unmanaged、`wpa_supplicant@wlp1s0`、`tsf-wifi-dhcp`、`tsf-bt-name` → 生成随机登录密码 → 创建作品库目录 → 启动并打印状态。字体、部分内核项缺失只警告不中止。**默认不建盘，安装完成后由你在网页里选择硬盘和容量。**
 
 **2. 打开网页，自己创建虚拟U盘**：浏览器访问 `http://<设备IP>` 或 `http://tsl.local`（手机连设备热点、USB 网卡直连，或自行加 Tailscale / frp）。首次登录账号 `admin`，密码见安装输出或 `/opt/tesla-sentry/auth.conf`。打开 **「个性化 → 车机U盘」**，里面的「设备与存储」会提示「未配置虚拟U盘」：
 
@@ -118,13 +144,15 @@ sudo ./uninstall.sh --purge      # 连镜像和归档一起删（不可恢复）
 
 ---
 
-## RKMPP 硬解/硬编（可选）
+## RKMPP 硬解 / 硬编（BSP 必装）
 
-BSP 内核带 `/dev/mpp_service` 与 `/dev/rga`，仓库提供自编译的 ffmpeg-rockchip 产物：
+BSP 内核带 `/dev/mpp_service` 与 `/dev/rga`，仓库提供自编译的 ffmpeg-rockchip 产物（GPL v3，静态链 libav*）：
 
 - `dist/rkmpp/rkmpp-bin.tar.gz`：`ffmpeg` / `ffprobe` 二进制（约 21MB，已 strip）
 - `dist/rkmpp/install-rkmpp.sh`：恢复脚本，自动检查运行时依赖、软链系统 `ffmpeg`/`ffprobe`，并写入 `TSF_FFMPEG` / `TSF_FFPROBE`
 - `dist/rkmpp/deps.txt`：运行时依赖清单（Debian 12）
+
+`install.sh` 检测到 `/opt/rkmpp/bin/ffmpeg` 不存在时会**自动调用** `install-rkmpp.sh -y`；也可手动：
 
 ```sh
 cd dist/rkmpp
@@ -150,6 +178,8 @@ sudo systemctl restart sentry-viewer
 | `TSF_BOX_KEEP_DAYS` / `TSF_BOX_MAX_GB` | `0` / `0` | 旧方案 B 的盒子侧保留天数与单分类上限，默认关闭；归档保留统一走网页「个性化 → 文件 → 归档区」 |
 | `TSF_FREE_MIN_MB` / `TSF_FREE_TARGET_MB` | `4096` / `10240` | 空间兜底清理的触发阈值与目标 |
 | `TSF_CACHE` | `<安装目录>/cache` | 缩略图 / 遥测 / 合成临时缓存；BSP 部署为 `/mnt/tsf-storage/tsf-data/cache` |
+| `TSF_LIB` | `/mnt/tsf-storage/tsf-data/exports` | 作品库目录（合成 / 导出成品）；保留天数在网页「我的作品」里改（1~180 天，存 `settings.json` 的 `lib_ttl_days`），容量硬顶 20GB |
+| `TSF_VPU_TRANSCODE_ON` / `TSF_TR_CODES` | `1` / `3` | 硬转开关 / 并发路数；RK3568 只有一个硬编实例，3 是长期实测的平衡点 |
 | `TSF_PREVIEW_CACHE` | `/opt/tesla-sentry/preview-cache` | 三档预缓冲缓存；默认在 eMMC，建议 BSP 改到数据盘（`/mnt/tsf-storage/tsf-data/preview-cache`） |
 | `TSF_MDNS_NAME` | `tsl` | mDNS 主机名，对应 `http://tsl.local`；改完重启 avahi-daemon |
 

@@ -1,6 +1,6 @@
 Tesla Sentry Box · ROCK 3A 系统信息采集（已净化）
 采集时间: 2026-11-25 (Asia/Shanghai)
-主机: tsl-sentry
+主机: <hostname>（示例，已脱敏）
 
 === /etc/os-release ===
 PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
@@ -9,7 +9,7 @@ VERSION_ID="12"
 VERSION="12 (bookworm)"
 
 === uname -a ===
-Linux tsl-sentry 6.1.84-15-rk2410-nocsf #1 SMP PREEMPT aarch64 GNU/Linux
+Linux <hostname> 6.1.84-15-rk2410-nocsf #1 SMP PREEMPT aarch64 GNU/Linux
 （Radxa 官方 Debian 12 BSP 内核）
 
 === lscpu ===

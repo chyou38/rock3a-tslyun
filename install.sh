@@ -31,6 +31,11 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$CACHE_DIR" ] || CACHE_DIR="$TSF_DIR/cache"
+# 作品库 (合成/导出成品, 网页「我的作品」): 默认和归档同盘; 归档不在数据盘时放安装目录
+case "$ARCHIVE" in
+    /mnt/tsf-storage/*) LIB_DIR="$(dirname "$ARCHIVE")/exports" ;;
+    *) LIB_DIR="$TSF_DIR/exports" ;;
+esac
 IMG="$TSF_DIR/teslacam.img"
 CONF=/etc/tesla-sentry.conf
 
@@ -110,11 +115,32 @@ fi
 # 缓存目录 (缩略图/遥测/合成临时文件/预缓冲): 默认安装目录, BSP 建议放数据盘
 mkdir -p "$CACHE_DIR/thumbs" "$CACHE_DIR/tel-cache" 2>/dev/null || true
 
-# ffmpeg 探测: 缩略图与部分导出功能依赖, 缺了只是没有缩略图
-FFMPEG="$(command -v ffmpeg 2>/dev/null || true)"
-FFPROBE="$(command -v ffprobe 2>/dev/null || true)"
-if [ -x "$FFMPEG" ]; then say "ffmpeg: $FFMPEG"
-else echo "  [提示] 未找到 ffmpeg, 列表缩略图会缺失 (装一个即可: apt install ffmpeg)"; fi
+# ---------------- 0.5 ffmpeg-rockchip (硬解 / 硬编 / RGA 缩放) ----------------
+# 系统自带的 debian ffmpeg 没有 rkmpp: 缩略图、水印导出、多路合成都会退回软件, 慢几倍。
+# 仓库自带 BSP 预编译包 dist/rkmpp/(rkmpp-bin.tar.gz + install-rkmpp.sh, 约 21MB)。
+FFMPEG=/opt/rkmpp/bin/ffmpeg
+FFPROBE=/opt/rkmpp/bin/ffprobe
+RKMPP_SH="$SRC_DIR/dist/rkmpp/install-rkmpp.sh"
+RKMPP_PKG="$SRC_DIR/dist/rkmpp/rkmpp-bin.tar.gz"
+if [ -x "$FFMPEG" ]; then
+    say "ffmpeg-rockchip 已安装: $FFMPEG"
+elif [ -f "$RKMPP_SH" ] && [ -f "$RKMPP_PKG" ]; then
+    say "安装 ffmpeg-rockchip (H.264/H.265 硬解 + h264_rkmpp 硬编 + scale_rkrga) ..."
+    # install-rkmpp.sh 自己解包/查依赖/软链 /usr/bin 与 /usr/local/bin/写 TSF_FFMPEG;
+    # 失败只警告, 回退系统 ffmpeg, 不阻断安装
+    if sh "$RKMPP_SH" -y; then
+        say "ffmpeg-rockchip 已可用 ($($FFMPEG -version 2>/dev/null | head -1))"
+    else
+        echo "  [警告] ffmpeg-rockchip 安装未完成, 退回系统 ffmpeg (功能在, 但没有硬解硬编)"
+        FFMPEG="$(command -v ffmpeg 2>/dev/null || true)"
+        FFPROBE="$(command -v ffprobe 2>/dev/null || true)"
+    fi
+else
+    FFMPEG="$(command -v ffmpeg 2>/dev/null || true)"
+    FFPROBE="$(command -v ffprobe 2>/dev/null || true)"
+    echo "  [提示] 仓库里没有 dist/rkmpp 包, 使用系统 ffmpeg: ${FFMPEG:-未安装}"
+fi
+[ -x "$FFMPEG" ] || echo "  [提示] 没有可用 ffmpeg, 缩略图/水印/合成不可用 (apt install ffmpeg)"
 
 # ---------------- 1. 目录与文件 ----------------
 say "安装到 $TSF_DIR ..."
@@ -138,6 +164,7 @@ chmod +x "$TSF_DIR"/*.sh "$TSF_DIR"/*.py
 
 mkdir -p "$ARCHIVE"/SentryClips "$ARCHIVE"/SavedClips "$ARCHIVE"/RecentClips \
          "$ARCHIVE"/.skins "$ARCHIVE"/boombox-queue "$ARCHIVE"/boombox-done "$ARCHIVE"/files
+mkdir -p "$LIB_DIR"
 
 # ---------------- 2. 镜像 ----------------
 # 已经在跑的设备: 复用当前正在导出的镜像, 避免重装后车机看到一块空盘
@@ -201,6 +228,14 @@ TSF_FFMPEG=$FFMPEG
 TSF_FFPROBE=$FFPROBE
 TSF_MDNS_NAME=$MDNS_NAME
 TSF_USB_LOCK=/tmp/tsf-usb.lock
+
+# ---- 转码 / 作品库 ----
+# 单路硬转 / 多路合成导出都走 ffmpeg-rockchip; 3 并发是 RK3568 单硬编实例的平衡点
+TSF_VPU_TRANSCODE_ON=1
+TSF_TR_CODES=3
+# 作品库(网页「我的作品」): 合成/导出成品落这里; 保留天数在网页里改(1~180 天, 默认 7)
+TSF_LIB=$LIB_DIR
+LIB_TTL_DAYS_DEFAULT=7
 
 # ---- 归档清理 / 在线同步参数 (改完重启服务生效; 0 = 关闭对应策略) ----
 # 这些参数写进 conf, 由程序启动时自行读取; 改完重启服务生效。
@@ -372,7 +407,6 @@ systemctl disable --now hostapd.service >/dev/null 2>&1 || true
 command -v hostapd >/dev/null 2>&1 || echo "  [提示] 未安装 hostapd, 个人热点不可用 (apt install hostapd dnsmasq)"
 mkdir -p /etc/cron.d
 cat > /etc/cron.d/tesla-sentry <<EOF
-*/10 * * * * root /bin/sh $TSF_DIR/tesla-sync.sh >/dev/null 2>&1
 */2 * * * * root /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1
 EOF
 systemctl daemon-reload
