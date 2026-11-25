@@ -2573,7 +2573,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div class="hint" id="speed-result">—</div>
     <div class="hint" id="dbg-net">—</div>
-    <div class="hint" style="color:#8b96a3">提示: 档位完全按你选的处理, 多路不再自动降档; 6 路同时开高画质会占满上行, 想省流量可手动选 360p。</div>
+    <div class="hint" style="color:#8b96a3">提示: 档位默认按你选的处理; 8 秒没有播放进度会按 原画→1080p→720p→480p→360p 自动降档, 360p 仍卡会重载当前段。6 路同时开高画质会占满上行, 想省流量可手动选 360p。</div>
   </div>
   <div id="tab-skin" style="display:none">
     <div class="stabsec sep">网页背景</div>
@@ -2932,7 +2932,7 @@ const Q_MODE_DEFAULT = {auto: (isLanNet ? 'orig' : '360p')};
 let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAULT.auto : qMode);
 /* 旧版本可能把已下线的 240p 存进浏览器, 这里兜底纠正回可用档位, 避免请求不存在的档 */
 if (!Q_LIST.some(x => x[0] === curQ)) { curQ = isLanNet ? 'orig' : '360p'; localStorage.setItem(Q_STORE_KEY, curQ); }
-/* 档位完全按用户选择走, 多路不再偷偷降档; 想省流量自己选 360p */
+/* 档位默认按用户选择走; 只有 8 秒无进度才自动降档, 不预先偷降 */
 let multiMode = false;
 /* 多路同播硬限档: 3 路及以上时, 原画/1080p 一律压到 720p 播 ——
    6 路 2896x1876 或 6 路 1440x932 同时解码, 手机浏览器会直接卡死, 上行也被打满;
@@ -3491,6 +3491,11 @@ function autoOpenOverview() {
 /* ---------- 哨兵总览: 顶部内嵌「六路合成」播放控件 ---------- */
 let ovEv = null, ovJob = null, ovPoll = null, ovTimer = null, ovRateN = 1,
     ovCamSel = 'all', ovClipIx = 0, ovBrightOn = false, ovRateVal = 1, ovQ = '360p';
+const OV_Q_ORDER = ['360p', '480p', '720p', '1080p', 'orig'];
+let ovNoProgAt = 0;             // 主路 currentTime 连续不动的起始时刻
+let ovLastProgT = 0;            // 上一次观察到的主路进度
+let ovLastDowngradeAt = 0;      // 上次自动降档时间, 防短时间连环降档
+let ovNoProgReloads = 0;        // 360p 仍无进度时的重载次数
 let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
 let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
 let ovLADone = -1;             // 已触发"提前预转码下一段"的段序号, 每段只触发一次
@@ -3513,8 +3518,9 @@ function ovCancelPending() {
   if (ovSwapGuard) { clearTimeout(ovSwapGuard); ovSwapGuard = null; }
   if (ovPlayPending) { try { ovPlayPending(); } catch (e) {} ovPlayPending = null; }
   ovPendingSeek = null; ovSwapping = false; ovStallAt = 0;
+  ovNoProgAt = 0; ovLastProgT = 0; ovLastDowngradeAt = 0; ovNoProgReloads = 0;
 }
-try { const q0 = String(localStorage.getItem('ovq') || ''); if (['360p','480p','720p','1080p'].indexOf(q0) >= 0) ovQ = q0; } catch (e) {}
+try { const q0 = String(localStorage.getItem('ovq') || ''); if (OV_Q_ORDER.indexOf(q0) >= 0) ovQ = q0; } catch (e) {}
 const ovCovers = {};       // 'cat/name' -> 合成帧封面
 const ovJobs = {};         // 'cat/name' -> 合成任务 id (本页内复用; 服务端按事件缓存产物)
 function ovVids() { return [...document.querySelectorAll('#ovgrid video')].filter(v => v._base); }
@@ -3531,6 +3537,78 @@ function ovBadge(txt, ok) {
   if (!b) return;
   b.textContent = txt;
   b.classList.toggle('ok', !!ok);
+}
+function ovResetNoProg() { ovNoProgAt = 0; ovLastProgT = 0; }
+function ovQRank(q) { return OV_Q_ORDER.indexOf(q); }
+function ovQLabel(q) { return q === 'orig' ? '原画' : q; }
+function ovNextLowerQ(q) {
+  const i = OV_Q_ORDER.indexOf(q);
+  return i > 0 ? OV_Q_ORDER[i - 1] : '';
+}
+function ovQFromWidth(w) {
+  if (w >= 1500) return '1080p';
+  if (w >= 900) return '720p';
+  if (w >= 600) return '480p';
+  if (w >= 400) return '360p';
+  return '';
+}
+/* 服务端目标档没建好时会先用低档顶上; 播放器按真实宽度把档位标签同步下来。
+   只在完整档(duration > PREV_SEC+2)上判断, 避免把 20 秒低档预览误判成最终档。 */
+function ovNoteActualQ(v) {
+  if (!v || !v.videoWidth || ovQ === 'orig' || !isFinite(v.duration) || v.duration <= PREV_SEC + 2) return;
+  const actual = ovQFromWidth(v.videoWidth);
+  if (!actual || ovQRank(actual) < 0 || ovQRank(actual) >= ovQRank(ovQ)) return;
+  const from = ovQ;
+  ovQ = actual;
+  const btn = document.getElementById('ovq');
+  if (btn) { btn.textContent = ovQLabel(actual); btn.classList.toggle('hi', actual !== '360p'); }
+  ovBadge(ovQLabel(from) + ' 档不可用, 已用 ' + ovQLabel(actual), true);
+  try { toast(ovQLabel(from) + ' 档没有缓存, 已自动切到 ' + ovQLabel(actual)); } catch (e) {}
+}
+function ovReloadCurrent() {
+  const vs = ovVids();
+  if (!vs.length) return;
+  const gen = ovGen, at = vs[0].currentTime || 0;
+  ovResetNoProg();
+  ovSwapping = true;
+  let left = vs.length;
+  const done = () => { if (--left <= 0) { ovSwapping = false; ovResetNoProg(); } };
+  const guard = setTimeout(() => { ovSwapping = false; }, 9000);
+  vs.forEach(v => {
+    v._qswapped = false;
+    try { v.pause(); } catch (e) {}
+    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
+    v.addEventListener('loadedmetadata', function h() {
+      v.removeEventListener('loadedmetadata', h);
+      if (gen !== ovGen) return;
+      try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
+      try { v.playbackRate = ovRateVal; } catch (e) {}
+      v.play().catch(() => {});
+      done();
+    });
+    v.addEventListener('error', done, { once: true });
+  });
+  setTimeout(() => { clearTimeout(guard); ovSwapping = false; }, 9000);
+}
+/* 8 秒主路 currentTime 不动: 先逐级降档 1080→720→480→360; 360 仍卡就重载当前段。
+   手动锁定档位也会降, 因为这里只处理"已经播不动"的故障, 不是按网络猜档。 */
+function ovNoProgressRecover() {
+  const next = ovNextLowerQ(ovQ);
+  if (next) {
+    ovBadge(ovQLabel(ovQ) + ' 8秒无进度, 自动降 ' + ovQLabel(next), true);
+    try { toast(ovQLabel(ovQ) + ' 8 秒没有播放进度, 已自动降到 ' + ovQLabel(next)); } catch (e) {}
+    ovSetQuality(next, { persist: false, auto: true });
+    return;
+  }
+  ovNoProgReloads++;
+  if (ovNoProgReloads >= 2) {
+    ovBadge('360p 仍无进度, 请切段或重试', true);
+    try { toast('当前片段 360p 仍无进度, 请切换片段重试'); } catch (e) {}
+    return;
+  }
+  ovBadge('360p 无进度, 正在重载当前段…', true);
+  try { toast('360p 8 秒无进度, 正在重载当前段'); } catch (e) {}
+  ovReloadCurrent();
 }
 function ovMask(show, title, sub) {
   const m = document.getElementById('ovmask');
@@ -3594,7 +3672,7 @@ function ovOpen(ev) {
   const cat = ev._cat || currentCat;
   if (vc) { vc.textContent = t(CATS_NAME[cat] || cat); vc.className = 'ovk k-' + cat; }
   const qb = document.getElementById('ovq');
-  if (qb) { qb.textContent = ovQ; qb.classList.toggle('hi', ovQ !== '360p'); }
+  if (qb) { qb.textContent = ovQLabel(ovQ); qb.classList.toggle('hi', ovQ !== '360p'); }
   ovBuildGrid(ev, 0);
   ovRenderInfo(ev);
   /* 二级播放页: 视频上方的行车数据面板, 取本段主路片段的 SEI (无遥测只显示时间/地点) */
@@ -3902,20 +3980,22 @@ function ovStopAll() {
   [...g.querySelectorAll('.ovcell')].forEach(c => { c.style.display = 'none'; });
 }
 /* 切换播放画质: 只换当前 6 路的 src, 保留播放进度; 新档位立刻排进服务端转码队列 */
-function ovSetQuality(q) {
+function ovSetQuality(q, opts) {
+  opts = opts || {};
   ovQ = q;
-  try { localStorage.setItem('ovq', q); } catch (e) {}
+  ovResetNoProg(); ovNoProgReloads = 0;
+  try { if (opts.persist !== false) localStorage.setItem('ovq', q); } catch (e) {}
   const btn = document.getElementById('ovq');
-  if (btn) { btn.textContent = q; btn.classList.toggle('hi', q !== '360p'); }
+  if (btn) { btn.textContent = ovQLabel(q); btn.classList.toggle('hi', q !== '360p'); }
   const vs = ovVids();
   if (!vs.length) return;
   const at = vs[0].currentTime || 0, playing = !vs[0].paused;
-  ovBadge(q + ' 切换中…');
+  ovBadge(ovQLabel(q) + (opts.auto ? ' 自动切换中…' : ' 切换中…'));
   /* 某一路一直不 loadedmetadata(转码没生成/网络卡)时不能永远挂在"切换中" */
+  let left = vs.length;
   const watchdog = setTimeout(() => {
     if (left > 0) ovBadge(q + ' 部分画面未就绪, 可再点一次', true);
   }, 12000);
-  let left = vs.length;
   vs.forEach(v => {
     /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
     v._qswapped = false;
@@ -3933,13 +4013,14 @@ function ovSetQuality(q) {
     body: JSON.stringify({ paths: vs.map(v => v._base), q: q }) }).catch(() => {}); } catch (e) {}
 }
 function ovCycleQ() {
-  const list = ['360p', '480p', '720p', '1080p'];
+  const list = ['360p', '480p', '720p', '1080p', 'orig'];
   ovSetQuality(list[(list.indexOf(ovQ) + 1) % list.length]);
 }
 function ovBuildGrid(ev, ix) {
   const g = document.getElementById('ovgrid');
   if (!g) return;
   ovClipIx = ix || 0;
+  ovResetNoProg(); ovLastDowngradeAt = 0; ovNoProgReloads = 0;
   const vids = ovPickVids(ev, ix);
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
@@ -4004,6 +4085,7 @@ function ovBuildGrid(ev, ix) {
 let ovPlayPending = null;
 function ovPlayAll() {
   ovWantPlay = true;
+  ovResetNoProg(); ovNoProgReloads = 0;
   const gen = ovGen;
   /* 跨段拖动切过来的: 落到目标时间点, 不要又被重置回 0 */
   const at = (ovPendingSeek != null) ? ovPendingSeek : 0;
@@ -4053,6 +4135,28 @@ function ovSyncOn() {
     if (ovPendingSeek != null && main && main.duration) {
       const p = ovPendingSeek; ovPendingSeek = null;
       vs.forEach(v => { try { v.currentTime = p; } catch (e) {} });
+    }
+    /* 8 秒无进度看门狗: currentTime 不动时先降档, 360p 仍卡再重载当前段。
+       手动锁定 720p 也会降, 因为这里只在已经播不动时兜底。 */
+    if (main) {
+      const now = Date.now();
+      ovNoteActualQ(main);
+      const progressing = ovWantPlay && !main.paused && !main.ended && !main.seeking &&
+        !ovSwapping && ovPendingSeek == null && !ovAutoLock;
+      if (progressing) {
+        const ct = main.currentTime || 0;
+        if (!ovLastProgT || Math.abs(ct - ovLastProgT) > 0.02 || ct < ovLastProgT - 0.5) {
+          ovLastProgT = ct; ovNoProgAt = now; ovNoProgReloads = 0;
+        } else if (!ovNoProgAt) {
+          ovNoProgAt = now;
+        }
+        if (ovNoProgAt && now - ovNoProgAt >= 8000 && now - ovLastDowngradeAt > 3000) {
+          ovLastDowngradeAt = now; ovNoProgAt = now;
+          ovNoProgressRecover();
+        }
+      } else {
+        ovResetNoProg();
+      }
     }
     /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮 */
     if (!ovAutoLock && main && main.duration > 0 &&
@@ -4145,14 +4249,14 @@ function ovPlayToggle() {
   if (!vs.length) { if (ovEv) ovOpen(ovEv); return; }
   const main = vs[0];
   if (main.paused) {
-    ovWantPlay = true; ovStallAt = 0;
+    ovWantPlay = true; ovStallAt = 0; ovResetNoProg();
     /* 已经播到末尾再点播放: 从头来, 否则 play() 会立刻又结束 */
     const ended = main.ended || (main.duration && main.currentTime >= main.duration - 0.3);
     const t = ended ? 0 : (main.currentTime || 0);
     vs.forEach(v => { try { v._qswapped = false; v.currentTime = t; } catch (e) {} v.play().catch(() => {}) ; });
     ovSyncOn();
   } else {
-    ovWantPlay = false; ovStallAt = 0;   /* 用户主动暂停: 自愈不能跟用户抢 */
+    ovWantPlay = false; ovStallAt = 0; ovResetNoProg();   /* 用户主动暂停: 自愈不能跟用户抢 */
     vs.forEach(v => { try { v.pause(); } catch (e) {} });
   }
 }
@@ -4269,6 +4373,10 @@ function ovBind() {
     ovClock(v.currentTime || 0, v.duration || 0);
     updateHud(v.currentTime);   // 视频上方的车速/挡位/油门/刹车跟随播放进度
     ovLookahead(v);             // 段尾前 8s 提前预转码下一段, 切段秒开
+  }, true);
+  /* 新档/低档兜底加载后, 按真实宽度把档位标签同步下来 */
+  g.addEventListener('loadedmetadata', function (e) {
+    if (e.target && e.target.tagName === 'VIDEO') ovNoteActualQ(e.target);
   }, true);
   g.addEventListener('play', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
   g.addEventListener('pause', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
@@ -5211,6 +5319,7 @@ function waitVariantMulti(vid, baseUrl, cl) {
 const PREV_SEC = __PREVIEW_SEC__;   // 预解码秒数, 由服务端设置注入
 function renderClip() {
   const ev = cur;
+  resetMainNoProg(); mainNoProgReloads = 0;
   const seekTo = pendSeek;   // 本次渲染消费掉定位点, 之后换语言等重渲染不会又跳一次
   pendSeek = 0;
   const clip = curClips[curClipIx] || { key: '', vids: [] };
@@ -6660,6 +6769,7 @@ document.getElementById('startmask').addEventListener('click', playAll);
 function tryPlay(v) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
 function playAll() {
   const vs = [...document.querySelectorAll('#vgrid video')];
+  resetMainNoProg(); mainNoProgReloads = 0;
   // iOS/微信只允许在用户手势里逐个调 play(); 同步循环内依次触发
   vs.forEach(tryPlay);
   const m = document.getElementById('startmask');
@@ -6671,6 +6781,53 @@ function pauseAll() {
   const pp = document.getElementById('ppbtn'); if (pp) pp.textContent = '▶';
 }
 let baseRate = 1;
+/* 单路/四路主播放器的 8 秒无进度兜底: 和六路总览各自一套状态 */
+let mainNoProgAt = 0, mainLastProgT = 0, mainLastDowngradeAt = 0, mainNoProgReloads = 0;
+function resetMainNoProg() { mainNoProgAt = 0; mainLastProgT = 0; }
+function mainNextQ(n) {
+  const order = Q_LIST.map(x => x[0]);
+  const target = effQ(n);
+  let i = order.indexOf(target);
+  let next = i >= 0 ? order[i + 1] : '';
+  if (!next) return '';
+  if (n >= 3 && (next === 'orig' || next === '1080p')) next = '720p';
+  return next;
+}
+function setQualityFallback(q, n) {
+  if (effQ(n) === q) return;
+  if (qMode !== 'auto') {
+    qMode = q;
+    try { localStorage.setItem(Q_MODE_KEY, q); } catch (e) {}
+  }
+  setQuality(q);
+}
+function mainNoProgRecover(vs) {
+  const n = vs.length, next = mainNextQ(n);
+  if (next) {
+    mainLastDowngradeAt = Date.now(); mainNoProgAt = Date.now();
+    try { toast(qName(effQ(n)) + ' 8 秒没有播放进度, 已自动降到 ' + qName(next)); } catch (e) {}
+    setQualityFallback(next, n);
+    return;
+  }
+  mainNoProgReloads++;
+  if (mainNoProgReloads >= 2) {
+    try { toast('360p 仍无进度, 请切换片段或重试'); } catch (e) {}
+    return;
+  }
+  try { toast('360p 8 秒无进度, 正在重载当前段'); } catch (e) {}
+  pendSeek = vs[0].currentTime || 0;
+  renderClip();
+}
+function mainNoteActualQ(vs) {
+  const v = vs[0], n = vs.length;
+  if (!v || !v.videoWidth || !isFinite(v.duration) || v.duration <= PREV_SEC + 2) return;
+  const target = effQ(n);
+  if (!target || target === 'orig') return;
+  const actual = ovQFromWidth(v.videoWidth);
+  if (!actual || ovQRank(actual) < 0 || ovQRank(actual) >= ovQRank(target)) return;
+  if (actual === curQ) return;
+  setQualityFallback(actual, n);
+}
 /* 单格自救: 四格同播时偶尔有一格的连接在 frp 隧道里卡死 (readyState 长期为 1/0,
    其余几格正常播放)。7 秒还拿不到数据就给这一格重发请求 —— 浏览器会换一条新连接,
    卡死的旧连接由服务端的断开感知回收。每格每次渲染最多自救一次, 防止死循环。 */
@@ -6807,6 +6964,23 @@ function tick() {
   const vs = [...document.querySelectorAll('#vgrid video')];
   if (!vs.length || !vs[0].duration) return;
   const t = vs[0].currentTime;
+  const main = vs[0], now = Date.now();
+  mainNoteActualQ(vs);
+  /* 主播放器 8 秒无进度: 原画→1080p→720p→480p→360p; 360p 仍卡就重载当前段。
+     手动固定画质也照此兜底, 只在确实播不动时降, 不按网络预先猜档。 */
+  if (!main.paused && !main.ended && !main.seeking) {
+    if (!mainLastProgT || Math.abs(t - mainLastProgT) > 0.02 || t < mainLastProgT - 0.5) {
+      mainLastProgT = t; mainNoProgAt = now; mainNoProgReloads = 0;
+    } else if (!mainNoProgAt) {
+      mainNoProgAt = now;
+    }
+    if (mainNoProgAt && now - mainNoProgAt >= 8000 && now - mainLastDowngradeAt > 3000) {
+      mainLastDowngradeAt = now; mainNoProgAt = now;
+      mainNoProgRecover(vs);
+    }
+  } else {
+    resetMainNoProg();
+  }
   const anyPrev = vs.some(v => v._preview);
   /* 播到 14 秒切完整档; 命中的是老 10 秒预览时, 播完(ended)也必须切, 否则会停在 10 秒。
      另外从第 3 秒起就提前检查目标档: 720p 完整档约 7 秒、1080p 完整档约 6.5 秒就转好了,
