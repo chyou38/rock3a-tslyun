@@ -2536,6 +2536,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <select id="qmode" class="arc-select" onchange="setQMode(this.value)">
         <option value="auto">按网络自动</option>
         <option value="orig">固定 原画</option>
+        <option value="1080p">固定 1080p</option>
         <option value="720p">固定 720p</option>
         <option value="480p">固定 480p</option>
         <option value="360p">固定 360p</option>
@@ -2543,6 +2544,15 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div class="hint" id="qmode-state">—</div>
     <div class="hint" style="color:#8b96a3">自动模式: 局域网(192.168/10.x 等)打开就是原画, 公网或 Tailscale 打开就是 360p。</div>
+    <div class="updrow"><span class="updk">播放模式</span>
+      <select id="play-mode" class="arc-select" onchange="setPlayMode(this.value)">
+        <option value="auto">自动 (局域网六路原生 / 远程服务端合成)</option>
+        <option value="native">六路原生</option>
+        <option value="composite">服务端合成</option>
+      </select>
+    </div>
+    <div class="hint" id="play-mode-state">—</div>
+    <div class="hint" style="color:#8b96a3">服务端合成: 盒子把多路拼成一条 fMP4 再传, 远程只占一条连接; 第一版只支持连续播放, 不拖动。8 秒没有画面会自动退回六路原生。</div>
     <div class="updrow"><span class="updk">打开默认视角</span>
       <select id="open-view" class="arc-select" onchange="setOpenView(this.value)">
         <option value="all">六路全景</option>
@@ -2928,6 +2938,33 @@ const Q_STORE_KEY = 'tsfq4-' + Q_NET_MODE;
 /* 默认画质策略: auto=按网络(局域网原画/公网360p), 也可以固定某一档 */
 const Q_MODE_KEY = 'tsfq_mode';
 let qMode = localStorage.getItem(Q_MODE_KEY) || 'auto';
+/* 播放模式: auto=局域网六路原生/远程服务端合成; native=始终六路; composite=始终合成。 */
+const PLAY_MODE_KEY = 'tsf_play_mode';
+let playMode = localStorage.getItem(PLAY_MODE_KEY) || 'auto';
+if (['auto', 'native', 'composite'].indexOf(playMode) < 0) playMode = 'auto';
+let compositeFallback = false;   // 本次播放合成失败, 退到六路原生
+let compositeGen = 0;            // 合成首帧超时计时器的代号, 换片段/换模式即作废
+function playModeLabel() {
+  if (playMode === 'native') return '始终六路原生';
+  if (playMode === 'composite') return '始终服务端合成';
+  return '自动 · ' + (netKindSrv === 'lan' ? '局域网六路原生' : (netKindSrv ? '远程服务端合成' : '检测中…'));
+}
+function wantComposite(n) {
+  if (n < 2 || compositeFallback) return false;
+  if (playMode === 'composite') return true;
+  if (playMode === 'native') return false;
+  return !(isLanNet || netKindSrv === 'lan');
+}
+function compositeQ(n) {
+  let q = effQ(n);
+  if (!q || q === 'orig' || q === '1080p') q = '720p';
+  return q;
+}
+function compositeUrl(vids, n) {
+  const q = compositeQ(n);
+  return '/api/composite/stream?' + vids.map(v => 'p=' + encodeURIComponent(v.url)).join('&') +
+    '&q=' + encodeURIComponent(q);
+}
 const Q_MODE_DEFAULT = {auto: (isLanNet ? 'orig' : '360p')};
 let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAULT.auto : qMode);
 /* 旧版本可能把已下线的 240p 存进浏览器, 这里兜底纠正回可用档位, 避免请求不存在的档 */
@@ -2963,6 +3000,10 @@ function dbgLoad() {
   if (qm) qm.value = qMode;
   const qs = document.getElementById('qmode-state');
   if (qs) qs.textContent = qModeLabel();
+  const pm = document.getElementById('play-mode');
+  if (pm) pm.value = playMode;
+  const pms = document.getElementById('play-mode-state');
+  if (pms) pms.textContent = playModeLabel();
   const k = document.getElementById('dbg-net-kind');
   if (k) {
     const kn = netKindSrv === 'lan' ? '局域网' : (netKindSrv === 'tailscale' ? '远程 Tailscale' : (netKindSrv ? '公网' : '检测中'));
@@ -3093,6 +3134,14 @@ function setQMode(mode) {
   toast('✅ 默认画质: ' + (mode === 'auto' ? '按网络自动选择' : qName(mode)));
   dbgLoad();
 }
+function setPlayMode(mode) {
+  if (['auto', 'native', 'composite'].indexOf(mode) < 0) mode = 'auto';
+  playMode = mode; compositeFallback = false;
+  try { localStorage.setItem(PLAY_MODE_KEY, mode); } catch (e) {}
+  dbgLoad();
+  toast('✅ 播放模式: ' + playModeLabel());
+  if (cur) renderClip();
+}
 function qModeLabel() {
   if (qMode !== 'auto') return '固定 ' + qName(qMode);
   return '按网络自动 · ' + (netKindSrv === 'lan' ? '局域网 → 原画' : (netKindSrv ? '公网 → 360p' : '检测中…'));
@@ -3108,7 +3157,8 @@ function qUrl(u, n) {
 /* 播放器会话: 打开才完整转码, 退出/关页立即通知服务端停止。 */
 let playbackSid = null, playbackTimer = null;
 function playbackPaths() {
-  return [...document.querySelectorAll('#vgrid video')].map(v => v._baseUrl || v.src.split('?')[0]);
+  return [...document.querySelectorAll('#vgrid video')].map(v => v._baseUrl || v.src.split('?')[0])
+    .filter(p => p && p.indexOf('/media/') === 0);
 }
 function sendPlaybackBeat() {
   if (!playbackSid) return;
@@ -3546,9 +3596,9 @@ function ovNextLowerQ(q) {
   return i > 0 ? OV_Q_ORDER[i - 1] : '';
 }
 function ovQFromWidth(w) {
-  if (w >= 1500) return '1080p';
-  if (w >= 900) return '720p';
-  if (w >= 600) return '480p';
+  if (w >= 1200) return '1080p';
+  if (w >= 800) return '720p';
+  if (w >= 560) return '480p';
   if (w >= 400) return '360p';
   return '';
 }
@@ -5319,6 +5369,7 @@ function waitVariantMulti(vid, baseUrl, cl) {
 const PREV_SEC = __PREVIEW_SEC__;   // 预解码秒数, 由服务端设置注入
 function renderClip() {
   const ev = cur;
+  compositeGen++;
   resetMainNoProg(); mainNoProgReloads = 0;
   const seekTo = pendSeek;   // 本次渲染消费掉定位点, 之后换语言等重渲染不会又跳一次
   pendSeek = 0;
@@ -5344,6 +5395,12 @@ function renderClip() {
     if (one.length) shown = one;
     else camSel = 'all';          // 这一段没有该方位, 退回全览
   }
+  /* 最小双播放器: 远程/手动选了合成时, 用一个合成流替换 N 个原生 video。
+     单路不合成(本来就只有一条流), 合成失败由 8 秒看门狗或 error 退回六路原生。 */
+  const nativeN = shown.length;
+  if (wantComposite(nativeN)) {
+    shown = [{ cam: 'all', url: compositeUrl(shown, nativeN), _composite: true, _nativeN: nativeN }];
+  }
   multiMode = shown.length > 1;   // 仅标记多路, 不再据此改档位
   shown.forEach((v, vi) => {
     const cell = document.createElement('div'); cell.className = 'vcell';
@@ -5352,15 +5409,18 @@ function renderClip() {
     /* 画质按用户选择: 先拿同档位的 15 秒预缓冲秒开, 播到 14 秒无缝切完整档;
        预缓冲没命中时后端先给原画 + 后台马上转, 这里轮询到预览就原地热切,
        不再出现「选了 360p 却整段放原画」 */
-    vid._baseUrl = v.url;
+    vid._composite = !!v._composite;
+    vid._baseUrl = vid._composite ? '' : v.url;
     /* 多路时按实际路数算档位: 3 路以上自动压到 720p, 单路按用户选择 */
-    vid._fullUrl = qUrl(v.url, shown.length);
+    vid._fullUrl = vid._composite ? v.url : qUrl(v.url, shown.length);
     let vsrc = vid._fullUrl;
+    /* 合成播放器: 只支持连续播放, 不做预缓冲/任意拖动; 由主看门狗做 8 秒回退 */
+    if (vid._composite) vsrc = v.url;
     /* 多路(3路以上)+选了非原画档: 目标档没就绪时先用 360p 预缓冲顶上。
        6 路同时等其他档要十几秒, 这期间播 4K 原画手机必卡; 360p 转码最快, 首帧 3 秒内,
        播到 14 秒由 tick/switchPreviewVideos 自动切回目标档。先 0 字节 probe 一次确认,
        目标档已就绪(响应头无 X-TSF-Variant)就保持原 src, 不做多余降档。 */
-    const multiLow = shown.length >= 3 && effQ(shown.length) !== 'orig' && vi < 2;
+    const multiLow = !vid._composite && shown.length >= 3 && effQ(shown.length) !== 'orig' && vi < 2;
     if (multiLow) {
       const sep0 = vid._fullUrl.indexOf('?') >= 0 ? '&' : '?';
       fetch(vid._fullUrl + sep0 + 'probe=1', {headers: {Range: 'bytes=0-0'}, cache: 'no-store'})
@@ -5380,7 +5440,7 @@ function renderClip() {
           }, {once: true});
         }).catch(() => {});
     }
-    if (seekTo < PREV_SEC - 1) {
+    if (!vid._composite && seekTo < PREV_SEC - 1) {
       vsrc += (vsrc.indexOf('?') >= 0 ? '&' : '?') + 'preview=' + PREV_SEC;
       vid._wantPreview = true;
       vid.addEventListener('loadedmetadata', () => {
@@ -5415,6 +5475,11 @@ function renderClip() {
        若拿到的是 20 秒左右的预缓冲档(服务端低档兜底), 按预缓冲处理, 到点由 tick 切完整档。 */
     vid.addEventListener('loadedmetadata', () => {
       if (!vid.isConnected) return;
+      if (vid._composite) {
+        /* 合成的 fMP4 没有预缓冲/完整档概念; 元数据到了就按单格重新算高度 */
+        layoutPlayer();
+        return;
+      }
       if (!vid._preview && !vid._wantPreview && vid.duration
           && vid.duration <= PREV_SEC + 1.5 && String(vid.src).indexOf('preview=') < 0) {
         vid._preview = true;
@@ -5424,6 +5489,17 @@ function renderClip() {
       if (qAt && qAt !== 'orig') waitFullQ(vid, qAt);
     });
     vid.src = vsrc;
+    if (vid._composite) {
+      const cg = compositeGen;
+      setTimeout(() => {
+        if (cg !== compositeGen || !vid.isConnected || !vid._composite) return;
+        if (vid.readyState < 1 && !compositeFallback) {
+          compositeFallback = true;
+          try { toast('服务端合成 8 秒没有画面, 已退回六路原生'); } catch (e) {}
+          renderClip();
+        }
+      }, 8000);
+    }
     vid.muted = true; vid.defaultMuted = true; vid.preload = 'metadata';
     /* 每格加载状态: 转码/缓冲时显示提示, 避免黑屏让人以为坏了 */
     const cl = document.createElement('div'); cl.className = 'cload';
@@ -5432,6 +5508,12 @@ function renderClip() {
     vid.addEventListener('loadeddata', clDone);
     vid.addEventListener('playing', clDone);
     vid.addEventListener('error', () => {
+      if (vid._composite && !compositeFallback) {
+        compositeFallback = true;
+        try { toast('服务端合成失败, 已退回六路原生'); } catch (e) {}
+        renderClip();
+        return;
+      }
       cl.className = 'cload err';
       cl.innerHTML = '<span>' + t('加载失败, 点其他片段再试') + '</span>';
     });
@@ -6802,6 +6884,12 @@ function setQualityFallback(q, n) {
   setQuality(q);
 }
 function mainNoProgRecover(vs) {
+  if (vs[0] && vs[0]._composite) {
+    compositeFallback = true;
+    try { toast('服务端合成 8 秒无画面, 已退回六路原生'); } catch (e) {}
+    renderClip();
+    return;
+  }
   const n = vs.length, next = mainNextQ(n);
   if (next) {
     mainLastDowngradeAt = Date.now(); mainNoProgAt = Date.now();
@@ -6962,7 +7050,7 @@ function switchPreviewVideos(target) {
 function tick() {
   kickStalled();
   const vs = [...document.querySelectorAll('#vgrid video')];
-  if (!vs.length || !vs[0].duration) return;
+  if (!vs.length || (!vs[0].duration && !vs[0]._composite)) return;
   const t = vs[0].currentTime;
   const main = vs[0], now = Date.now();
   mainNoteActualQ(vs);
@@ -7007,13 +7095,21 @@ function tick() {
       v.playbackRate = baseRate;
     }
   });
-  document.getElementById('seek').value = Math.round(t / vs[0].duration * 1000);
+  const sk = document.getElementById('seek');
+  if (main._composite) {
+    /* 实时 fMP4 的总时长由 moov 分片滚动给出, 不拿它算进度, 也不允许拖 —— 第一版只连续播 */
+    sk.value = 0; sk.disabled = true;
+    document.getElementById('ic-dur').textContent = '—:—';
+  } else {
+    sk.disabled = false;
+    sk.value = Math.round(t / vs[0].duration * 1000);
+    document.getElementById('ic-dur').textContent = fmtSec(vs[0].duration);
+  }
   document.getElementById('ptime').textContent = fmtSec(t);
-  document.getElementById('ic-dur').textContent = fmtSec(vs[0].duration);
   updateHud(t);
   /* 兜底: ended 事件在部分浏览器/预缓冲切换时会漏, tick 里再查一次;
      v.loop=true 是还在等完整档, 不能在这时跳下一段。 */
-  if (autoNext && !autoNexting) {
+  if (autoNext && !autoNexting && !vs[0]._composite) {
     const allDone = vs.every(v => v.ended || (isFinite(v.duration) && v.duration > 0 && v.currentTime >= v.duration - 0.05));
     if (allDone && !vs.some(v => v.loop)) tripMaybeNext();
   }
@@ -16177,6 +16273,77 @@ button:active{background:#0ea472}
 </form></body></html>"""
 
 
+# ---------- 最小双播放器: 服务端把 N 路实时拼成一条 fMP4 ----------
+# 只服务"连续播放"的第一版: 不支持任意拖动, 不做 HLS/CarPlay, 不碰单路和导出。
+COMPOSITE_LOCK = threading.Lock()
+COMPOSITE_STATE = {"proc": None, "started": 0.0}
+
+
+def _composite_dims(qv):
+    """合成画面的单格尺寸; 6 路也不超过 1920x960, 免得 RK3568 同时解 6 路 720p 再编大画面。"""
+    if qv in ("360p",):
+        return 480, 360
+    return 640, 480
+
+
+def _composite_layout(n, cw, ch):
+    if n <= 1:
+        return "0_0", cw, ch
+    if n == 2:
+        return "0_0|%d_0" % cw, cw * 2, ch
+    if n == 3:
+        return "0_0|%d_0|%d_%d" % (cw, cw // 2, ch), cw * 2, ch * 2
+    if n == 4:
+        return "0_0|%d_0|0_%d|%d_%d" % (cw, ch, cw, ch), cw * 2, ch * 2
+    return "0_0|%d_0|%d_0|0_%d|%d_%d|%d_%d" % (
+        cw, cw * 2, ch, cw, ch, cw * 2, ch), cw * 3, ch * 2
+
+
+def _media_fp(p):
+    """只接受 /media/<分类>/<事件>/<文件> 映射到 ARCHIVE, 防目录穿越。"""
+    if not p or not p.startswith("/media/"):
+        return ""
+    rel = p[len("/media/"):].lstrip("/")
+    root = os.path.realpath(ARCHIVE)
+    fp = os.path.realpath(os.path.join(root, rel))
+    if fp != root and not fp.startswith(root + os.sep):
+        return ""
+    return fp if os.path.isfile(fp) else ""
+
+
+def _composite_cmd(paths, qv):
+    qv = qv if qv in ("360p", "480p", "720p", "1080p", "orig") else "360p"
+    cw, ch = _composite_dims(qv)
+    layout, ow, oh = _composite_layout(len(paths), cw, ch)
+    cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "warning", "-y"]
+    for fp in paths:
+        # 预转好的目标档直接当输入, 省一次 4K 硬解 + RGA 缩放
+        src = _variant_play(fp, qv) if qv != "orig" else ""
+        if not src:
+            src = fp
+        cmd += ["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                "-i", src]
+    fc = []
+    for i in range(len(paths)):
+        fc.append("[%d:v]scale_rkrga=w=%d:h=%d,hwdownload,format=nv12,fps=24,setsar=1[v%d]"
+                  % (i, cw, ch, i))
+    fc.append("".join("[v%d]" % i for i in range(len(paths))) +
+              "xstack=inputs=%d:layout=%s:fill=black[vout]" % (len(paths), layout))
+    bitrate = max(1200, (ow * oh) // 700)
+    cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-an",
+            "-c:v", "h264_rkmpp", "-b:v", "%dk" % bitrate, "-pix_fmt", "yuv420p",
+            "-g", "24", "-flush_packets", "1"]
+    try:
+        dur = probe_duration(paths[0])
+        if dur and dur > 0:
+            cmd += ["-t", "%.3f" % dur]
+    except Exception:
+        pass
+    cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-f", "mp4", "pipe:1"]
+    return cmd
+
+
 class Handler(BaseHTTPRequestHandler):
     timeout = SOCK_TIMEOUT   # 慢连接/半包请求超时断开, 避免长期占用线程
 
@@ -16404,6 +16571,109 @@ class Handler(BaseHTTPRequestHandler):
             return
         hdr_only(405)
 
+    def _composite_stream(self):
+        """一条 HTTP 响应里持续吐 fMP4; 浏览器用单个 <video> 播, 服务端只跑一个合成进程。"""
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        raw = qs.get("p") or []
+        if not raw or len(raw) > 6:
+            self._json({"error": "paths 1..6"}, 400)
+            return
+        paths = []
+        for p in raw:
+            fp = _media_fp(p)
+            if not fp:
+                self._json({"error": "bad path"}, 400)
+                return
+            paths.append(fp)
+        qv = (qs.get("q") or ["360p"])[0]
+        if qv not in ("360p", "480p", "720p", "1080p", "orig"):
+            qv = "360p"
+        with COMPOSITE_LOCK:
+            old = COMPOSITE_STATE.get("proc")
+            if old and old.poll() is None:
+                # 单用户场景: 切画质/换片段会新建请求, 旧连接先让位;
+                # 只允许一个硬件合成进程同时跑, 不并行抢编码器。
+                try:
+                    old.terminate()
+                    old.wait(timeout=2)
+                except Exception:
+                    try:
+                        old.kill()
+                    except Exception:
+                        pass
+            logf = tempfile.NamedTemporaryFile(prefix="tsf-comp-", suffix=".log", delete=False)
+            logpath = logf.name
+            try:
+                proc = subprocess.Popen(
+                    car_cpu_prefix() + _composite_cmd(paths, qv),
+                    stdout=subprocess.PIPE, stderr=logf, bufsize=0)
+            except Exception as ex:
+                logf.close()
+                self._json({"error": "ffmpeg 启动失败: %s" % ex}, 503)
+                return
+            COMPOSITE_STATE["proc"] = proc
+            COMPOSITE_STATE["started"] = time.time()
+        try:
+            first = proc.stdout.read(65536)
+            if not first:
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
+                try:
+                    with open(logpath, encoding="utf-8", errors="ignore") as fh:
+                        tail = fh.read()[-500:]
+                except OSError:
+                    tail = ""
+                self._json({"error": "合成没有输出", "detail": tail.strip()}, 503)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            self.wfile.write(first)
+            self.wfile.flush()
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except Exception:
+                        proc.kill()
+                try:
+                    proc.wait(timeout=3)   # 必须回收, 否则断连后会留下 defunct ffmpeg
+                except Exception:
+                    pass
+                if proc.stdout:
+                    try:
+                        proc.stdout.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                logf.close()
+            except Exception:
+                pass
+            try:
+                os.unlink(logpath)
+            except OSError:
+                pass
+            with COMPOSITE_LOCK:
+                if COMPOSITE_STATE.get("proc") is proc:
+                    COMPOSITE_STATE["proc"] = None
+
     def do_GET(self):
         path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         if path == "/login":
@@ -16455,6 +16725,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"state": job["state"], "pct": job.get("pct", 0),
                         "err": job.get("err", ""), "size": job.get("size", 0),
                         "f": job.get("f", "") or job.get("lib", "")})
+        elif path == "/api/composite/stream":
+            self._composite_stream()
         elif path == "/api/stitch/stream":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             jid = q.get("id", [""])[0]
