@@ -3143,6 +3143,8 @@ function setPlayMode(mode) {
   dbgLoad();
   toast('✅ 播放模式: ' + playModeLabel());
   if (cur) renderClip();
+  /* 真正在用的总览播放器也要立刻换模式, 不能等下次点开事件 */
+  if (ovEv && typeof ovBuildGrid === 'function') ovBuildGrid(ovEv, ovClipIx);
 }
 function qModeLabel() {
   if (qMode !== 'auto') return '固定 ' + qName(qMode);
