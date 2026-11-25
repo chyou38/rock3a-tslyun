@@ -731,7 +731,7 @@ BRAND_LOGO_B64 = (
 def load_settings():
     d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
          "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10,
-         "lib_ttl_days": 7, "amap_key": ""}
+         "lib_ttl_days": 7, "amap_key": "", "open_view": "all", "open_autoplay": True}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -767,6 +767,13 @@ def load_settings():
                 d["preview_sec"] = max(5, min(int(j.get("preview_sec") or 30), 120))
             except (TypeError, ValueError):
                 d["preview_sec"] = 30
+            # 打开视频默认视角 + 是否自动播放 (个性化→界面与播放)
+            ov = str(j.get("open_view") or "")
+            if ov in ("all", "quad", "front", "back", "left_pillar", "right_pillar",
+                      "left_repeater", "right_repeater"):
+                d["open_view"] = ov
+            if "open_autoplay" in j:
+                d["open_autoplay"] = bool(j["open_autoplay"])
             st = str(j.get("ui_style") or "")
             if st in ("default", "apple", "claude", "pixel"):
                 d["ui_style"] = st
@@ -1082,21 +1089,23 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 #theme { background:var(--panel2); border:none; color:var(--muted); font-size:15px; cursor:pointer; border-radius:10px; width:36px; height:32px; }
 #theme:hover { color:var(--text); }
 @media (max-width:640px){
-  /* 顶栏压成两行: 第一行 标题+同步状态+主题/设置, 第二行 4 个等宽页签 */
+  /* 顶栏压成两行: 第一行 标题+同步状态+主题/设置, 第二行 页签(每行 3 个, 超出自动换行) */
   header { padding:9px 12px 8px; gap:8px; }
   header h1 { font-size:15px; }
   header h1 .blogo { width:28px; height:28px; }
   header .sub { display:none; }
   #live { order:3; margin-left:0; max-width:108px; padding:4px 8px; }
   #theme { order:4; margin-left:auto; } #gear { order:5; margin-left:0; } #out { order:6; margin-left:0; }
-  /* 页签: 单行「分段控件」—— 灰槽里浮起一块选中的, 比两行卡片矮一半;
+  /* 页签: 「分段控件」—— 灰槽里浮起一块选中的;
+     每行最多 3 个, 5 个页签排成 3+2 两行, 保证每个标题都完整显示不被截断;
      计数收成右侧小徽章, 「实时浏览」没有计数也不会跟旁边几个对不齐 */
-  .tabs { order:10; width:100%; margin-left:0; gap:2px; overflow:visible;
+  .tabs { order:10; width:100%; margin-left:0; gap:2px; overflow:visible; flex-wrap:wrap;
     background:var(--panel2); border:1px solid var(--line); border-radius:13px; padding:3px; }
-  .tab { flex:1 1 0; min-width:0; display:flex; flex-direction:row; align-items:center;
+  .tab { flex:1 1 calc(33.333% - 2px); min-width:calc(33.333% - 2px);
+    display:flex; flex-direction:row; align-items:center;
     justify-content:center; gap:4px; padding:7px 2px; font-size:12px; line-height:1.2;
     border-radius:10px; background:transparent; border:none; overflow:hidden; }
-  .tab .tl { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tab .tl { min-width:0; overflow:visible; text-overflow:clip; white-space:nowrap; }
   .tab .tn { flex:0 0 auto; display:inline-block; margin-left:0; padding:0 5px;
     font-size:10.5px; line-height:1.4; font-weight:700; border-radius:7px;
     background:#ffffff14; color:var(--muted); opacity:1; }
@@ -1141,8 +1150,10 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .cnum { position:absolute; right:5px; bottom:5px; background:#000000b8; color:#fff; font-size:10.5px; line-height:1; padding:3px 6px; border-radius:8px; }
 .thumb .ph { background:var(--panel2); height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted2); font-size:20px; }
 .meta { flex:1; min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.meta .mcol { flex:1; min-width:0; }
 .meta .l1 { flex:1; min-width:0; display:flex; justify-content:flex-start; align-items:baseline; gap:8px; }
 .meta .rt { font-size:13.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.meta .tripdur { font-size:11.5px; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .meta .tm { font-size:12px; color:var(--muted); white-space:nowrap; flex:0 0 auto; font-variant-numeric:tabular-nums; }
 .meta .l2 { display:flex; justify-content:space-between; gap:8px; margin-top:4px; font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; }
 .meta .l2 span { overflow:hidden; text-overflow:ellipsis; }
@@ -1155,8 +1166,7 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
   color:#ff8b86; border:1px solid rgba(232,68,63,.35); background:rgba(232,68,63,.12); }
 .meta .ky.k-SavedClips { color:#6fd3a5; border-color:rgba(76,195,138,.3); background:rgba(76,195,138,.1); }
 .meta .ky.k-RecentClips { color:#93c5fd; border-color:rgba(59,130,246,.32); background:rgba(59,130,246,.1); }
-/* 哨兵总览: 顶部内嵌「六路合成」播放控件 (替代存储卡/系统状态); 其它分类也带播放器, 但保留存储卡与筛选 */
-body.ovmode.allmode .storwrap { display:none; }
+/* 哨兵总览: 顶部内嵌「六路合成」播放控件; 存储卡/系统状态已移入 个性化→设置→更新上方 */
 .ovplay { display:none; max-width:980px; margin:10px auto 0; padding:0 12px; }
 /* 分类页点开记录: 同一套六路控件整屏弹出 (二级播放页), 返回即回列表 */
 body.ovfull { overflow:hidden; }
@@ -1196,14 +1206,39 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 .ovstage { position:relative; aspect-ratio:16/9; background:#000; border-radius:14px;
   overflow:hidden; border:1px solid var(--line); }
 .ovstage video { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
+/* 全屏: 整个播放器(画面+控制条)进全屏, 画面占满上方, 播放/进度/倍速/视角控制条留在底部 */
+.ovplay.fs-on { max-width:none; width:100%; height:100%; margin:0; padding:0; position:relative; display:block !important; background:#000; }
+.ovplay.fs-on .ovtop { display:none; }
+.ovplay.fs-on .ovstage { position:absolute; inset:0; width:100%; height:100%; aspect-ratio:auto; border-radius:0; border:0; }
+.ovplay.fs-on .ovbar { position:absolute; left:0; right:0; bottom:0; z-index:10; margin:0; padding:14px 16px 14px; background:linear-gradient(to top, #000000d9, #00000000); transition:opacity .3s ease; }
+.ovplay.fs-on.bar-hide .ovbar { opacity:0; pointer-events:none; }
+.ovplay.fs-on .ovbar .t { color:#fff; }
+.ovplay.fs-on .ovtools { display:none; }
+.ovplay.fs-on .ovcams { display:none; }
+.ovplay.fs-on .ovclips { display:none; }
+/* 二级播放页(body.ovfull)的 980px 限宽和浅色底会压过全屏样式: 全屏时一并解除, 否则画面缩在中间一条 */
+body.ovfull .ovplay.fs-on { background:#000; padding:0; overflow:hidden; }
+body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
+/* 详细数据(加速度等)不再在行车数据行里展示, 节点保留给渲染逻辑写入 */
+#tp-rows[hidden], #tp-fold[hidden] { display:none !important; }
+/* 横屏锁失败(如 iOS)时, 竖屏全屏把整个播放器旋转 90° 模拟横屏 */
+.ovplay.fs-portrait { position:fixed; top:50%; left:50%; width:100vh; height:100vw; max-width:none; max-height:none;
+  transform:translate(-50%,-50%) rotate(90deg); }
 /* 总览六路: 3x2 六格, 6 个 video 各自独立播放, 主路(第一格)带节奏, 其余按它校准 */
 .ovgrid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr);
-  gap:0; width:100%; height:100%; background:#000; }
+  gap:0; width:100%; height:100%; background:#000; position:relative; }
 .ovgrid.one { grid-template-columns:1fr; grid-template-rows:1fr; }
 .ovgrid .ovcell { position:relative; overflow:hidden; background:#000; }
 .ovgrid video { display:block; width:100%; height:100%; object-fit:cover; background:#000; }
-.ovgrid .ovcam { position:absolute; left:4px; bottom:4px; font-size:9.5px; line-height:1;
+.ovgrid .ovcam { position:absolute; left:4px; bottom:4px; font-size:9.5px; line-height:1; z-index:5;
   padding:3px 5px; border-radius:5px; background:#000000a8; color:#cfd8e3; }
+/* 加载/缓冲/未自动播放占位: 每路缩略图高斯模糊垫底, 只留模糊画面, 不放播放键 */
+.ovcell .ovcover { position:absolute; inset:0; z-index:4; overflow:hidden;
+  background:#0a0d11; transition:opacity .28s ease; }
+.ovcell .ovcoverbg { position:absolute; inset:-16px; width:calc(100% + 32px); height:calc(100% + 32px);
+  object-fit:cover; filter:blur(14px) brightness(.62) saturate(1.05); transform:scale(1.06); }
+.ovcell .ovcover::after { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, #0000001f, #00000059); }
+.ovgrid.playing .ovcover { opacity:0; pointer-events:none; }
 .ovmask { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:7px; background:#000000d9; color:#dfe6ec; font-size:12.5px;
   text-align:center; padding:0 16px; }
@@ -1220,6 +1255,23 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 .ovinfo b { color:var(--text); font-weight:600; }
 /* 总览: 该事件的片段选择条 (多分钟事件在这里选要播的哪一段) */
 .ovclips { display:flex; gap:6px; flex-wrap:wrap; padding:6px 2px 0; }
+/* 播放页下方详情卡: 录制时间/地点/坐标 + 遥测详细数据 (窄屏 HUD 放不下的都收在这里) */
+.ovinfo { max-width:980px; width:100%; margin:10px auto 0; background:var(--panel);
+  border:1px solid var(--line); border-radius:14px; padding:10px 14px 12px; }
+.ovinfo .oi-sec { font-size:12px; font-weight:700; color:var(--muted); margin:2px 0 5px; }
+.ovinfo .oi-rows { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:0 18px; }
+.ovinfo .oi-rows + .oi-sec { margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
+.ovinfo .oi-rows div { display:flex; gap:8px; font-size:13px; color:var(--text);
+  padding:3px 0; font-variant-numeric:tabular-nums; }
+.ovinfo .oi-rows .k { color:var(--muted); flex:0 0 68px; }
+.ovinfo .oi-rows a { color:var(--blue); text-decoration:none; }
+.ovinfo .oi-rows .oi-empty { color:var(--muted); }
+.ovplay.fs-on .ovinfo { display:none; }
+@media (max-width:720px){
+  .ovinfo { padding:9px 12px 10px; margin-top:8px; }
+  .ovinfo .oi-rows { grid-template-columns:1fr; }
+  .ovinfo .oi-rows div { font-size:12.5px; }
+}
 .ovclips.hide { display:none; }
 .ovclips button { padding:7px 11px; font-size:12px; border-radius:8px; cursor:pointer;
   background:var(--panel2); border:1px solid var(--line2); color:var(--muted);
@@ -1288,7 +1340,7 @@ body.ovmode.allmode #filters { display:none; }
 /* 换段加载新遥测期间: 面板灰显、数值已重置, 不残留上一分钟的车速/时间 */
 .tpanel.stale { opacity:.45; }
 /* 二级播放页: 行车数据面板挂在六路标题下方, 与视频同宽居中 */
-#ovplay .tpanel { margin:0 auto 8px; }
+#ovplay .tpanel { margin:0 auto 6px; padding:7px 16px 5px; }
 .tpanel.folded .tp-rows { display:none; }
 /* 无遥测事件(哨兵/停车): 顶部只保留 时间 + 城市·位置 一行, 不留空白块 */
 .tpanel.plain { padding:12px 18px; }
@@ -1343,6 +1395,73 @@ body.ovmode.allmode #filters { display:none; }
   grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1px 20px; }
 .tp-rows div { color:var(--text); font-size:13px; padding:3px 0; font-variant-numeric:tabular-nums; }
 .tp-rows .k { color:var(--muted); margin-right:9px; }
+/* ===== 行车数据单行式: 档位 | 方向盘 | 转向灯+车速 | 刹车 | 电门 | 事件地点/坐标 =====
+   位置仍在画面上方。每项统一"值区 34px + 标签区 30px": 值在值区里居中(图标/挡位/车速同一水平线),
+   标签一律底对齐(车速的 km/h 占上一行), 各项总高相同, 不再出现高低错位 */
+.tp-hud { display:flex; align-items:flex-end; justify-content:center; gap:0; flex-wrap:wrap; row-gap:6px; }
+.tp-item { display:flex; flex-direction:column; align-items:center; }
+/* 等宽列: 各项中心距恒定, 不会因为标签长短忽疏忽密 */
+.tp-drive { width:92px; }
+.tp-val { height:30px; display:flex; align-items:center; justify-content:center; gap:8px; }
+.tp-labs { height:26px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
+.tp-lab { font-size:11px; line-height:13px; color:var(--muted); font-weight:500; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.tp-lab b { color:var(--text); font-weight:700; }
+.tp-gear { background:none; width:auto; height:auto; border-radius:0; display:block;
+  font-size:23px; font-weight:800; line-height:1; color:#2f7cf6; }
+.tp-gear.g-R { color:#ff453a; }
+.tp-gear.g-N { color:#f59e0b; }
+.tp-gear.g-P { color:var(--muted); }
+.tp-c { width:28px; height:28px; border:0; background:none; color:var(--text); opacity:.92; }
+.tp-c svg { width:26px; height:26px; }
+.tp-c.st { background:none; color:var(--text); }
+.tp-c.st svg { width:26px; height:26px; }
+.tp-c.st.ap-on { background:none; color:#2f7cf6; opacity:1; }
+.tp-c.brk { background:none; color:var(--text); }
+.tp-c.brk.on { background:none; color:#ff453a; opacity:1; }
+.tp-c.thr { background:none; color:var(--text); }
+.tp-spd { font-size:25px; font-weight:800; color:var(--text); line-height:1; min-width:32px; text-align:center; }
+.tp-unit { font-size:10.5px; color:var(--muted); font-weight:600; margin:0; }
+.tp-sig { opacity:.4; color:var(--muted); display:inline-flex; }
+.tp-sig svg { width:21px; height:21px; }
+.tp-sig.on { color:#f59e0b; opacity:1; }
+.tp-place { align-items:flex-start; margin-left:22px; }
+.tp-place .tp-val { justify-content:flex-start; }
+.tp-place .tp-labs { align-items:flex-start; }
+.tp-lab2 { font-size:11.5px; line-height:14px; color:var(--text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.tp-lab2 i { font-style:normal; color:var(--muted); margin-right:6px; }
+.tp-fold { margin:0 0 1px; align-self:flex-end; color:var(--muted); font-size:11px; padding:2px 4px; }
+.tp-tag { align-self:center; margin-right:12px; }
+.tp-rows { border-top:0; margin:0 0 8px; padding:0; }
+.tpanel.plain .tp-drive, .tpanel.plain .tp-fold { display:none; }
+/* 无遥测时只剩地点两行, 不再撑出值区/标签区的空高 */
+.tpanel.plain .tp-val, .tpanel.plain .tp-labs { height:auto; }
+/* 全屏: 同一行浮在画面顶部, 不跟底部悬浮播放条抢位置 */
+.ovplay.fs-on .tpanel { position:absolute; left:0; right:0; top:0; z-index:9; width:auto; max-width:none;
+  margin:0; padding:8px 16px 10px; border:0; border-radius:0;
+  background:linear-gradient(to bottom,#000000b8,#00000000); }
+.ovplay.fs-on .tpanel .tp-lab, .ovplay.fs-on .tpanel .tp-lab2 i,
+.ovplay.fs-on .tpanel .tp-unit, .ovplay.fs-on .tpanel .tp-fold { color:#9aa4b0; }
+.ovplay.fs-on .tpanel .tp-spd, .ovplay.fs-on .tpanel .tp-lab2,
+.ovplay.fs-on .tpanel .tp-lab b { color:#fff; }
+.ovplay.fs-on .tpanel .tp-c { color:#fff; }
+.ovplay.fs-on .tpanel .tp-c.brk.on { color:#fff; }
+.ovplay.fs-on .tpanel .tp-sig { color:#cfd8e3; }
+.ovplay.fs-on .tpanel .tp-rows div { color:#e8eef4; }
+@media (max-width:720px){
+  .tp-hud { gap:0; row-gap:4px; flex-wrap:nowrap; }
+  .tp-place { display:none; }
+  .tp-drive { width:auto; flex:1 1 0; min-width:0; }   /* 5 项等分, 窄屏也不换行、间距一致 */
+  .tp-val { height:26px; gap:5px; }
+  .tp-labs { height:22px; }
+  .tp-spd { font-size:20px; min-width:26px; }
+  .tp-gear { font-size:18px; }
+  .tp-c { width:24px; height:24px; }
+  .tp-c svg, .tp-c.st svg { width:23px; height:23px; }
+  .tp-sig svg { width:16px; height:16px; }
+  .tp-lab { font-size:10px; line-height:11px; }
+  .tpanel { padding:7px 10px 5px; }
+  #ovplay .tpanel { padding:6px 10px 4px; margin-bottom:5px; }
+}
 .vgrid { display:grid; gap:3px; background:var(--stage); }
 .vcell { position:relative; overflow:hidden; background:var(--stage); cursor:zoom-in; aspect-ratio:16/9; }
 .vcell.focused { grid-column:1/-1; grid-row:1/-1; cursor:zoom-out; }
@@ -1526,6 +1645,13 @@ select.ninput { cursor:pointer; }
 .dpbtns .mini { flex:1 1 auto; padding:9px 12px; border-radius:9px; background:var(--panel2);
   border:1px solid var(--line2); color:var(--text); font-size:12.5px; font-family:inherit; cursor:pointer; }
 .dpbtns .mini.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+/* 列表「详情」小窗内的视频详情行: 字段与播放页详情卡一致, 但样式独立,
+   播放页 .ovinfo 那边一行不动 (用户明确要求只改列表这边)。 */
+.dprows { display:grid; grid-template-columns:1fr; gap:0; margin:-4px 0 14px; }
+.dprows div { display:flex; gap:8px; font-size:12.5px; color:var(--text); padding:3px 0;
+  font-variant-numeric:tabular-nums; }
+.dprows .k { color:var(--muted); flex:0 0 68px; }
+.dprows a { color:var(--blue); text-decoration:none; }
 /* 自建日期选择器 */
 .dpopbox.dbox { width:min(360px,94vw); }
 /* 分享选段弹窗: 分钟芯片 + 画面选择 */
@@ -1593,6 +1719,31 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
 .lvbtn.on { background:var(--accent); color:#fff; border-color:var(--accent); }
 .lvrow select { padding:9px 10px; border-radius:9px; border:1px solid var(--line2); background:var(--panel2); color:var(--text); font-size:13px; }
 .lvbody > .hint { margin-top:2px; margin-bottom:0; }
+/* 实时浏览占位: 与主播放器同一套 —— 只保留缩略图高斯模糊垫底, 不放播放键 */
+.lvstage { position:relative; width:fit-content; max-width:100%; margin:0 auto; }
+.lvgrid { position:relative; }
+.lvstage .lvcover, .lvgrid .lvcell .lvcover { position:absolute; inset:0; z-index:4; overflow:hidden;
+  background:#0a0d11; transition:opacity .28s ease; }
+.lvstage .lvcoverbg, .lvgrid .lvcell .lvcoverbg { position:absolute; inset:-16px;
+  width:calc(100% + 32px); height:calc(100% + 32px); object-fit:cover;
+  filter:blur(14px) brightness(.62) saturate(1.05); transform:scale(1.06); }
+.lvstage .lvcover::after, .lvgrid .lvcell .lvcover::after { content:''; position:absolute; inset:0;
+  background:radial-gradient(circle at center, #0000001f, #00000059); }
+.lvstage.playing .lvcover, .lvgrid.playing .lvcover { opacity:0; pointer-events:none; }
+.lvgrid .lvcell .clabel { z-index:5; }
+/* 实时浏览全屏: 视频铺满 + 底部悬浮播放条 + 自动隐藏 (与主播放器一致) */
+.lvbar { display:none; }
+.livep.lvfs { position:fixed; inset:0; z-index:9999; max-width:none; margin:0; padding:0; background:#000; }
+.livep.lvfs .lvtop, .livep.lvfs .lvmeta, .livep.lvfs #lv-cams, .livep.lvfs .lvrow { display:none; }
+.livep.lvfs .lvbody { position:absolute; inset:0; padding:0; margin:0; gap:0; }
+.livep.lvfs .lvstage { position:absolute; inset:0; width:100%; height:100%; max-width:none; margin:0; }
+.livep.lvfs #lv-video { position:absolute; inset:0; width:100%; height:100%; max-height:none; object-fit:contain; margin:0; }
+.livep.lvfs .lvgrid { position:absolute; inset:0; width:100%; height:100%; border-radius:0; gap:2px; grid-auto-rows:1fr; }
+.livep.lvfs .lvgrid .lvcell { aspect-ratio:auto; }
+.livep.lvfs .lvbar { display:flex; position:absolute; left:0; right:0; bottom:0; z-index:10; margin:0; padding:14px 16px; background:linear-gradient(to top,#000000d9,#00000000); transition:opacity .3s ease; }
+.livep.lvfs.lvbar-hide .lvbar { opacity:0; pointer-events:none; }
+.livep.lvfs .lvbar .t { color:#fff; }
+.livep.lvfs .lvbar .pp, .livep.lvfs .lvbar .spd, .livep.lvfs .lvbar .qbtn { background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.28); color:#fff; }
 @media (max-width:640px){ .expp { left:50%; right:auto; transform:translateX(-50%); bottom:78px; } }
 /* 设备与存储: 与四套界面风格共用颜色、边框和控件语义 */
 .storage-card { background:var(--panel2); border:1px solid var(--line); border-radius:12px;
@@ -1876,20 +2027,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <header><h1><img class="blogo" id="blogo" src="/api/brand/logo" alt=""><span id="bname">TSL哨兵云盘</span></h1><span class="sub" id="stat"></span>
 <span id="live" title="车机在线只读同步状态" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:4px 10px;white-space:nowrap"><span id="livedot" style="width:7px;height:7px;border-radius:50%;background:#5f6b76"></span><span id="livetxt">同步状态</span></span>
 <nav class="tabs" id="tabs"></nav><button id="libbtn" title="我的作品" onclick="openLib()"><svg class="ic"><use href="#i-folder"/></svg></button><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
-<nav class="storwrap" id="storwrap">
-  <div class="storcard" id="storcard">
-<div class="storrow"><span class="storlab">虚拟U盘</span><span class="storval" id="storvusb"></span></div>
-<div class="storbar"><i id="storvusbbar"></i></div>
-<div class="storextra" id="storextra">
-<div class="storrow"><span class="storlab">归档区</span><span class="storval" id="storarc"></span></div>
-<div class="storbar"><i id="storarcbar"></i></div>
-<div class="storrow"><span class="storlab">总占用</span><span class="storval" id="stortot"></span></div>
-<div class="storbar"><i id="stortotbar"></i></div>
-<div class="storsys"><span class="storlab">系统状态</span><div class="sysgrid" id="storsys"></div></div>
-</div>
-<button class="stortog" id="stortog" onclick="toggleStor()" title="展开归档区、总占用与系统状态" aria-expanded="false" aria-controls="storextra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-  </div>
-</nav>
+<!-- 存储与系统状态卡已移入 个性化→设置→更新上方 (常驻展开) -->
 <div class="ovplay" id="ovplay">
   <div class="ovtop">
     <button class="ovback" id="ovback" onclick="closeOvFull()">‹ 返回</button>
@@ -1918,6 +2056,12 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <button class="camon" id="ovquad" onclick="ovCam('quad')">四路全景</button>
   </div>
   <div class="ovcams" id="ovcams"></div>
+  <div class="ovinfo" id="ovinfo">
+    <div class="oi-sec">视频详情</div>
+    <div class="oi-rows" id="oi-rows"></div>
+    <div class="oi-sec">遥测数据</div>
+    <div class="oi-rows" id="oi-tel"><div class="oi-empty">该片段没有行车数据</div></div>
+  </div>
   <div class="ovclips hide" id="ovclips"></div>
 </div>
 <nav class="filters" id="filters"></nav>
@@ -1936,20 +2080,40 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   </div>
   <div class="pscroll">
     <div class="tpanel" id="tpanel">
-        <div class="tp-top">
-          <span class="tp-l"><span class="tp-date" id="tp-date">—</span><span class="tp-loc" id="tp-loc"></span><span class="tp-tag" id="tp-tag"></span></span>
-          <span class="tp-tr"><span class="tp-sig" id="tp-bl" title="左转向灯"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="0.9" y="0.9" width="22.2" height="22.2" rx="6.2" fill="currentColor"/><path d="M17 12H8.2M12.2 7.3 7.5 12l4.7 4.7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="tp-sig" id="tp-br" title="右转向灯"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="0.9" y="0.9" width="22.2" height="22.2" rx="6.2" fill="currentColor"/><path d="M7 12h8.8M11.8 7.3 16.5 12l-4.7 4.7" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="tp-gear" id="tp-gear">D</span></span>
-        </div>
-        <div class="tp-mid">
-          <span class="tp-spd" id="tp-spd">0</span><span class="tp-unit">km/h</span>
-          <span class="tp-badges">
-            <span class="tp-badge brk" id="tp-brk" title="刹车 (数据源只有踩下/未踩, 无踏板开度)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="7.6"/><circle cx="12" cy="12" r="2.5"/><path d="M17.4 6.6l2.7-2.7"/></svg><b>刹车</b></span>
-            <span class="tp-badge thr" id="tp-thr" title="油门"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M9.4 3.6h5.2a1.7 1.7 0 0 1 1.68 1.93l-1.35 12.3a1.8 1.8 0 0 1-1.79 1.6h-2.28a1.8 1.8 0 0 1-1.79-1.6L7.72 5.53A1.7 1.7 0 0 1 9.4 3.6z"/><path d="M8.6 15.1h6.8"/></svg><b id="tp-thr-n">0%</b></span>
-            <span class="tp-c st" id="tp-st" title="方向盘角度"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/><path d="M3.2 10.5h6M14.8 10.5h6M12 14.6V21"/></svg></span>
+        <div class="tp-rows" id="tp-rows" hidden></div>
+        <div class="tp-hud">
+          <span id="tp-date" hidden></span>
+          <span class="tp-tag" id="tp-tag"></span>
+          <span class="tp-item tp-drive">
+            <span class="tp-val"><span class="tp-gear" id="tp-gear">D</span></span>
+            <span class="tp-labs"><span class="tp-lab" id="tp-gearlab">档位·前进</span></span>
           </span>
+          <span class="tp-item tp-drive">
+            <span class="tp-val"><span class="tp-c st" id="tp-st" title="方向盘角度"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/><path d="M3.2 10.5h6M14.8 10.5h6M12 14.6V21"/></svg></span></span>
+            <span class="tp-labs"><span class="tp-lab" id="tp-stlab">方向盘 0°</span></span>
+          </span>
+          <span class="tp-item tp-drive">
+            <span class="tp-val">
+              <span class="tp-sig" id="tp-bl" title="左转向灯"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.6 4.4 6.8 12l8.8 7.6z" fill="currentColor"/></svg></span>
+              <span class="tp-spd" id="tp-spd">0</span>
+              <span class="tp-sig" id="tp-br" title="右转向灯"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.4 4.4 17.2 12l-8.8 7.6z" fill="currentColor"/></svg></span>
+            </span>
+            <span class="tp-labs"><span class="tp-lab tp-unit">km/h</span><span class="tp-lab" id="tp-ap">手动</span></span>
+          </span>
+          <span class="tp-item tp-drive">
+            <span class="tp-val"><span class="tp-c brk" id="tp-brk" title="刹车 (数据源只有踩下/未踩, 无踏板开度)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="10.2"/><circle cx="12" cy="12" r="3.4"/><path d="M19.2 4.8l2.2-2.2"/></svg></span></span>
+            <span class="tp-labs"><span class="tp-lab">刹车</span></span>
+          </span>
+          <span class="tp-item tp-drive">
+            <span class="tp-val"><span class="tp-c thr" id="tp-thr" title="电门"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><circle cx="12" cy="12" r="10.2"/><path d="M10.1 6.2h3.8a1.3 1.3 0 0 1 1.29 1.47l-.99 8.1a1.35 1.35 0 0 1-1.34 1.18h-1.72a1.35 1.35 0 0 1-1.34-1.18l-.99-8.1A1.3 1.3 0 0 1 10.1 6.2z"/><path d="M9.6 14.2h4.8"/></svg></span></span>
+            <span class="tp-labs"><span class="tp-lab">电门 <b id="tp-thr-n">0%</b></span></span>
+          </span>
+          <span class="tp-item tp-place">
+            <span class="tp-val"><span class="tp-lab2"><i>事件地点</i><span id="tp-loc"></span></span></span>
+            <span class="tp-labs"><span class="tp-lab2"><i>事件坐标</i><span id="tp-coord">—</span></span></span>
+          </span>
+          <button class="tp-fold" id="tp-fold" hidden></button>
         </div>
-        <button class="tp-fold" id="tp-fold" onclick="toggleTelRows()">收起详细数据 ⌃</button>
-        <div class="tp-rows" id="tp-rows"></div>
     </div>
     <div class="vwrap">
       <div class="startmask" id="startmask">▶ 轻触开始同步播放</div>
@@ -2017,9 +2181,20 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div class="lvbody">
     <div class="lvmeta"><span id="lv-name">—</span>
       <button class="lvqbtn" id="lv-q" onclick="lvCycleQ()" title="点击切换画质: 360p → 480p → 720p → 原画">360p</button>
+      <button class="lvqbtn" onclick="lvFull()" title="全屏播放">全屏</button>
     </div>
-    <video id="lv-video" controls playsinline muted></video>
+    <div class="lvstage" id="lvstage">
+      <video id="lv-video" controls playsinline muted></video>
+      <div class="lvcover"><img class="lvcoverbg" id="lvcoverbg" alt=""></div>
+    </div>
     <div class="lvgrid" id="lv-grid"></div>
+    <div class="ovbar lvbar" id="lvbar">
+      <button class="pp" id="lvpp" onclick="lvPlayToggle()" title="播放/暂停">▶</button>
+      <input type="range" id="lvseek" min="0" max="1000" value="0" oninput="lvSeek(this.value)" title="进度">
+      <span class="t" id="lvcur">00:00</span>
+      <button class="spd" id="lvspd" onclick="lvRate()" title="倍速">1x</button>
+      <button class="qbtn" onclick="lvFull()" title="退出全屏">全屏</button>
+    </div>
     <div class="lvrow" id="lv-cams"></div>
     <div class="lvrow">
       <span style="font-size:13px;color:var(--muted)">刷新检查</span>
@@ -2222,7 +2397,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
           <input id="pw-lowwater" class="arc-input" type="number" min="5" max="30" step="1" inputmode="numeric">
           <span class="hint">% 自动清理</span>
         </div>
-        <div class="hint">播放视频时自动暂停列表缩略图与后台预缓冲；360P 优先，480P/720P 由硬解在空闲时补档，停止播放后按所选时间恢复。</div>
+        <div class="hint">播放视频时自动暂停列表缩略图与后台预缓冲；三档都走硬解硬编，360P 优先，480P/720P 在空闲时补档，停止播放后按所选时间恢复。</div>
       </div>
       <div class="arc-clean">
         <div class="arc-clean-head"><b>归档自动清理</b><span class="hint" id="arc-clean-last">尚未清理</span></div>
@@ -2251,6 +2426,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
           </select>
           <span class="hint">低于水位自动清理到水位+5%</span>
         </div>
+        <div class="hint">哨兵告警 / 手动保存 / 行车记录统一按以上规则清理最旧事件；行车记录不再单独按 60 分钟滚动删除。</div>
         <div class="hint" id="arc-clean-msg"></div>
       </div>
     </div>
@@ -2370,6 +2546,24 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div class="hint" id="qmode-state">—</div>
     <div class="hint" style="color:#8b96a3">自动模式: 局域网(192.168/10.x 等)打开就是原画, 公网或 Tailscale 打开就是 360p。</div>
+    <div class="updrow"><span class="updk">打开默认视角</span>
+      <select id="open-view" class="arc-select" onchange="setOpenView(this.value)">
+        <option value="all">六路全景</option>
+        <option value="quad">四路全景</option>
+        <option value="front">前视</option>
+        <option value="back">后视</option>
+        <option value="left_pillar">左前翼</option>
+        <option value="right_pillar">右前翼</option>
+        <option value="left_repeater">左B柱</option>
+        <option value="right_repeater">右B柱</option>
+      </select>
+    </div>
+    <div class="updrow"><span class="updk">打开自动播放</span>
+      <label class="updauto" style="margin:0" title="关闭后打开视频先显示模糊缩略图占位, 点播放条才开始"><span>自动播放</span>
+        <input type="checkbox" id="open-autoplay" checked onchange="setOpenAutoplay(this.checked)">
+      </label>
+    </div>
+    <div class="hint">默认视角: 打开任意视频时的初始画面。自动播放关闭时, 先显示该路模糊缩略图占位, 点播放条的播放按钮才开始。</div>
     <div class="updrow"><span class="updk">视频播放详细信息</span>
       <label class="updauto" style="margin:0" title="开启后每个视频格左上角叠加显示实际播放参数"><span>显示</span>
         <input type="checkbox" id="dbg-play" onchange="setDbgPlay(this.checked)">
@@ -2405,9 +2599,23 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint">界面语言保存在本机浏览器</div>
   </div>
   <div id="tab-update" style="display:none">
+    <div class="stabsec sep">存储与系统状态</div>
+    <nav class="storwrap" id="storwrap" style="padding:0">
+      <div class="storcard open" id="storcard">
+        <div class="storrow"><span class="storlab">虚拟U盘</span><span class="storval" id="storvusb"></span></div>
+        <div class="storbar"><i id="storvusbbar"></i></div>
+        <div class="storextra" id="storextra">
+          <div class="storrow"><span class="storlab">归档区</span><span class="storval" id="storarc"></span></div>
+          <div class="storbar"><i id="storarcbar"></i></div>
+          <div class="storrow"><span class="storlab">总占用</span><span class="storval" id="stortot"></span></div>
+          <div class="storbar"><i id="stortotbar"></i></div>
+          <div class="storsys"><span class="storlab">系统状态</span><div class="sysgrid" id="storsys"></div></div>
+        </div>
+      </div>
+    </nav>
     <div class="stabsec sep">地图与地点</div>
     <div class="updrow"><span class="updk">高德 Key</span><span class="updtag" id="amap-key-tag">—</span></div>
-    <input id="amap-key" class="arc-input" style="width:100%;max-width:460px" autocomplete="off"
+    <input id="amap-key" class="arc-input" type="password" style="width:100%;max-width:460px" autocomplete="new-password"
       placeholder="高德「Web服务」Key，留空用内置">
     <div class="updbtns">
       <button class="mini" onclick="saveAmapKey()">保存</button>
@@ -2450,11 +2658,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div class="dpopbox">
     <div class="dph"><span class="dpk" id="dpc">—</span><b id="dpt">—</b><button class="x" onclick="closeDetailPop()">✕</button></div>
     <div class="dpi" id="dpi">—</div>
-    <div class="dpbtns">
-      <button class="mini primary" onclick="dpopExport()">导出 / 保存</button>
-      <button class="mini" onclick="dpopShare()">分享链接</button>
-      <button class="mini" onclick="closeDetailPop()">关闭</button>
-    </div>
+    <div class="dprows" id="dp-rows"></div>
   </div>
 </div>
 
@@ -2526,8 +2730,8 @@ const ALL_CAT = '__all__';   // 哨兵总览: 把三类事件合成一条时间�
 const DATA_CATS = ['SentryClips', 'SavedClips', 'RecentClips'];
 let data = {}, cur = null, syncTimer = null, currentCat = ALL_CAT, lastSig = '', reasonFilter = 'all', dateFilter = 'all';
 let curClips = [], curClipIx = 0, TEL = null;
-let tripView = true, autoNext = false, autoNexting = false;   // 行车记录默认按连续行程聚合
-try { if (localStorage.getItem('tsfTripView') === '0') tripView = false; } catch (e) {}
+let autoNext = false, autoNexting = false;   // 行车记录固定按连续行程聚合, 不再按分钟散开
+try { localStorage.removeItem('tsfTripView'); } catch (e) {}   // 清掉历史遗留的"按分钟查看"状态
 
 /* ---------- 多语言 ----------
    字典以中文原文为 key; 静态文案由 applyLang() 遍历 DOM 替换, 动态文案在生成时用 t() 包一层。
@@ -2650,6 +2854,27 @@ applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
     if (j && j.ui_style) applyStyle(j.ui_style);
   }).catch(() => {});
 })();
+/* ---------- 打开视频偏好: 默认视角 + 自动播放 (个性化→界面与播放, 服务端存 settings.json) ---------- */
+let OPEN_VIEW = 'all', OPEN_AUTOPLAY = true;
+function loadOpenPrefs() {
+  fetch('/api/settings', { cache: 'no-store' }).then(r => r.json()).then(j => {
+    if (j && j.open_view) OPEN_VIEW = j.open_view;
+    if (j && typeof j.open_autoplay === 'boolean') OPEN_AUTOPLAY = j.open_autoplay;
+    const sv = document.getElementById('open-view'); if (sv) sv.value = OPEN_VIEW;
+    const ca = document.getElementById('open-autoplay'); if (ca) ca.checked = OPEN_AUTOPLAY;
+  }).catch(() => {});
+}
+function setOpenView(v) {
+  OPEN_VIEW = v;
+  try { fetch('/api/open/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ view: v }) }).catch(() => {}); } catch (e) {}
+}
+function setOpenAutoplay(b) {
+  OPEN_AUTOPLAY = !!b;
+  try { fetch('/api/open/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autoplay: !!b }) }).catch(() => {}); } catch (e) {}
+}
+loadOpenPrefs();
 /* ---------- 高德 Key: 设置页里填, 服务端存 settings.json, 用于坐标反查街道 ---------- */
 function loadAmapKey() {
   fetch('/api/settings', {cache: 'no-store'}).then(r => r.json()).then(j => {
@@ -2676,11 +2901,9 @@ loadAmapKey();
    展开/收起状态记在 localStorage: 打开着刷新还是打开, 收起后刷新保持收起 */
 const STOR_OPEN_KEY = 'tsf_stor_open';
 function applyStorState(open) {
-  const c = document.getElementById('storcard'), b = document.getElementById('stortog');
-  if (!c || !b) return;
-  c.classList.toggle('open', !!open);
-  b.title = open ? '收起归档区、总占用与系统状态' : '展开归档区、总占用与系统状态';
-  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const c = document.getElementById('storcard');
+  if (!c) return;
+  c.classList.add('open');   /* 移进设置后常驻展开, 不再折叠 (虚拟U盘/归档/总占用/系统状态全显示) */
 }
 function toggleStor() {
   const c = document.getElementById('storcard');
@@ -3130,7 +3353,7 @@ function displayEvents(cat) {
     return all.sort((a, b) => evSortKey(b) - evSortKey(a));
   }
   const raw = data[cat] || [];
-  return cat === 'RecentClips' && tripView ? groupTrips(raw) : raw;
+  return cat === 'RecentClips' ? groupTrips(raw) : raw;
 }
 function displayCount(cat) {
   return displayEvents(cat).length;
@@ -3149,12 +3372,6 @@ function updateHeaderCounts() {
   }
   const stat = document.getElementById('stat');
   if (stat) stat.textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
-}
-function toggleTripView() {
-  tripView = !tripView;
-  try { localStorage.setItem('tsfTripView', tripView ? '1' : '0'); } catch (e) {}
-  updateHeaderCounts();
-  render(currentCat);
 }
 function curVids() { return (curClips[curClipIx] || { vids: [] }).vids; }
 function switchClip(i) {
@@ -3279,8 +3496,27 @@ let ovEv = null, ovJob = null, ovPoll = null, ovTimer = null, ovRateN = 1,
     ovCamSel = 'all', ovClipIx = 0, ovBrightOn = false, ovRateVal = 1, ovQ = '360p';
 let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
 let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
+let ovLADone = -1;             // 已触发"提前预转码下一段"的段序号, 每段只触发一次
 let ovPendingSeek = null;      // 跨段拖动后要落到段内的时间点
 let ovSeekTimer = null;        // 拖动切段防抖
+let ovWantPlay = false;        // "要一直播"的意图: 自动播放或用户点过播放; 只有用户点暂停才清掉
+let ovStallAt = 0;             // 主路意外停住的起始时刻, 用于自愈重试
+let ovSwapping = false;        // 正在换完整档(会主动暂停再续播), 这期间自愈不插手
+/* 来回点视频时进度会退回开头, 根因是上一条记录留下的异步回调还在跑:
+   六个 video 节点是常驻复用的, 所以"等六路就绪再统一开播"的 8s 兜底、换完整档的
+   2.5s 重试链, 都可能在新记录已经播起来之后才触发, 把 currentTime 拽回落点(0)。
+   这里加播放代号 + 统一定时器句柄: 换事件/停播就整批作废。 */
+let ovGen = 0;                 // 播放代号: 换事件/停播 +1, 旧回调按代号自行作废
+let ovSwapRetry = null;        // 换完整档的重试定时器
+let ovSwapGuard = null;        // 换完整档的 8s 兜底定时器
+function ovCancelPending() {
+  ovGen++;
+  if (ovSeekTimer) { clearTimeout(ovSeekTimer); ovSeekTimer = null; }
+  if (ovSwapRetry) { clearTimeout(ovSwapRetry); ovSwapRetry = null; }
+  if (ovSwapGuard) { clearTimeout(ovSwapGuard); ovSwapGuard = null; }
+  if (ovPlayPending) { try { ovPlayPending(); } catch (e) {} ovPlayPending = null; }
+  ovPendingSeek = null; ovSwapping = false; ovStallAt = 0;
+}
 try { const q0 = String(localStorage.getItem('ovq') || ''); if (['360p','480p','720p','1080p'].indexOf(q0) >= 0) ovQ = q0; } catch (e) {}
 const ovCovers = {};       // 'cat/name' -> 合成帧封面
 const ovJobs = {};         // 'cat/name' -> 合成任务 id (本页内复用; 服务端按事件缓存产物)
@@ -3360,18 +3596,18 @@ function closeOvFull() {
 }
 function ovOpen(ev) {
   if (!ev) return;
+  ovCancelPending();          /* 先把上一条记录的待触发回调全部作废, 再开新的 */
   ovStickTop();
   ovEv = ev;
-  ovCamSel = 'all';
+  ovCamSel = OPEN_VIEW || 'all';
   ovTL = { n: 0, dur: 0 };
   ovPendingSeek = null;
   const vt = document.getElementById('ovt');
   if (vt) {
-    const _h = amapHref(ev.meta || {});
-    vt.textContent = ovTitle(ev) + (_h ? ' 📍' : '');
-    vt.style.cursor = _h ? 'pointer' : '';
-    vt.onclick = _h ? (e) => { e.stopPropagation(); window.open(_h, '_blank'); } : null;
-    vt.title = _h ? '点击在高德地图打开' : '';
+    vt.textContent = ovTitle(ev);
+    vt.style.cursor = '';
+    vt.onclick = null;
+    vt.title = '';
   }
   const vc = document.getElementById('ovcat');
   const cat = ev._cat || currentCat;
@@ -3379,6 +3615,7 @@ function ovOpen(ev) {
   const qb = document.getElementById('ovq');
   if (qb) { qb.textContent = ovQ; qb.classList.toggle('hi', ovQ !== '360p'); }
   ovBuildGrid(ev, 0);
+  ovRenderInfo(ev);
   /* 二级播放页: 视频上方的行车数据面板, 取本段主路片段的 SEI (无遥测只显示时间/地点) */
   if (document.body.classList.contains('ovfull')) {
     ovLoadTel();
@@ -3405,6 +3642,32 @@ function ovPickVids(ev, ix) {
   }
   return camSort(src.slice()).slice(0, 6);
 }
+/* 播放页下方详情卡: 录制时间/地点/坐标 + 遥测详细数据 (窄屏 HUD 放不下的都收在这里) */
+function ovRenderInfo(ev) {
+  const rows = document.getElementById('oi-rows');
+  if (!rows) return;
+  const md = (ev && ev.meta) || {}, trip = ev && ev._trip;
+  const groups = groupVideos((ev && ev.videos) || []);
+  const n = trip ? trip.count : (groups.length || 1);
+  const cat = (ev && ev._cat) || currentCat;
+  const out = [];
+  const add = (k, v) => { if (v) out.push('<div><span class="k">' + k + '</span><span>' + v + '</span></div>'); };
+  const t0 = fmtFullTime(md.timestamp, ev && ev.name);
+  add('录制时间', trip ? (t0 + ' → ' + localClock(trip.end)) : t0);
+  add('记录时长', n + ' 段 · 约 ' + n + ' 分钟');
+  add('记录类型', t(CATS_NAME[cat] || cat));
+  const rs = md.reason || '';
+  if (rs && rs.indexOf('user_interaction') !== 0) add('触发原因', reasonLabel(rs) || rs);
+  const addr = [md.city, md.street].filter(Boolean).join(' ');
+  const href = amapHref(md);
+  add('事件地点', addr ? (href ? '<a href="' + href + '" target="_blank" rel="noopener">' + addr + ' ↗</a>' : addr) : '位置未知');
+  out.push('<div><span class="k">事件坐标</span><span id="oi-coord">—</span></div>');
+  const cams = groups[0] ? (groups[0].vids || []).length : 0;
+  add('画面路数', cams ? cams + ' 路同步' : '');
+  rows.innerHTML = out.join('');
+  const tel = document.getElementById('oi-tel');
+  if (tel) tel.innerHTML = '<div class="oi-empty">该片段没有行车数据</div>';
+}
 function ovClipKey(k) {
   const m = String(k || '').match(/_(\d{2})-(\d{2})-(\d{2})/);
   return m ? m[2] + ':' + m[3] : String(k || '').slice(-5);
@@ -3418,9 +3681,30 @@ function ovRenderClips(ev, ix) {
 }
 function ovClip(i) {
   ovClipIx = i || 0;
+  ovLADone = -1;
   if (!ovEv) return;
   ovBuildGrid(ovEv, ovClipIx);
   ovLoadTel();
+}
+/* 段尾提前预转码下一段: 当前段还剩 <=8s 时, 让后端先把下一段的同档位预览档建好,
+   切段时直接命中缓存秒开, 不再等首播兜底那 2-3s。当前段已在播(服务端只发缓存、CPU 空闲),
+   正好用来建下一段; urgent 作业仍受 Q_SEM 与车机写入闸约束, 不抢车机。 */
+function ovLookahead(main) {
+  if (!ovEv || !playbackSid || !main || main.paused) return;
+  const n = ovTL.n || 1;
+  if (ovClipIx >= n - 1) return;                 // 已是最后一段, 无下一段
+  const dur = main.duration || 0;
+  if (dur <= PREV_SEC + 2) return;               // 还是预览短档, 时长不可信, 不预判
+  if (dur - (main.currentTime || 0) > 8) return; // 距段尾 >8s 不触发
+  if (ovLADone === ovClipIx) return;             // 本段已触发过
+  ovLADone = ovClipIx;
+  const gv = ovPickVids(ovEv, ovClipIx + 1) || [];
+  const paths = gv.map(v => v.url).slice(0, 8);
+  if (!paths.length) return;
+  try {
+    fetch('/api/playback/lookahead', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sid: playbackSid, q: ovQ, sec: PREV_SEC, paths: paths}), keepalive: true}).catch(() => {});
+  } catch (e) {}
 }
 /* 二级播放页的行车数据: 跟随当前分钟段的 SEI */
 function ovLoadTel() {
@@ -3582,21 +3866,10 @@ function amapHref(md) {
          '&name=' + nm + '&callnative=1';
 }
 
-/* 播放区标题: 时间 · 地点 (分类已由左边的彩色小标签表示, 这里不再重复"手动保存"这类分类名) */
+/* 播放区标题: 只留紧凑时间 (地点/触发原因都收进下方"视频详情"卡, 顶栏不再挤) */
 function ovTitle(ev) {
   const mm = (ev && ev.meta) || {};
-  const parts = [];
-  const tm = fmtCardTime(mm.timestamp, (ev && ev.name));
-  if (tm) parts.push(tm);
-  const loc = locShort(mm);
-  if (loc) parts.push(loc);
-  /* 发生什么事: 哨兵类带触发原因; 手动保存是用户主动点的, 不写 */
-  const rs = mm.reason || '';
-  if (rs && rs.indexOf('user_interaction') !== 0) {
-    const rl = reasonLabel(rs) || '';
-    if (rl) parts.push(rl);
-  }
-  return parts.join(' · ');
+  return fmtCompactTime(mm.timestamp, (ev && ev.name));
 }
 /* 卡片时间: 当年只写 26-11-24 22:51, 跨年补全年份; 没事件时间就从目录名取 */
 function fmtCardTime(ts, name) {
@@ -3608,6 +3881,20 @@ function fmtCardTime(ts, name) {
   const n = String(name || '').match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/);
   return n ? n[1].slice(2) + '-' + n[2] + '-' + n[3] + ' ' + n[4] + ':' + n[5] : fmtName(name || '');
 }
+/* 顶栏用的紧凑时间: 11.25 19:15 (省掉年份, 窄屏不跟地点挤在一起) */
+function fmtCompactTime(ts, name) {
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (m) return m[2] + '.' + m[3] + ' ' + m[4] + ':' + m[5];
+  const n = String(name || '').match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/);
+  return n ? n[2] + '.' + n[3] + ' ' + n[4] + ':' + n[5] : fmtName(name || '');
+}
+/* 详情卡用的完整时间: 2026-11-25 19:15:45 */
+function fmtFullTime(ts, name) {
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5] + ':' + (m[6] || '00');
+  const n = String(name || '').match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/);
+  return n ? n[1] + '-' + n[2] + '-' + n[3] + ' ' + n[4] + ':' + n[5] + ':' + n[6] : (name || '—');
+}
 /* 精确到秒的时间 HH:MM:SS, 列表标题统一用它 */
 function fmtHMS(ts, name) {
   const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))/);
@@ -3616,6 +3903,8 @@ function fmtHMS(ts, name) {
   return n ? n[1] + ':' + n[2] + ':' + n[3] : '';
 }
 function ovStopAll() {
+  ovCancelPending();          /* 停播也要作废待触发的开播/换档回调, 否则它会落到下一条记录上 */
+  ovWantPlay = false; ovStallAt = 0;
   if (ovTimer) { clearInterval(ovTimer); ovTimer = null; }
   /* 只停播放、不删节点: 6 个格子常驻复用, 换事件只换 src, 不会重建 DOM 而闪白 */
   const g = document.getElementById('ovgrid');
@@ -3676,6 +3965,12 @@ function ovBuildGrid(ev, ix) {
     vid.muted = true; vid.defaultMuted = true; vid.playsInline = true; vid.preload = 'auto';
     vid.setAttribute('playsinline', ''); vid.setAttribute('webkit-playsinline', 'true');
     cell.appendChild(vid);
+    /* 加载/缓冲/未自动播放时: 该路缩略图高斯模糊垫底 */
+    const cov = document.createElement('div'); cov.className = 'ovcover';
+    const cbg = document.createElement('img'); cbg.className = 'ovcoverbg'; cbg.alt = '';
+    cov.appendChild(cbg);
+    cell.appendChild(cov);
+    ['playing','waiting','emptied','pause','ended'].forEach(en => vid.addEventListener(en, ovCoverSync));
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
@@ -3686,6 +3981,10 @@ function ovBuildGrid(ev, ix) {
       const v = vids[i];
       c.style.display = '';
       if (lb) lb.textContent = camLabel(v.cam || '');
+      /* 占位底图: 该路自己的缩略图 (/thumb/ 与 /media/ 同路径), 高斯模糊后作为占位画面 */
+      const cbg = c.querySelector('.ovcoverbg');
+      const turl = v.url.replace('/media/', '/thumb/');
+      if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
       vid._base = v.url; vid._qswapped = false;
       const src = v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC;
       if (vid.getAttribute('src') !== src) {
@@ -3707,24 +4006,56 @@ function ovBuildGrid(ev, ix) {
   ovClock(0, 0);            /* 一进播放页就按"段数×时长"把进度条拉到整条总长 */
   ovRenderCams(ev);
   if (vids.length) {
-    ovMask(false);          /* 不再压"加载中"遮罩, 直接起播 */
-    ovPlayAll();
+    ovMask(false);          /* 不再压"加载中"遮罩; 占位层负责加载/缓冲画面 */
+    if (OPEN_AUTOPLAY || ovWantPlay) ovPlayAll();   /* 关掉自动播放时停在模糊占位; 但已经在播的切段要接着播 */
     try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths: vids.map(v => v.url), q: ovQ }) }).catch(() => {}); } catch (e) {}
   } else {
     ovMask(true, '没有可播放的画面', '这条事件没有视频文件');
   }
+  ovCoverSync();
 }
+let ovPlayPending = null;
 function ovPlayAll() {
+  ovWantPlay = true;
+  const gen = ovGen;
+  /* 跨段拖动切过来的: 落到目标时间点, 不要又被重置回 0 */
+  const at = (ovPendingSeek != null) ? ovPendingSeek : 0;
+  if (ovPlayPending) { try { ovPlayPending(); } catch (e) {} ovPlayPending = null; }
   const vs = ovVids();
   if (!vs.length) return;
-  vs.forEach(v => {
-    try { v.currentTime = 0; } catch (e) {}
-    v.muted = true;
-    try { v.playbackRate = ovRateVal; } catch (e) {}   /* 换源/重建后把用户选的倍速补回来 */
-    v.play().catch(() => {});
-  });
+  vs.forEach(v => { try { v.currentTime = at; } catch (e) {} v.muted = true;
+    try { v.playbackRate = ovRateVal; } catch (e) {} });
   ovSyncOn();
+  /* 六路全部解码就绪再统一开播: 没加载完先停在模糊占位, 避免某路没解码好就播导致播放失败/不同步 */
+  const ready = v => v.readyState >= 3;
+  let started = false, timer = null;
+  const cleanup = () => {
+    vs.forEach(v => { v.removeEventListener('canplay', onReady); v.removeEventListener('canplaythrough', onReady); });
+    if (timer) { clearTimeout(timer); timer = null; }
+    ovPlayPending = null;
+  };
+  const startAll = () => {
+    if (started || gen !== ovGen) return; started = true; cleanup();
+    const seekTo = (ovPendingSeek != null) ? ovPendingSeek : null;
+    vs.forEach(v => {
+      const cur = v.currentTime || 0;
+      /* 关键: 兜底晚到时自愈可能已经把画面播起来了(进度已到 5~6s),
+         这时再设 currentTime=0 就是用户看到的"退回开头"。
+         只有用户明确拖动、或还停在落点之前, 才设一次进度。 */
+      if (seekTo != null || cur < at - 0.4) {
+        try { v.currentTime = (seekTo != null ? seekTo : at); } catch (e) {}
+      }
+      v.play().catch(() => {});
+    });
+    ovPendingSeek = null;
+    ovCoverSync();
+  };
+  const onReady = () => { if (gen === ovGen && vs.every(ready)) startAll(); };
+  if (vs.every(ready)) { startAll(); return; }
+  vs.forEach(v => { v.addEventListener('canplay', onReady); v.addEventListener('canplaythrough', onReady); });
+  ovPlayPending = cleanup;
+  timer = setTimeout(startAll, 8000);   /* 兜底: 某路久不就绪也开播, 不让一路卡死整组 */
 }
 function ovSyncOn() {
   if (ovTimer) return;
@@ -3755,39 +4086,72 @@ function ovSyncOn() {
       if (main.paused && !v.paused) { try { v.pause(); } catch (e) {} }
       if (!main.paused && v.paused && main.currentTime > 0.2) v.play().catch(() => {});
     });
+    /* 意外停播自愈: 切段/换档/完整档还没转好时, 主路会停在暂停态不动。
+       只要用户没主动点暂停(ovWantPlay), 停住超过 1.2 秒就自动接着播, 不用人再点一次 */
+    if (ovWantPlay && main && !ovAutoLock && !ovSwapping && ovPendingSeek == null) {
+      if (main.paused && !main.ended) {
+        if (!ovStallAt) ovStallAt = Date.now();
+        else if (Date.now() - ovStallAt > 1200) {
+          ovStallAt = 0;
+          if (main.error || main.networkState === 3) {   /* 源加载失败: 重新挂一次当前段 */
+            const keep = main.currentTime || 0;          /* 记住进度, 重挂后落回原处, 不退回开头 */
+            try {
+              main.addEventListener('loadedmetadata', () => {
+                try { main.currentTime = Math.min(keep, Math.max(0, (main.duration || 0) - 0.3)); } catch (e) {}
+              }, { once: true });
+              main.src = main._base + (main._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
+            } catch (e) {}
+          }
+          vs.forEach(v => { try { v.playbackRate = ovRateVal; } catch (e) {} v.play().catch(() => {}); });
+        }
+      } else ovStallAt = 0;
+    }
     /* 预缓冲只覆盖 PREV_SEC 秒: 到点给每路换成 360p 完整档, 接着当前位置继续播;
        完整档还没转好(duration 仍是 20 秒)就隔 2.5 秒再试, 最多 8 次 */
     if (!main._qswapped && main.currentTime > Math.max(8, PREV_SEC - 5)) {
       main._qswapped = true;
       ovSwapFull(0);
     }
+    ovCoverSync();
   }, 400);
 }
 function ovSwapFull(tries) {
   const vs = ovVids();
   if (!vs.length) return;
+  const gen = ovGen;
+  if (ovSwapRetry) { clearTimeout(ovSwapRetry); ovSwapRetry = null; }
+  if (ovSwapGuard) { clearTimeout(ovSwapGuard); ovSwapGuard = null; }
+  ovSwapping = true;
   const main = vs[0], at = main.currentTime || 0;
   let pending = vs.length, doneFlag = false;
   const finish = () => {
-    if (doneFlag) return;
+    if (doneFlag || gen !== ovGen) return;
     doneFlag = true;
+    ovSwapping = false;
+    ovSwapGuard = null;
     if ((main.duration || 0) <= PREV_SEC + 2 && tries < 8) {
       ovBadge('转码中');
-      setTimeout(() => ovSwapFull(tries + 1), 2500);
+      ovSwapRetry = setTimeout(() => {
+        ovSwapRetry = null;
+        if (gen === ovGen) ovSwapFull(tries + 1);   /* 换过记录就作废, 不去动新记录的进度 */
+      }, 2500);
     }
   };
   /* 某一路加载失败也不能一直等: 8 秒兜底收尾 */
-  setTimeout(finish, 8000);
+  ovSwapGuard = setTimeout(finish, 8000);
   const done = () => { if (--pending <= 0) finish(); };
   vs.forEach(v => {
     try { v.pause(); } catch (e) {}
     v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
     v.addEventListener('loadedmetadata', () => {
+      if (gen !== ovGen) return;
       try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.5)); } catch (e) {}
       try { v.playbackRate = ovRateVal; } catch (e) {}
       v.play().catch(() => {});
       done();
     }, { once: true });
+    /* 完整档还没转好时可能直接加载失败: 也要走 done, 交给上面的重试/自愈, 不能停在暂停态 */
+    v.addEventListener('error', () => { done(); }, { once: true });
   });
 }
 function ovPlayToggle() {
@@ -3795,18 +4159,28 @@ function ovPlayToggle() {
   if (!vs.length) { if (ovEv) ovOpen(ovEv); return; }
   const main = vs[0];
   if (main.paused) {
+    ovWantPlay = true; ovStallAt = 0;
     /* 已经播到末尾再点播放: 从头来, 否则 play() 会立刻又结束 */
     const ended = main.ended || (main.duration && main.currentTime >= main.duration - 0.3);
     const t = ended ? 0 : (main.currentTime || 0);
     vs.forEach(v => { try { v._qswapped = false; v.currentTime = t; } catch (e) {} v.play().catch(() => {}) ; });
     ovSyncOn();
   } else {
+    ovWantPlay = false; ovStallAt = 0;   /* 用户主动暂停: 自愈不能跟用户抢 */
     vs.forEach(v => { try { v.pause(); } catch (e) {} });
   }
 }
 function ovSyncBtn() {
   const v = ovVids()[0], b = document.getElementById('ovpp');
   if (b) b.textContent = (v && !v.paused) ? '⏸' : '▶';
+}
+/* 占位显隐: 主路真正在播才揭开, 加载/缓冲/暂停/未自动播放都露出模糊画面 */
+function ovCoverSync() {
+  const g = document.getElementById('ovgrid');
+  if (!g) return;
+  const main = ovVids()[0];
+  const playing = !!(main && !main.paused && !main.ended && main.readyState >= 3);
+  g.classList.toggle('playing', playing);
 }
 function ovSeek(val) {
   const vs = ovVids(), main = vs[0];
@@ -3834,9 +4208,56 @@ function ovRate() {
   ovRateTo(rates[(rates.indexOf(ovRateVal) + 1) % rates.length] || 1);
 }
 function ovFull() {
-  const st = document.getElementById('ovstage');
-  if (st && st.requestFullscreen) st.requestFullscreen().catch(() => {});
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fs) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
+  const pl = document.getElementById('ovplay');
+  if (!pl) return;
+  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} };
+  try {
+    if (pl.requestFullscreen) pl.requestFullscreen().then(lockLand).catch(() => {});
+    else if (pl.webkitRequestFullscreen) { pl.webkitRequestFullscreen(); lockLand(); }
+  } catch (e) {}
 }
+/* 全屏退出解锁方向; 横屏锁不支持时(如 iOS)竖屏全屏旋转播放器模拟横屏; 控制条始终留在底部 */
+let ovFsHideTimer = null;
+function ovFsChange() {
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  const pl = document.getElementById('ovplay');
+  if (!fs) {
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    if (pl) pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
+    if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; }
+    return;
+  }
+  if (pl) pl.classList.add('fs-on');
+  ovFsShowBar();
+  setTimeout(() => {
+    const portrait = window.innerHeight > window.innerWidth;
+    if (pl) pl.classList.toggle('fs-portrait', portrait);
+  }, 320);
+}
+document.addEventListener('fullscreenchange', ovFsChange);
+document.addEventListener('webkitfullscreenchange', ovFsChange);
+/* 全屏悬浮条: 3 秒无操作自动隐藏, 点画面再出来 (像普通播放器); 操作播放条会重置计时 */
+function ovFsShowBar() {
+  const pl = document.getElementById('ovplay');
+  if (!pl || !pl.classList.contains('fs-on')) return;
+  pl.classList.remove('bar-hide');
+  if (ovFsHideTimer) clearTimeout(ovFsHideTimer);
+  ovFsHideTimer = setTimeout(() => { const p = document.getElementById('ovplay'); if (p) p.classList.add('bar-hide'); }, 3000);
+}
+function ovFsTap() {
+  const pl = document.getElementById('ovplay');
+  if (!pl || !pl.classList.contains('fs-on')) return;
+  if (pl.classList.contains('bar-hide')) ovFsShowBar();
+  else { pl.classList.add('bar-hide'); if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; } }
+}
+(function () {
+  const st = document.getElementById('ovstage'), bar = document.querySelector('.ovbar'), pl = document.getElementById('ovplay');
+  if (st) st.addEventListener('click', ovFsTap);
+  if (bar) { bar.addEventListener('pointerdown', ovFsShowBar); bar.addEventListener('input', ovFsShowBar); }
+  if (pl) pl.addEventListener('mousemove', () => { if (pl.classList.contains('fs-on')) ovFsShowBar(); });
+})();
 /* 整条时间轴: 进度条/时钟按"段数 × 单段时长"算, 拖到别的分钟就切段 */
 function ovClock(ct, dur) {
   if (dur && dur > PREV_SEC + 2 && dur > (ovTL.dur || 0)) ovTL.dur = dur;
@@ -3861,6 +4282,7 @@ function ovBind() {
     /* 播放条走整条视频的总时间轴: 第 N 段之前的时间 + 段内时间 */
     ovClock(v.currentTime || 0, v.duration || 0);
     updateHud(v.currentTime);   // 视频上方的车速/挡位/油门/刹车跟随播放进度
+    ovLookahead(v);             // 段尾前 8s 提前预转码下一段, 切段秒开
   }, true);
   g.addEventListener('play', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
   g.addEventListener('pause', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
@@ -3954,6 +4376,30 @@ function exportFromList(ev) {
 }
 /* 详情小弹窗: 记录信息 + 导出/分享, 不再进全屏详情页 */
 let dpEv = null;
+/* 列表「详情」要看的字段 = 播放页下方"视频详情"卡那一批 (录制时间/时长/类型/触发原因/
+   地点/坐标/路数)。这里独立生成一份, 不去改 ovRenderInfo, 播放页那边保持原样。
+   坐标直接用 event.json 的 est_lat/est_lon, 不依赖遥测加载, 弹窗一开就有。 */
+function dpInfoRows(ev) {
+  const md = (ev && ev.meta) || {}, trip = ev && ev._trip;
+  const groups = groupVideos((ev && ev.videos) || []);
+  const n = trip ? trip.count : (groups.length || 1);
+  const cat = (ev && ev._cat) || currentCat;
+  const out = [];
+  const add = (k, v) => { if (v) out.push('<div><span class="k">' + k + '</span><span>' + v + '</span></div>'); };
+  const t0 = fmtFullTime(md.timestamp, ev && ev.name);
+  add('录制时间', trip ? (t0 + ' → ' + localClock(trip.end)) : t0);
+  add('记录时长', n + ' ' + t('段') + ' · ' + t('约') + ' ' + n + ' ' + t('分钟'));
+  add('记录类型', t(CATS_NAME[cat] || cat));
+  const rs = md.reason || '';
+  if (rs && rs.indexOf('user_interaction') !== 0) add('触发原因', reasonLabel(rs) || rs);
+  const addr = [md.city, md.street].filter(Boolean).join(' ');
+  const href = amapHref(md);
+  add('事件地点', addr ? (href ? '<a href="' + href + '" target="_blank" rel="noopener">' + addr + ' ↗</a>' : addr) : t('位置未知'));
+  add('事件坐标', (md.est_lat && md.est_lon) ? (md.est_lat + ', ' + md.est_lon) : '—');
+  const cams = groups[0] ? (groups[0].vids || []).length : (ev.videos || []).length;
+  add('画面路数', cams ? cams + ' ' + t('路同步') : '');
+  return out.join('');
+}
 function openDetailPop(ev) {
   if (!ev) return;
   if (!ev._cat) ev._cat = currentCat;
@@ -3962,17 +4408,21 @@ function openDetailPop(ev) {
   const cat = ev._cat || 'SentryClips';
   document.getElementById('dpc').textContent = t(CATS_NAME[cat] || cat);
   document.getElementById('dpt').textContent = evTime(ev) + (locShort(md) ? ' · ' + locShort(md) : '');
-  const g = groupVideos(ev.videos || []);
-  const nv = g.length ? g[0].vids.length : (ev.videos || []).length;
-  const segs = g.length > 1 ? (' · ' + g.length + ' ' + t('段')) : '';
   const mb = (ev.size || 0) / 1048576;
   const sz = mb >= 1 ? mb.toFixed(1) + ' MB' : Math.round(mb * 1024) + ' KB';
-  document.getElementById('dpi').textContent = nv + ' ' + t('路画面') + segs + ' · ' + sz;
+  /* 路数/段数已在下面的详情行里, 这行只留体积, 不重复 */
+  document.getElementById('dpi').textContent = sz;
+  const rows = document.getElementById('dp-rows');
+  if (rows) rows.innerHTML = dpInfoRows(ev);
   document.getElementById('dpop').classList.add('open');
 }
 function closeDetailPop() { document.getElementById('dpop').classList.remove('open'); }
-function dpopExport() { const e = dpEv; closeDetailPop(); if (e) exportFromList(e); }
-function dpopShare() { const e = dpEv; closeDetailPop(); if (e) openSharePop(e); }
+/* 弹窗里不再放导出/分享/关闭三个按钮 (卡片右侧本来就有分享和导出):
+   只保留右上角 ✕, 另外点灰色遮罩也能关, 手机上顺手。 */
+(function () {
+  const m = document.getElementById('dpop');
+  if (m) m.addEventListener('click', e => { if (e.target === m) closeDetailPop(); });
+})();
 /* ---------- 分享: 勾选要合成的分钟, 合成成一条视频再复制链接 ---------- */
 let shEv = null, shCam = 'front';
 function openSharePop(ev) {
@@ -4284,10 +4734,7 @@ function renderFilters(cat) {
     days.map(d => [d, d.slice(5).replace('-', '/'), dcnt[d] || 0]));
   dbox.innerHTML = '<span class="flab">' + t('日期') + '</span>' + items.map(([k, label, n]) =>
     `<button class="chip d${k === dateFilter ? ' on' : ''}" onclick="setDate('${k}')">${label}<span class="n">${n}</span></button>`
-  ).join('') + (cat === 'RecentClips'
-    ? '<button class="chip trip" onclick="toggleTripView()" title="切换按连续行程 / 按分钟查看">' +
-      (tripView ? '按分钟查看' : '按行程查看') + '</button>'
-    : '') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
+  ).join('') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
 }
 /* 自建日期选择器 (跟随当前主题/配色, 不再弹系统白色日历) */
 let DAY_COUNTS = {};
@@ -4434,7 +4881,10 @@ function render(cat) {
     const tm = fmtHMS(mm.timestamp, ev.name);
     const tmTxt = isTrip ? tripHMS(ev._trip) : (tm || fmtName(ev.name));
     const title = tmTxt;
-    card.innerHTML = th + `<div class="meta"><div class="l1"><span class="rt" title="${title}">${title}</span>${cat === ALL_CAT ? `<span class="ky k-${evCat}">${t(CATS_NAME[evCat] || evCat)}</span>` : ''}</div></div>`;
+    /* 行程卡: 第二行补"→ 结束时刻 · N分", 一眼看出这是合并后的整段而不是一分钟 */
+    const tripTag = isTrip
+      ? `<div class="l2"><span class="tripdur">→ ${localClock(ev._trip.end)} · ${ev._trip.count}${t('分')}</span></div>` : '';
+    card.innerHTML = th + `<div class="meta"><div class="mcol"><div class="l1"><span class="rt" title="${title}">${title}</span>${cat === ALL_CAT ? `<span class="ky k-${evCat}">${t(CATS_NAME[evCat] || evCat)}</span>` : ''}</div>${tripTag}</div></div>`;
     /* 卡片按钮竖排: 分享(上) / 导出(中) / 详情(下, 贴着图标那一列) */
     const metaEl = card.querySelector('.meta');
     if (metaEl) {
@@ -4636,7 +5086,7 @@ async function pollPrewarm() {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--muted2);margin-top:4px';
         const l = document.createElement('span');
-        l.textContent = r.q.replace('p', 'P') + (r.hw ? ' · 硬解补档' : '');
+        l.textContent = r.q.replace('p', 'P') + (r.hw ? ' · 硬解硬编' : ' · 软编兜底') + (r.night ? ' · 夜间补档' : '');
         const v = document.createElement('span');
         v.textContent = r.files + ' 个 · 当前' + (d.preview_sec || '') + 's 覆盖 ' + r.cover + '/' + r.total + ' · ' + r.pct + '%';
         row.appendChild(l); row.appendChild(v);
@@ -5061,8 +5511,13 @@ function loadTelemetry(url, meta) {
   if (!TEL && !p.classList.contains('stale')) p.classList.remove('show', 'plain');
   if (card) card.classList.remove('plain');
   p.classList.add('folded');   // 详细数据默认折叠
-  document.getElementById('tp-fold').textContent = '展开详细数据 ⌄';
+  document.getElementById('tp-fold').textContent = '详细 ⌄';
   document.getElementById('tp-loc').textContent = locShort(TEL_META);
+  const _co = document.getElementById('tp-coord');
+  if (_co) _co.textContent = (TEL_META.est_lat && TEL_META.est_lon) ? (TEL_META.est_lat + ', ' + TEL_META.est_lon) : '—';
+  /* 地点和坐标都没有时整块不占位, 免得留两行空标签 */
+  const _pl = document.querySelector('#tpanel .tp-place');
+  if (_pl) _pl.style.display = (locShort(TEL_META) || (TEL_META.est_lat && TEL_META.est_lon)) ? '' : 'none';
   // 触发画面摄像头: 只有哨兵事件显示 (手动保存等也会带无意义的 camera:"0")
   const camTag = document.getElementById('tp-tag');
   if (TEL_META.camera && isSentryEv(TEL_META)) {
@@ -5087,7 +5542,9 @@ function loadTelemetry(url, meta) {
     if (!okTel(d)) { if (!TEL) showPlainPanel(); return; }
     TEL = d;
     p.classList.add('show');
-    p.classList.remove('stale');
+    /* 上一段无遥测时留下的 plain 必须清掉, 否则后面有 SEI 的段驾驶数据一直被隐藏 */
+    p.classList.remove('stale', 'plain');
+    if (card) card.classList.remove('plain');
     renderHud(d.frames[0]);
     const rows = document.getElementById('ic-rows');
     if (!rows) return;
@@ -5122,6 +5579,9 @@ function showPlainPanel() {
   const p = document.getElementById('tpanel'), card = document.getElementById('infocard');
   p.classList.add('show', 'plain');
   p.classList.remove('stale');
+  /* 连地点/坐标都没有就别留一个空面板 */
+  const _pl2 = document.querySelector('#tpanel .tp-place');
+  if (_pl2 && _pl2.style.display === 'none') p.classList.remove('show');
   if (card) card.classList.add('plain');
   ['time', 'city', 'street', 'camera'].forEach(k => {
     const el = document.querySelector('#ic-rows > div[data-k="' + k + '"]');
@@ -5137,7 +5597,11 @@ function fmtTelDate(dt) {
 function renderHud(f) {
   // f: 0=t 1=挡位 2=车速km/h 3=油门% 4=方向盘角度 5=刹车 6=转向灯 7=AP 8=lat 9=lon 10=heading 11=Ax 12=Ay 13=Az
   const q = id => document.getElementById(id);
-  q('tp-gear').textContent = f[1];
+  const gEl = q('tp-gear');
+  gEl.textContent = f[1];
+  gEl.className = 'tp-gear g-' + (f[1] || '');
+  const gLab = q('tp-gearlab');
+  if (gLab) gLab.textContent = '档位·' + ({ D: '前进', R: '倒车', N: '空挡', P: '驻车' }[f[1]] || '—');
   q('tp-spd').textContent = Math.max(0, Math.round(f[2]));   // 停车时 SEI 可能给微负值
   q('tp-date').textContent = telT0 ? fmtTelDate(new Date(telT0.getTime() + f[0]*1000)) : '—';
   q('tp-thr-n').textContent = f[3] + '%';
@@ -5153,18 +5617,33 @@ function renderHud(f) {
   st.title = '方向盘角度 ' + f[4] + '° · ' + (apv ? ((apNames[apv] || 'AP') + ' 已启动') : '自动驾驶未启动');
   const ang = Math.max(-400, Math.min(400, Number(f[4]) || 0));
   st.querySelector('svg').style.transform = 'rotate(' + ang + 'deg)';
+  const stLab = q('tp-stlab');
+  if (stLab) stLab.textContent = '方向盘 ' + (Number(f[4]) || 0).toFixed(1) + '°';
+  const apLab = q('tp-ap');
+  if (apLab) apLab.textContent = apv ? (apNames[apv] || 'AP') : '手动';
   const md = TEL_META || {};
+  const co = q('tp-coord');
+  if (co) co.textContent = (md.est_lat && md.est_lon) ? (md.est_lat + ', ' + md.est_lon) : '—';
   q('tp-rows').innerHTML =
     (md.est_lat && md.est_lon ? '<div><span class="k">坐标</span>' + md.est_lat + ', ' + md.est_lon + '</div>' : '') +
     '<div><span class="k">方向盘角度</span>' + f[4] + '°</div>' +
     '<div><span class="k">横向加速度 Ax</span>' + f[11].toFixed(2) + ' m/s²</div>' +
     '<div><span class="k">前后加速度 Ay</span>' + f[12].toFixed(2) + ' m/s²</div>' +
     '<div><span class="k">垂直加速度 Az</span>' + f[13].toFixed(2) + ' m/s²</div>';
+  /* 下方详情卡同步一份遥测明细 (手机上 HUD 只有图标, 数值看这里) */
+  const oiTel = document.getElementById('oi-tel');
+  if (oiTel) {
+    oiTel.innerHTML = q('tp-rows').innerHTML;
+    const f0 = oiTel.firstElementChild;
+    if (f0 && f0.textContent.indexOf('坐标') === 0) f0.remove();   // 坐标已在上方"视频详情"里, 不重复
+  }
+  const oiCo = document.getElementById('oi-coord');
+  if (oiCo) oiCo.textContent = (md.est_lat && md.est_lon) ? (md.est_lat + ', ' + md.est_lon) : '—';
 }
 function toggleTelRows() {
   const p = document.getElementById('tpanel'), b = document.getElementById('tp-fold');
   p.classList.toggle('folded');
-  b.textContent = p.classList.contains('folded') ? '展开详细数据 ⌄' : '收起详细数据 ⌃';
+  b.textContent = p.classList.contains('folded') ? '详细 ⌄' : '收起 ⌃';
   layoutPlayer();
 }
 
@@ -5316,6 +5795,8 @@ window.addEventListener('resize', () => { if (document.getElementById('player').
 function layoutLive() {
   const v = document.getElementById('lv-video');
   if (!v || !v.videoWidth || !v.videoHeight || v.style.display === 'none') return;
+  const lp = document.getElementById('livep');
+  if (lp && lp.classList.contains('lvfs')) return;   /* 全屏由 CSS 铺满, 别用内联像素尺寸盖掉 */
   const ar = v.videoWidth / v.videoHeight;
   const boxW = (v.parentElement && v.parentElement.clientWidth) || window.innerWidth;
   const w = Math.max(1, Math.min(boxW, window.innerHeight * 0.58 * ar));
@@ -5327,7 +5808,7 @@ function layoutLiveGrid() {
   if (!g || !g.classList.contains('on')) return;
   const v0 = g.querySelector('video');
   if (!v0 || !v0.videoWidth || !v0.videoHeight) return;
-  const n = g.children.length;
+  const n = g.querySelectorAll('.lvcell').length;
   /* 6 路按总览同样的 3x2 排: 左前翼/前视/右前翼 + 左B柱/后视/右B柱; 四路 2x2; 单路 1 列 */
   const cols = n >= 5 ? 3 : (n <= 1 ? 1 : 2);
   g.style.gridTemplateColumns = 'repeat(' + cols + ',1fr)';
@@ -5348,13 +5829,138 @@ const LIVE_Q_STORE_KEY = 'tsfliveq-' + Q_NET_MODE;
 let liveQ = localStorage.getItem(LIVE_Q_STORE_KEY) || '';
 let liveFolder = '', liveTimer = null, liveBusy = false, liveLoading = false, liveSyncTimer = null, liveEv = null;
 function liveQv() { return liveQ || curQ || 'orig'; }
-function lvUrl(u) {
+function lvUrl(u, full) {
   const q = liveQv();
   /* live=1: 服务端据此把实时浏览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
   const sep = u.indexOf('?') < 0 ? '?' : '&';
   if (q === 'orig') return u + sep + 'live=1';
-  return u + sep + 'q=' + q + '&live=1';
+  /* 先要 20 秒快速短档秒开 (与主播放器一致), 播到点再换完整档; full=true 取完整档 */
+  return u + sep + 'q=' + q + (full ? '' : '&preview=' + PREV_SEC) + '&live=1';
 }
+/* 实时浏览快速起播后换完整档: 播过预缓冲秒数就把 src 换成完整档并接回当前位置, 只换一次 */
+function lvArmSwap(el, baseUrl) {
+  if (liveQv() === 'orig') return;
+  el._lvSwapped = false;
+  el.addEventListener('timeupdate', function h() {
+    if (el._lvSwapped || (el.currentTime || 0) <= Math.max(8, PREV_SEC - 5)) return;
+    el._lvSwapped = true;
+    el.removeEventListener('timeupdate', h);
+    const at = el.currentTime || 0;
+    const resume = () => { el.removeEventListener('loadedmetadata', resume);
+      try { el.currentTime = Math.min(at, Math.max(0, (el.duration || 0) - 0.3)); } catch (e) {}
+      el.play().catch(() => {}); };
+    el.addEventListener('loadedmetadata', resume);
+    try { el.src = lvUrl(baseUrl, true); } catch (e) {}
+  });
+}
+/* ===== 实时浏览全屏: 悬浮播放条 + 自动隐藏 + 锁横屏 (与主播放器一致体验) ===== */
+function lvVids() {
+  const grid = document.getElementById('lv-grid');
+  if (grid && grid.classList.contains('on')) {
+    const vs = [...grid.querySelectorAll('video')];
+    if (vs.length) return vs;
+  }
+  const v = document.getElementById('lv-video');
+  return v ? [v] : [];
+}
+/* 占位显隐: 与主播放器 ovCoverSync 同一判据 (解码就绪且真在播才撤掉模糊占位) */
+function lvCoverSync() {
+  const st = document.getElementById('lvstage'), v = document.getElementById('lv-video');
+  if (st && v) st.classList.toggle('playing',
+    !!(v.style.display !== 'none' && v.readyState >= 3 && !v.paused && !v.ended));
+  const g = document.getElementById('lv-grid');
+  if (g) {
+    const lead = g.querySelector('video');
+    g.classList.toggle('playing', !!(lead && lead.readyState >= 3 && !lead.paused && !lead.ended));
+  }
+}
+function lvSyncBar() {
+  const vs = lvVids(); if (!vs.length) return;
+  const v = vs[0];
+  const pp = document.getElementById('lvpp');
+  if (pp) pp.textContent = (v.paused || v.ended) ? '▶' : '❚❚';
+  const cur = document.getElementById('lvcur');
+  if (cur) cur.textContent = ovFmt(v.currentTime || 0);
+  const sk = document.getElementById('lvseek');
+  if (sk && v.duration) sk.value = Math.round((v.currentTime / v.duration) * 1000);
+}
+function lvPlayToggle() {
+  const vs = lvVids(); if (!vs.length) return;
+  const any = vs.some(v => !v.paused && !v.ended);
+  vs.forEach(v => { if (any) v.pause(); else v.play().catch(() => {}); });
+  lvSyncBar();
+}
+function lvSeek(val) {
+  const vs = lvVids(); if (!vs.length) return;
+  const dur = vs[0].duration || 0; if (!dur) return;
+  const t = (val / 1000) * dur;
+  vs.forEach(v => { try { v.currentTime = t; } catch (e) {} });
+}
+const LV_RATES = [1, 2, 0.5]; let lvRateIx = 0;
+function lvRate() {
+  lvRateIx = (lvRateIx + 1) % LV_RATES.length;
+  const r = LV_RATES[lvRateIx];
+  lvVids().forEach(v => { v.playbackRate = r; });
+  const b = document.getElementById('lvspd'); if (b) b.textContent = (r === 0.5 ? '0.5x' : r + 'x');
+}
+let lvBarTimer = null;
+function lvFsShowBar() {
+  const p = document.getElementById('livep'); if (!p) return;
+  p.classList.remove('lvbar-hide');
+  clearTimeout(lvBarTimer);
+  lvBarTimer = setTimeout(() => { p.classList.add('lvbar-hide'); }, 3000);
+}
+function lvFsTap(e) {
+  const p = document.getElementById('livep');
+  if (!p || !p.classList.contains('lvfs')) return;
+  if (e && e.target && e.target.closest && e.target.closest('.lvbar')) return;
+  if (p.classList.contains('lvbar-hide')) lvFsShowBar();
+  else { p.classList.add('lvbar-hide'); clearTimeout(lvBarTimer); }
+}
+function lvFsChange() {
+  const p = document.getElementById('livep'); if (!p) return;
+  const el = document.fullscreenElement || document.webkitFullscreenElement;
+  const on = (el === p);
+  p.classList.toggle('lvfs', on);
+  const v = document.getElementById('lv-video');
+  if (v) { v.controls = !on; if (on) { v.style.width = ''; v.style.height = ''; } }
+  if (on) {
+    try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {}
+    lvFsShowBar();
+    lvVids().forEach(x => x.play().catch(() => {}));
+  } else {
+    p.classList.remove('lvbar-hide'); clearTimeout(lvBarTimer);
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+    layoutLive();   /* 退出全屏恢复按片源比例的居中尺寸 */
+  }
+}
+function lvFull() {
+  const p = document.getElementById('livep'); if (!p) return;
+  const el = document.fullscreenElement || document.webkitFullscreenElement;
+  if (el) { const ex = document.exitFullscreen || document.webkitExitFullscreen; if (ex) ex.call(document); return; }
+  const req = p.requestFullscreen || p.webkitRequestFullscreen;
+  if (req) { const r = req.call(p); if (r && r.catch) r.catch(() => {}); }
+}
+document.addEventListener('fullscreenchange', lvFsChange);
+document.addEventListener('webkitfullscreenchange', lvFsChange);
+(function () {
+  const v = document.getElementById('lv-video');
+  if (v) {
+    v.addEventListener('click', lvFsTap);
+    ['playing','waiting','pause','ended','emptied','canplay','canplaythrough'].forEach(en => v.addEventListener(en, lvCoverSync));
+  }
+  const lg = document.getElementById('lv-grid');
+  if (lg) lg.addEventListener('pointerdown', e2 => {
+    const p = document.getElementById('livep');
+    /* 只有点在格子之外(缝隙等空白)时才顺手唤出, 格子点击交给 lvFsTap 切换 */
+    if (p && p.classList.contains('lvfs') && !(e2.target && e2.target.closest && e2.target.closest('.lvcell'))) lvFsShowBar();
+  });
+  const p = document.getElementById('livep');
+  if (p) p.addEventListener('mousemove', () => { if (p.classList.contains('lvfs')) lvFsShowBar(); });
+  const bar = document.getElementById('lvbar');
+  if (bar) { bar.addEventListener('pointerdown', lvFsShowBar); bar.addEventListener('input', lvFsShowBar); }
+  setInterval(() => { if (p && p.classList.contains('lvfs')) lvSyncBar(); }, 400);
+})();
 const LIVE_Q_ORDER = ['360p', '480p', '720p', 'orig'];
 function lvQText(q) { return q === 'orig' ? '原画' : q; }
 function lvQSync() {
@@ -5373,6 +5979,7 @@ function setLiveQ(v) {
 }
 function latestLiveEv() { const arr = (data && data.RecentClips) || []; return arr[0] || null; }
 function openLive() {
+  closeOvFull();   /* 行车记录等全屏播放浮层开着时切实时浏览: 先收掉, 免得盖住实时浏览且无法返回 */
   try { localStorage.setItem('tsf_cat', '__live__'); } catch (e) {}
   document.getElementById('livep').classList.add('open');
   document.body.classList.add('livemode');       /* 隐藏分类/日期筛选与归档列表 */
@@ -5390,7 +5997,13 @@ function openLive() {
   liveRestart();
 }
 function closeLive() {
-  document.getElementById('livep').classList.remove('open');
+  const lp = document.getElementById('livep');
+  const fel = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fel === lp) { const ex = document.exitFullscreen || document.webkitExitFullscreen; if (ex) ex.call(document); }
+  lp.classList.remove('lvfs', 'lvbar-hide'); clearTimeout(lvBarTimer);
+  lp.classList.remove('open');
+  const lst = document.getElementById('lvstage'); if (lst) lst.classList.remove('playing');
+  const lgr = document.getElementById('lv-grid'); if (lgr) lgr.classList.remove('playing');
   document.body.classList.remove('livemode');
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   clearLiveGrid();
@@ -5430,17 +6043,28 @@ function renderLive(ev) {
   vids.forEach(v => mkBtn(v.cam, camLabel(v.cam)));
   const vid = document.getElementById('lv-video');
   const grid = document.getElementById('lv-grid');
+  const stage = document.getElementById('lvstage');
   if (liveCam === '__all' || liveCam === '__quad') {
     vid.style.display = 'none';
+    if (stage) { stage.style.display = 'none'; stage.classList.remove('playing'); }
     try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (err) {}
     buildLiveGrid(liveCam === '__quad' ? quadVids : vids);
   } else {
     clearLiveGrid();
     vid.style.display = '';
+    if (stage) stage.style.display = '';
     const v = vids.find(x => x.cam === liveCam) || vids[0];
     const want = lvUrl(v.url);
-    if (v && vid.getAttribute('src') !== want) { vid.src = want; vid.play().catch(() => {}); }
+    /* 占位底图: 该路缩略图 (/thumb 与 /media 同路径), 高斯模糊后作为占位画面 */
+    const cbg = document.getElementById('lvcoverbg');
+    const turl = v.url.replace('/media/', '/thumb/');
+    if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
+    if (v && vid.getAttribute('src') !== want) {
+      vid.src = want; lvArmSwap(vid, v.url);
+      if (OPEN_AUTOPLAY) vid.play().catch(() => {});   /* 个性化关掉自动播放时停在模糊占位 */
+    }
     layoutLive();
+    lvCoverSync();
   }
 }
 /* 全览: 每路一个 video, 同屏播放并互相对齐进度 */
@@ -5464,18 +6088,30 @@ function buildLiveGrid(vids) {
     cell.className = 'lvcell';
     const el = document.createElement('video');
     el.playsInline = true; el.muted = true; el.preload = 'auto';
-    el.onloadedmetadata = () => { el.currentTime = 0.05; el.play().catch(() => {}); };
+    el.onloadedmetadata = () => { el.currentTime = 0.05; if (OPEN_AUTOPLAY) el.play().catch(() => {}); lvCoverSync(); };
     el.addEventListener('loadedmetadata', layoutLiveGrid);
+    ['playing','waiting','pause','ended','emptied','canplay'].forEach(en => el.addEventListener(en, lvCoverSync));
+    /* 该路缩略图高斯模糊垫底, 整组只留模糊占位 */
+    const cov = document.createElement('div'); cov.className = 'lvcover';
+    const cbg = document.createElement('img'); cbg.className = 'lvcoverbg'; cbg.alt = '';
+    cbg.src = v.url.replace('/media/', '/thumb/');
+    cov.appendChild(cbg);
     const lb = document.createElement('div');
     lb.className = 'clabel';
     lb.textContent = camLabel(v.cam);
-    cell.appendChild(el); cell.appendChild(lb);
-    cell.onclick = () => { liveCam = v.cam; localStorage.setItem('tsflivecam', liveCam); if (liveEv) renderLive(liveEv); };
+    cell.appendChild(el); cell.appendChild(cov); cell.appendChild(lb);
+    cell.onclick = (e2) => {
+      const p = document.getElementById('livep');
+      /* 全屏里点画面只负责唤出/收起悬浮条, 不切视角 (切视角留在非全屏) */
+      if (p && p.classList.contains('lvfs')) { lvFsTap(e2); return; }
+      liveCam = v.cam; localStorage.setItem('tsflivecam', liveCam); if (liveEv) renderLive(liveEv);
+    };
     g.appendChild(cell);
     /* 逐路上屏: 每路错开 350ms, 避免 4 路同时抢占上行 */
     el.oncanplay = null;
-    setTimeout(() => { if (!el.getAttribute('src')) el.src = lvUrl(v.url); }, ix * 350);
+    setTimeout(() => { if (!el.getAttribute('src')) { el.src = lvUrl(v.url); lvArmSwap(el, v.url); } }, ix * 350);
   });
+  lvCoverSync();
   /* 每秒对齐一次进度, 任一路拖进度条/暂停 → 其余跟随 */
   if (liveSyncTimer) clearInterval(liveSyncTimer);
   liveSyncTimer = setInterval(() => {
@@ -10940,7 +11576,22 @@ VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-t
 #   单次跑 3~8 路都没有再出现 mpp_buffer NULL, 说明以前"3 路必炸"是内存瞬时碎片造成的偶发失败,
 #   不是并发数本身的硬上限。3 路是吞吐/时延的拐点(再往上每路都会被拖慢), 所以默认 3 槽。
 #   仍有偶发分配失败 -> get_variant 里做了"硬转失败先重试一次, 再回退软转"。
-Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))
+#   空闲时放到 6 槽(一次凑齐六路一分钟, 实测 6 路 49.8s, 吞吐比 3 槽高约 55%);
+#   车机写入期间仍由 CAR_TRAN_SEM 压到 2 槽并钉 0-2 核, 车机永远第一优先。
+#   真正的天花板是 CMA 连续内存, 不是 CPU; 但 CmaFree 低不代表不够用 ——
+#   内核会把 CMA 区先借给可迁移页(page cache), 驱动要时再迁走, 所以不能拿 CmaFree 当闸门。
+# 2026-11-25 23:20 CMA 提到 256M 并重启后重测 (tools/bench_concurrency.py,
+#   12 个作业 x 20s 原片 -> 720p 硬解硬编, 无字幕烧制, 车机停车中):
+#   并发 6 : 整轮 51.0s, 单作业均 25.2s / 最慢 28.0s, 失败 0, CPU 78%(满 400), CmaFree 245M
+#   并发 8 : 整轮 49.4s, 单作业均 27.5s / 最慢 34.2s, 失败 0, CPU 75%, CmaFree 210M
+#   并发 10: 整轮 48.8s, 单作业均 34.7s / 最慢 42.0s, 失败 0, CPU 81%, CmaFree 176M
+#   并发 12: 整轮 48.9s, 单作业均 47.2s / 最慢 48.9s, 失败 0, CPU 86%, CmaFree 140M
+#   结论: 总吞吐在 8 槽就饱和(49s 上下再加并发也不再降), 但单路等待从 25s 一路涨到 47s。
+#   瓶颈是共享的 VPU/RGA 硬件流水线, 不是 4 个 A55 核 —— 六路硬转时整机 CPU 只用到
+#   78%/400%(约 0.8 核/路里的大部分是 demux/mux), 所以"四核"并不等于"只能四路",
+#   也不意味着堆到十几路更快。6 槽 = 最好时延 + 已饱和吞吐, 故空闲仍定 6。
+#   48 个作业全程 mpp_buffer NULL / lockup / rkvenc 报错均为 0 (CMA 128M 时约 2~6 条/分钟)。
+Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "6")))
 USER_TRANS = [0]      # 正在排队/占用转码槽的用户请求数; 后台预热看到 >0 就让位
 RES_MAX = 4 * 1024 * 1024 * 1024  # 清晰度缓存上限 4GB(外接盘 445G 可用, 1080p 档体积翻倍)
 
@@ -11121,11 +11772,13 @@ def preview_cleanup(force=False):
 # 车机 U 盘里的 RecentClips 本身就是"滚动缓冲": 只留最近约 1 小时, 更旧的由车机自己覆盖。
 # 但盒子这边过去是每来一段就抄一份、永久留着, 而哨兵开着时车整夜不睡, 4 路约 140MB/分钟
 # (8.4GB/小时), 一晚上就能吃掉几十 GB —— 这才是盒子镜像被撑爆的真正原因。
-# 现在让盒子副本按同样窗口滚动: 只留最近 ROLL_MIN 分钟, 更旧的从盒子归档里删掉。
+# 盒子副本不再按固定 60 分钟窗口滚动删除: 行车记录和哨兵/手动保存一样, 统一交给
+# 归档自动清理管理 (页面「保留天数」+「剩余低于水位」两条规则, 见 roll_archive_capacity /
+# archive_cleanup)。想恢复旧的定时滚动可设 TSF_RECENT_ROLL_MIN=60。
 # 车机 U 盘那份完全不碰 (同步脚本只读 U 盘, 靠 exFAT 解析器读, 从不删源文件);
 # SentryClips / SavedClips 属于哨兵事件 + 用户主动保存的录像, 由下方 BOX_KEEP_DAYS /
 # BOX_MAX_GB 定期清理管理 (只删盒子归档副本, 车机 U 盘那份同样不碰)。
-RECENT_ROLL_MIN = int(os.environ.get("TSF_RECENT_ROLL_MIN", "60"))    # 归档滚动窗口(分钟), 0=关闭滚动
+RECENT_ROLL_MIN = int(os.environ.get("TSF_RECENT_ROLL_MIN", "0"))     # 定时滚动窗口(分钟), 默认 0=关闭, 改由归档自动清理统一管理
 FREE_MIN_MB = int(os.environ.get("TSF_FREE_MIN_MB", "4096"))          # 剩余低于此值开始兜底清理
 FREE_TARGET_MB = int(os.environ.get("TSF_FREE_TARGET_MB", "10240"))   # 兜底清理到恢复到该值为止
 RECENT_KEEP_MIN = int(os.environ.get("TSF_RECENT_KEEP_MIN", "60"))    # 兜底清理时最近 N 分钟必留
@@ -11291,7 +11944,8 @@ def roll_box():
 
 def roll_archive_capacity():
     """容量滚动: 归档剩余低于页面设定水位时, 跨分类按事件时间从最旧开始删,
-    删到剩余 >= 水位+5%。页面水位 0=关闭; 只删盒子归档副本; 1 小时内有改动的目录跳过。"""
+    删到剩余 >= 水位+5%。页面水位 0=关闭; 只删盒子归档副本; 1 小时内有改动的目录跳过。
+    行车记录(RecentClips)也在这里一起管, 不再单独按 60 分钟滚动删除。"""
     quota = _archive_quota()
     threshold = archive_low_water_pct()
     if quota <= 0 or threshold <= 0:
@@ -11302,7 +11956,7 @@ def roll_archive_capacity():
     if free_pct >= threshold:
         return 0
     evs = []
-    for cat in ("SentryClips", "SavedClips"):
+    for cat in ("RecentClips", "SentryClips", "SavedClips"):
         base = os.path.join(ARCHIVE, cat)
         if not os.path.isdir(base):
             continue
@@ -15775,6 +16429,8 @@ class Handler(BaseHTTPRequestHandler):
                         "brand_logo_v": brand_logo_ver(),
                         "amap_key": amap_key(),
                         "amap_key_custom": bool(load_settings().get("amap_key")),
+                        "open_view": load_settings().get("open_view", "all"),
+                        "open_autoplay": load_settings().get("open_autoplay", True),
                         "auto_checked": AUTO_UPD["last_check"], "auto_msg": AUTO_UPD["last_result"]})
         elif path == "/api/font":
             fp = _wm_font()
@@ -15872,10 +16528,12 @@ class Handler(BaseHTTPRequestHandler):
             src = _archive_src_cached()
             pst = _preview_stats()
             qrows = []
+            hw_ok = bool(hw_probe().get("ok"))   # 真实硬解硬编链路自检(缓存10分钟), 不是"夜间补档"批次标记
             for q in ("360p", "480p", "720p"):
                 cov = pst["cover"].get(q, 0)
                 qrows.append({"q": q,
-                              "hw": q in NIGHT_HW_QS,
+                              "hw": hw_ok,
+                              "night": q in NIGHT_HW_QS,
                               "files": pst["files"].get(q, 0),
                               "files_cur": pst["files_cur"].get(q, 0),
                               "cover": cov,
@@ -16552,7 +17210,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/kick":
             # 前端播到当前段一半/打开事件时, 让服务端把相邻段的当前清晰度先转好。
             # 走 get_variant(slot=True) → 计入 USER_TRANS, 预热线程自动让位;
-            # Q_SEM(并发2)串住所有转码, 不会把设备打死。已转好的直接跳过。
+            # Q_SEM(空闲6槽, 车机写入时压到2)串住所有转码, 不会把设备打死。已转好的直接跳过。
             body = self._read_json()
             if body == "TOOBIG":
                 self._json({"ok": False, "msg": "请求体过大"}, 413)
@@ -16607,6 +17265,33 @@ class Handler(BaseHTTPRequestHandler):
             paths = body.get("paths") if isinstance(body.get("paths"), list) else []
             playback_beat(sid, [str(p) for p in paths[:20]], q)
             self._json({"ok": True})
+            return
+        if path == "/api/playback/lookahead":
+            # 段尾提前预转码下一段: 播放器在當前段剩 <=8s 时把下一段路径发来,
+            # 用与 /media 完全一致的正则映射成真实路径, 保证缓存键与播放请求相同。
+            # urgent=True 让作业在播放期间也能跑(当前段只发缓存、CPU 空闲), 仍受 Q_SEM/车机闸约束。
+            body = self._read_json()
+            if not isinstance(body, dict):
+                body = {}
+            sid = str(body.get("sid") or "")[:64]
+            q = str(body.get("q") or "")
+            try:
+                sec = int(body.get("sec") or 0)
+            except (TypeError, ValueError):
+                sec = 0
+            sec = max(0, min(sec, 120))
+            paths = body.get("paths") if isinstance(body.get("paths"), list) else []
+            n = 0
+            for p in paths[:8]:
+                m = re.match(r"^/media/([\w-]+)/([\w\-. ]+)/([\w\-. ]+)$", str(p))
+                if not m:
+                    continue
+                fp = os.path.normpath(os.path.join(ARCHIVE, m.group(1), m.group(2), m.group(3)))
+                if not fp.startswith(ARCHIVE) or not os.path.isfile(fp):
+                    continue
+                if spawn_variant(fp, q, owner=sid or None, seconds=sec, urgent=True):
+                    n += 1
+            self._json({"ok": True, "n": n})
             return
         if path == "/api/playback/leave":
             body = self._read_json()
@@ -16760,6 +17445,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             save_settings({"ui_style": st})
             self._json({"ok": True, "style": st})
+            return
+        if path == "/api/open/prefs":
+            body = self._read_json()
+            if body == "TOOBIG" or not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            patch = {}
+            if "view" in body:
+                v = str(body.get("view") or "")
+                if v not in ("all", "quad", "front", "back", "left_pillar", "right_pillar",
+                             "left_repeater", "right_repeater"):
+                    self._json({"ok": False, "msg": "视角参数错误"}, 400)
+                    return
+                patch["open_view"] = v
+            if "autoplay" in body:
+                patch["open_autoplay"] = bool(body.get("autoplay"))
+            if patch:
+                save_settings(patch)
+            s = load_settings()
+            self._json({"ok": True, "open_view": s.get("open_view", "all"),
+                        "open_autoplay": s.get("open_autoplay", True)})
             return
         if path == "/api/amap/key":
             body = self._read_json()

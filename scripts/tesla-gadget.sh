@@ -118,7 +118,7 @@ do_on() {
         log "UDC BIND WRITE FAILED"
         echo "ERROR: UDC 绑定写入失败: $UDC"; exit 1
     fi
-    sleep 3
+    sleep 1
     st=$(state)
     log "state after bind: $st"
     # 未插车机/电脑时 not attached 是正常等待状态, 不能据此删除功能或判服务失败。
