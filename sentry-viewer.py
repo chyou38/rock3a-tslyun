@@ -1251,27 +1251,8 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 .ovbar .t { flex:0 0 auto; min-width:44px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
 .ovbar .spd, .ovbar .qbtn { flex:0 0 auto; padding:7px 10px; font-size:12px; border-radius:8px;
   background:var(--panel2); border:1px solid var(--line2); color:var(--text); cursor:pointer; }
-.ovinfo { font-size:12px; line-height:1.7; color:var(--muted); padding:6px 2px 2px; }
-.ovinfo b { color:var(--text); font-weight:600; }
 /* 总览: 该事件的片段选择条 (多分钟事件在这里选要播的哪一段) */
 .ovclips { display:flex; gap:6px; flex-wrap:wrap; padding:6px 2px 0; }
-/* 播放页下方详情卡: 录制时间/地点/坐标 + 遥测详细数据 (窄屏 HUD 放不下的都收在这里) */
-.ovinfo { max-width:980px; width:100%; margin:10px auto 0; background:var(--panel);
-  border:1px solid var(--line); border-radius:14px; padding:10px 14px 12px; }
-.ovinfo .oi-sec { font-size:12px; font-weight:700; color:var(--muted); margin:2px 0 5px; }
-.ovinfo .oi-rows { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:0 18px; }
-.ovinfo .oi-rows + .oi-sec { margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
-.ovinfo .oi-rows div { display:flex; gap:8px; font-size:13px; color:var(--text);
-  padding:3px 0; font-variant-numeric:tabular-nums; }
-.ovinfo .oi-rows .k { color:var(--muted); flex:0 0 68px; }
-.ovinfo .oi-rows a { color:var(--blue); text-decoration:none; }
-.ovinfo .oi-rows .oi-empty { color:var(--muted); }
-.ovplay.fs-on .ovinfo { display:none; }
-@media (max-width:720px){
-  .ovinfo { padding:9px 12px 10px; margin-top:8px; }
-  .ovinfo .oi-rows { grid-template-columns:1fr; }
-  .ovinfo .oi-rows div { font-size:12.5px; }
-}
 .ovclips.hide { display:none; }
 .ovclips button { padding:7px 11px; font-size:12px; border-radius:8px; cursor:pointer;
   background:var(--panel2); border:1px solid var(--line2); color:var(--muted);
@@ -1645,8 +1626,7 @@ select.ninput { cursor:pointer; }
 .dpbtns .mini { flex:1 1 auto; padding:9px 12px; border-radius:9px; background:var(--panel2);
   border:1px solid var(--line2); color:var(--text); font-size:12.5px; font-family:inherit; cursor:pointer; }
 .dpbtns .mini.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
-/* 列表「详情」小窗内的视频详情行: 字段与播放页详情卡一致, 但样式独立,
-   播放页 .ovinfo 那边一行不动 (用户明确要求只改列表这边)。 */
+/* 列表「详情」小窗内的视频详情行: 独立样式, 不影响播放页。 */
 .dprows { display:grid; grid-template-columns:1fr; gap:0; margin:-4px 0 14px; }
 .dprows div { display:flex; gap:8px; font-size:12.5px; color:var(--text); padding:3px 0;
   font-variant-numeric:tabular-nums; }
@@ -2056,12 +2036,6 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <button class="camon" id="ovquad" onclick="ovCam('quad')">四路全景</button>
   </div>
   <div class="ovcams" id="ovcams"></div>
-  <div class="ovinfo" id="ovinfo">
-    <div class="oi-sec">视频详情</div>
-    <div class="oi-rows" id="oi-rows"></div>
-    <div class="oi-sec">遥测数据</div>
-    <div class="oi-rows" id="oi-tel"><div class="oi-empty">该片段没有行车数据</div></div>
-  </div>
   <div class="ovclips hide" id="ovclips"></div>
 </div>
 <nav class="filters" id="filters"></nav>
@@ -3545,22 +3519,6 @@ function ovMask(show, title, sub) {
     if (s && sub !== undefined) s.textContent = sub;
   }
 }
-function ovInfo(ev) {
-  const el = document.getElementById('ovinfo');
-  if (!el) return;
-  if (!ev) { el.textContent = '上面播放六路合成视频, 下面点事件切换。'; return; }
-  const mm = ev.meta || {}, n = (ev.videos || []).length, groups = groupVideos(ev.videos || []);
-  const mb = (ev.size || 0) / 1048576;
-  const sz = mb >= 1 ? mb.toFixed(1) + ' MB' : Math.round(mb * 1024) + ' KB';
-  const l1 = t(CATS_NAME[ev._cat || currentCat] || (ev._cat || '')) + ' · ' + fmtName(ev.name);
-  let l2 = '';
-  if (mm.reason) l2 = '触发: ' + (reasonLabel(mm.reason) || mm.reason);
-  const loc = locShort(mm);
-  if (loc) l2 += (l2 ? ' · ' : '') + loc;
-  const segN = ev._trip ? ev._trip.count : groups.length;
-  el.innerHTML = '<b>' + l1 + '</b>' + (l2 ? '<br>' + l2 : '') + '<br>' +
-    n + ' 路画面 · ' + segN + ' 段 · ' + sz;
-}
 /* 吸顶偏移: 顶部 header 也是 sticky, 播放区要正好贴在 header 下沿 */
 function ovStickTop() {
   const hd = document.querySelector('header'), op = document.getElementById('ovplay');
@@ -3615,7 +3573,6 @@ function ovOpen(ev) {
   const qb = document.getElementById('ovq');
   if (qb) { qb.textContent = ovQ; qb.classList.toggle('hi', ovQ !== '360p'); }
   ovBuildGrid(ev, 0);
-  ovRenderInfo(ev);
   /* 二级播放页: 视频上方的行车数据面板, 取本段主路片段的 SEI (无遥测只显示时间/地点) */
   if (document.body.classList.contains('ovfull')) {
     ovLoadTel();
@@ -3641,32 +3598,6 @@ function ovPickVids(ev, ix) {
     if (one.length) src = one; else ovCamSel = 'all';
   }
   return camSort(src.slice()).slice(0, 6);
-}
-/* 播放页下方详情卡: 录制时间/地点/坐标 + 遥测详细数据 (窄屏 HUD 放不下的都收在这里) */
-function ovRenderInfo(ev) {
-  const rows = document.getElementById('oi-rows');
-  if (!rows) return;
-  const md = (ev && ev.meta) || {}, trip = ev && ev._trip;
-  const groups = groupVideos((ev && ev.videos) || []);
-  const n = trip ? trip.count : (groups.length || 1);
-  const cat = (ev && ev._cat) || currentCat;
-  const out = [];
-  const add = (k, v) => { if (v) out.push('<div><span class="k">' + k + '</span><span>' + v + '</span></div>'); };
-  const t0 = fmtFullTime(md.timestamp, ev && ev.name);
-  add('录制时间', trip ? (t0 + ' → ' + localClock(trip.end)) : t0);
-  add('记录时长', n + ' 段 · 约 ' + n + ' 分钟');
-  add('记录类型', t(CATS_NAME[cat] || cat));
-  const rs = md.reason || '';
-  if (rs && rs.indexOf('user_interaction') !== 0) add('触发原因', reasonLabel(rs) || rs);
-  const addr = [md.city, md.street].filter(Boolean).join(' ');
-  const href = amapHref(md);
-  add('事件地点', addr ? (href ? '<a href="' + href + '" target="_blank" rel="noopener">' + addr + ' ↗</a>' : addr) : '位置未知');
-  out.push('<div><span class="k">事件坐标</span><span id="oi-coord">—</span></div>');
-  const cams = groups[0] ? (groups[0].vids || []).length : 0;
-  add('画面路数', cams ? cams + ' 路同步' : '');
-  rows.innerHTML = out.join('');
-  const tel = document.getElementById('oi-tel');
-  if (tel) tel.innerHTML = '<div class="oi-empty">该片段没有行车数据</div>';
 }
 function ovClipKey(k) {
   const m = String(k || '').match(/_(\d{2})-(\d{2})-(\d{2})/);
@@ -3866,7 +3797,7 @@ function amapHref(md) {
          '&name=' + nm + '&callnative=1';
 }
 
-/* 播放区标题: 只留紧凑时间 (地点/触发原因都收进下方"视频详情"卡, 顶栏不再挤) */
+/* 播放区标题: 只留紧凑时间, 地点/触发原因不再堆在顶栏 */
 function ovTitle(ev) {
   const mm = (ev && ev.meta) || {};
   return fmtCompactTime(mm.timestamp, (ev && ev.name));
@@ -4376,9 +4307,8 @@ function exportFromList(ev) {
 }
 /* 详情小弹窗: 记录信息 + 导出/分享, 不再进全屏详情页 */
 let dpEv = null;
-/* 列表「详情」要看的字段 = 播放页下方"视频详情"卡那一批 (录制时间/时长/类型/触发原因/
-   地点/坐标/路数)。这里独立生成一份, 不去改 ovRenderInfo, 播放页那边保持原样。
-   坐标直接用 event.json 的 est_lat/est_lon, 不依赖遥测加载, 弹窗一开就有。 */
+/* 列表「详情」要看的字段: 录制时间/时长/类型/触发原因/地点/坐标/路数;
+   这里独立生成, 不依赖播放页; 坐标直接用 event.json 的 est_lat/est_lon。 */
 function dpInfoRows(ev) {
   const md = (ev && ev.meta) || {}, trip = ev && ev._trip;
   const groups = groupVideos((ev && ev.videos) || []);
@@ -5630,15 +5560,6 @@ function renderHud(f) {
     '<div><span class="k">横向加速度 Ax</span>' + f[11].toFixed(2) + ' m/s²</div>' +
     '<div><span class="k">前后加速度 Ay</span>' + f[12].toFixed(2) + ' m/s²</div>' +
     '<div><span class="k">垂直加速度 Az</span>' + f[13].toFixed(2) + ' m/s²</div>';
-  /* 下方详情卡同步一份遥测明细 (手机上 HUD 只有图标, 数值看这里) */
-  const oiTel = document.getElementById('oi-tel');
-  if (oiTel) {
-    oiTel.innerHTML = q('tp-rows').innerHTML;
-    const f0 = oiTel.firstElementChild;
-    if (f0 && f0.textContent.indexOf('坐标') === 0) f0.remove();   // 坐标已在上方"视频详情"里, 不重复
-  }
-  const oiCo = document.getElementById('oi-coord');
-  if (oiCo) oiCo.textContent = (md.est_lat && md.est_lon) ? (md.est_lat + ', ' + md.est_lon) : '—';
 }
 function toggleTelRows() {
   const p = document.getElementById('tpanel'), b = document.getElementById('tp-fold');
