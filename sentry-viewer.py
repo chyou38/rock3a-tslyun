@@ -107,7 +107,8 @@ def lang_from_accept(hdr, default="zh"):
             return two
     return default
 
-CAT_NAMES = {"SentryClips": "哨兵告警", "SavedClips": "手动保存", "RecentClips": "行车记录"}
+CAT_NAMES = {"SentryClips": "哨兵告警", "SavedClips": "手动保存", "RecentClips": "行车记录",
+             "__all__": "哨兵总览"}
 # 注入页面用的 JSON (预生成, 避免每次请求都序列化)
 FAN_I18N = {
     "en": {"风扇设置": "Fan", "自动温控": "Auto (temp)", "手动定速": "Manual speed", "风扇转速": "Fan speed", "当前温度": "Current temp", "当前占空比": "Current duty", "保存风扇设置": "Save fan settings", "自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效": "Auto follows temperature: off below 45°C, full at 75°C; manual applies instantly", "风扇不可用: 未启用 overlay 或温控服务未运行": "Fan unavailable: overlay not enabled or control service not running", "读取风扇状态失败": "Failed to read fan state", "风扇设置已保存, 立即生效": "Fan settings saved, applied instantly"},
@@ -185,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -730,7 +731,7 @@ BRAND_LOGO_B64 = (
 def load_settings():
     d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
          "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10,
-         "lib_ttl_days": 7}
+         "lib_ttl_days": 7, "amap_key": ""}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -778,6 +779,10 @@ def load_settings():
             lg = str(j.get("brand_logo") or "")
             if lg and "/" not in lg and "\\" not in lg and lg.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
                 d["brand_logo"] = lg
+            # 高德 Web 服务 Key (逆地理编码用); 只留可见字符, 限长
+            k = str(j.get("amap_key") or "").strip()[:64]
+            if k:
+                d["amap_key"] = k
     except (OSError, ValueError):
         pass
     return d
@@ -841,6 +846,50 @@ def brand_clear_files():
                 pass
     except OSError:
         pass
+
+
+def brand_save_logo(data):
+    """上传的图统一转成 256x256 透明 PNG 再落盘 (兼容 iPhone 的 HEIC/HEIF,
+    避免"扩展名写 png、内容其实是 HEIC"导致手机浏览器破图); 返回 (ok, msg)"""
+    if not data:
+        return False, "空文件"
+    tmp = "/tmp/brand-in-%d" % int(time.time() * 1000)
+    ff = os.environ.get("TSF_FFMPEG") or "ffmpeg"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.makedirs(BRAND_DIR, exist_ok=True)
+        brand_clear_files()
+        out = os.path.join(BRAND_DIR, "logo.png")
+        vf = ("scale=256:256:force_original_aspect_ratio=decrease,"
+              "pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba")
+        try:
+            r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", tmp,
+                                "-vf", vf, "-frames:v", "1", out],
+                               capture_output=True, timeout=40)
+        except (OSError, subprocess.SubprocessError):
+            r = None
+        if (not r or r.returncode != 0 or not os.path.isfile(out)
+                or os.path.getsize(out) < 200):
+            # ffmpeg 转不了就退一步: 只接受浏览器原生能显示的真 PNG/JPG/WEBP
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                with open(out, "wb") as f:
+                    f.write(data)
+            else:
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+                return False, "这张图转不了(常见于 iPhone 的 HEIC), 请在相册里先导出为 JPG/PNG 再上传"
+        save_settings({"brand_logo": "logo.png"})
+        return True, "图标已更新"
+    except OSError as ex:
+        return False, "写入失败: %s" % str(ex)[:80]
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def _update_window_ok():
@@ -1041,7 +1090,7 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
   #live { order:3; margin-left:0; max-width:108px; padding:4px 8px; }
   #theme { order:4; margin-left:auto; } #gear { order:5; margin-left:0; } #out { order:6; margin-left:0; }
   /* 页签: 单行「分段控件」—— 灰槽里浮起一块选中的, 比两行卡片矮一半;
-     计数收成右侧小徽章, 「实时预览」没有计数也不会跟旁边几个对不齐 */
+     计数收成右侧小徽章, 「实时浏览」没有计数也不会跟旁边几个对不齐 */
   .tabs { order:10; width:100%; margin-left:0; gap:2px; overflow:visible;
     background:var(--panel2); border:1px solid var(--line); border-radius:13px; padding:3px; }
   .tab { flex:1 1 0; min-width:0; display:flex; flex-direction:row; align-items:center;
@@ -1089,13 +1138,118 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
 .cnum { position:absolute; right:5px; bottom:5px; background:#000000b8; color:#fff; font-size:10.5px; line-height:1; padding:3px 6px; border-radius:8px; }
 .thumb .ph { background:var(--panel2); height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted2); font-size:20px; }
-.meta { flex:1; min-width:0; }
-.meta .l1 { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.meta { flex:1; min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.meta .l1 { flex:1; min-width:0; display:flex; justify-content:flex-start; align-items:baseline; gap:8px; }
 .meta .rt { font-size:13.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .meta .tm { font-size:12px; color:var(--muted); white-space:nowrap; flex:0 0 auto; font-variant-numeric:tabular-nums; }
 .meta .l2 { display:flex; justify-content:space-between; gap:8px; margin-top:4px; font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; }
 .meta .l2 span { overflow:hidden; text-overflow:ellipsis; }
 .meta .l2 .sz { flex:0 0 auto; font-variant-numeric:tabular-nums; }
+.meta .acts { display:flex; flex-direction:column; align-items:flex-end; gap:4px; margin-top:0; }
+.dcbtn { flex:0 0 auto; font-size:11px; line-height:1; padding:4px 9px; border-radius:7px;
+  border:1px solid var(--line2); background:var(--panel2); color:var(--text); cursor:pointer; font-family:inherit; }
+/* 哨兵总览: 卡片上的分类小徽标 (哨兵/手动/行程一眼区分) */
+.meta .ky { flex:0 0 auto; font-size:10px; line-height:1; padding:2px 5px; border-radius:4px; margin-right:auto;
+  color:#ff8b86; border:1px solid rgba(232,68,63,.35); background:rgba(232,68,63,.12); }
+.meta .ky.k-SavedClips { color:#6fd3a5; border-color:rgba(76,195,138,.3); background:rgba(76,195,138,.1); }
+.meta .ky.k-RecentClips { color:#93c5fd; border-color:rgba(59,130,246,.32); background:rgba(59,130,246,.1); }
+/* 哨兵总览: 顶部内嵌「六路合成」播放控件 (替代存储卡/系统状态); 其它分类也带播放器, 但保留存储卡与筛选 */
+body.ovmode.allmode .storwrap { display:none; }
+.ovplay { display:none; max-width:980px; margin:10px auto 0; padding:0 12px; }
+/* 分类页没有可播事件时, 把播放器整块收起来, 不留黑框 */
+body.ovnone .ovplay { display:none !important; }
+/* 总览播放区吸顶: 上面视频+控件+方位条固定不动, 只有下面的列表滚动 */
+body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; top:0; z-index:9;
+  background:var(--bg); padding-bottom:8px; margin-top:0; padding-top:6px;
+  box-shadow:0 6px 10px -8px rgba(0,0,0,.55); }
+.ovtop { display:flex; align-items:center; gap:8px; padding:0 2px 8px; }
+.ovk { flex:0 0 auto; font-size:10.5px; line-height:1; padding:3px 6px; border-radius:5px;
+  color:#ff8b86; border:1px solid rgba(232,68,63,.35); background:rgba(232,68,63,.12); }
+.ovk.k-SavedClips { color:#6fd3a5; border-color:rgba(76,195,138,.35); background:rgba(76,195,138,.12); }
+.ovk.k-RecentClips { color:#93c5fd; border-color:rgba(59,130,246,.35); background:rgba(59,130,246,.12); }
+.ovt { flex:1; min-width:0; font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ovb { flex:0 0 auto; font-size:10.5px; line-height:1; padding:3px 8px; border-radius:8px;
+  color:var(--muted); background:var(--panel2); border:1px solid var(--line2); }
+.ovb.ok { color:#6fd3a5; border-color:rgba(76,195,138,.35); background:rgba(76,195,138,.1); }
+.ovqtop { flex:0 0 auto; font-size:10.5px; line-height:1; padding:3px 8px; border-radius:8px; cursor:pointer;
+  color:#7ee0a8; background:#123a24; border:1px solid #2e6b45; font-variant-numeric:tabular-nums; }
+.ovqtop.hi { color:#9df2bd; font-weight:700; }
+/* 顶部右侧的画质按钮: 和"6 路同步"并排 */
+.ovqtop { flex:0 0 auto; font:inherit; font-size:10.5px; line-height:1; padding:3px 8px; border-radius:8px;
+  cursor:pointer; color:#7ee0a8; background:#123a24; border:1px solid #2e6b45; font-variant-numeric:tabular-nums; }
+.ovqtop.hi { color:#9df2bd; font-weight:700; border-color:#3d8b5c; }
+.ovstage { position:relative; aspect-ratio:16/9; background:#000; border-radius:14px;
+  overflow:hidden; border:1px solid var(--line); }
+.ovstage video { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
+/* 总览六路: 3x2 六格, 6 个 video 各自独立播放, 主路(第一格)带节奏, 其余按它校准 */
+.ovgrid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr);
+  gap:0; width:100%; height:100%; background:#000; }
+.ovgrid.one { grid-template-columns:1fr; grid-template-rows:1fr; }
+.ovgrid .ovcell { position:relative; overflow:hidden; background:#000; }
+.ovgrid video { display:block; width:100%; height:100%; object-fit:cover; background:#000; }
+.ovgrid .ovcam { position:absolute; left:4px; bottom:4px; font-size:9.5px; line-height:1;
+  padding:3px 5px; border-radius:5px; background:#000000a8; color:#cfd8e3; }
+.ovmask { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:7px; background:#000000d9; color:#dfe6ec; font-size:12.5px;
+  text-align:center; padding:0 16px; }
+.ovmask b { font-size:15px; font-weight:700; }
+.ovmask.hide { display:none; }
+.ovbar { display:flex; align-items:center; gap:8px; padding:8px 2px 0; }
+.ovbar .pp { flex:0 0 auto; width:38px; height:38px; font-size:14px; border-radius:10px;
+  background:var(--panel2); border:1px solid var(--line2); color:var(--text); cursor:pointer; }
+.ovbar input[type=range] { flex:1; min-width:0; height:22px; }
+.ovbar .t { flex:0 0 auto; min-width:44px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.ovbar .spd, .ovbar .qbtn { flex:0 0 auto; padding:7px 10px; font-size:12px; border-radius:8px;
+  background:var(--panel2); border:1px solid var(--line2); color:var(--text); cursor:pointer; }
+.ovinfo { font-size:12px; line-height:1.7; color:var(--muted); padding:6px 2px 2px; }
+.ovinfo b { color:var(--text); font-weight:600; }
+/* 总览: 该事件的片段选择条 (多分钟事件在这里选要播的哪一段) */
+.ovclips { display:flex; gap:6px; flex-wrap:wrap; padding:6px 2px 0; }
+.ovclips.hide { display:none; }
+.ovclips button { padding:7px 11px; font-size:12px; border-radius:8px; cursor:pointer;
+  background:var(--panel2); border:1px solid var(--line2); color:var(--muted);
+  font-variant-numeric:tabular-nums; }
+.ovclips button.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+/* 总览工具行: -2s / +2s / 提亮 / 截屏 / 倍速 */
+.ovtools { display:flex; gap:6px; flex-wrap:wrap; padding:8px 2px 0; }
+.ovtools button { padding:7px 11px; font-size:12px; border-radius:8px; cursor:pointer;
+  background:var(--panel2); border:1px solid var(--line2); color:var(--muted); }
+.ovtools button.on { background:#4a3a10; border-color:#6b5518; color:#f5c451; font-weight:700; }
+.ovtools .camon { font-weight:600; }
+.ovtools .camon.on { background:#d63b36; border-color:#d63b36; color:#fff; }
+/* 总览方位条: 6 个单路横滑一行; 六路/四路全景按钮在控件行 */
+.ovcams { display:none; gap:6px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none;
+  padding:8px 2px 0; -webkit-overflow-scrolling:touch; }
+.ovcams::-webkit-scrollbar { display:none; }
+.ovcams.show { display:flex; }
+.ovcams button { flex:0 0 auto; padding:8px 10px; font-size:12px; border-radius:8px; cursor:pointer;
+  white-space:nowrap; background:var(--panel2); border:1px solid var(--line2); color:var(--muted); }
+.ovcams button.on { background:#d63b36; border-color:#d63b36; color:#fff; }
+/* 四路全景: 2x2 四格; 单路: 一格满铺 */
+.ovgrid.quad { grid-template-columns:repeat(2,1fr) !important; grid-template-rows:repeat(2,1fr) !important; }
+/* 总览卡片: 大六路封面 + 时间/下载 + 文件名 (仿车机 App 的横排大图卡) */
+.ovcard { display:block !important; padding:10px; }
+.ovcard .ovthumb { position:relative; width:100%; border-radius:12px; overflow:hidden;
+  background:var(--panel2); aspect-ratio:2/1; }
+.ovcard .ovthumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.ovcard .ovthumb .cnum { position:absolute; right:6px; bottom:6px; background:#000000b8; color:#fff;
+  font-size:11px; line-height:1; padding:4px 8px; border-radius:8px; }
+.ovcard .ovrow { display:flex; align-items:center; gap:8px; margin-top:9px; }
+.ovcard .ovico { flex:0 0 auto; font-size:15px; }
+/* 卡片上的分类小框: 哨兵告警(红) / 手动保存(绿) / 行车记录(蓝) */
+.ovcard .ovcat { flex:0 0 auto; font-size:10.5px; line-height:1; padding:4px 7px; border-radius:5px;
+  color:#ff8b86; border:1px solid rgba(232,68,63,.35); background:rgba(232,68,63,.12); }
+.ovcard .ovcat.k-SavedClips { color:#6fd3a5; border-color:rgba(76,195,138,.3); background:rgba(76,195,138,.1); }
+.ovcard .ovcat.k-RecentClips { color:#93c5fd; border-color:rgba(59,130,246,.32); background:rgba(59,130,246,.1); }
+.ovcard .ovtime { flex:1; min-width:0; font-size:14px; font-weight:700; color:var(--text);
+  font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ovcard .ovdl { flex:0 0 auto; min-width:70px; padding:7px 15px; border-radius:8px; font-size:12.5px;
+  text-align:center; background:var(--panel2); border:1px solid var(--line2); color:var(--text); cursor:pointer; }
+.ovcard .ovname { margin-top:5px; font-size:11.5px; color:var(--muted2); word-break:break-all; }
+.ovacts { flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+/* 总览页不需要分类/原因筛选; 日期筛选保留(总览也能按天看) */
+body.ovmode.allmode #filters { display:none; }
 /* 日期分组小标题 (全部日期视图) */
 .dhead { grid-column:1/-1; display:flex; align-items:baseline; gap:8px; padding:8px 2px 0; }
 .dhead b { font-size:13px; font-weight:700; }
@@ -1112,6 +1266,8 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .pscroll { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px 14px 14px; display:flex; flex-direction:column; gap:12px; }
 .pscroll > * { flex:0 0 auto; }
 .vwrap { position:relative; border-radius:14px; overflow:hidden; max-width:980px; width:100%; margin:0 auto; background:var(--stage); }
+/* 详情页只用来看信息/导出/分享: 不再放视频播放器 (画面在列表上方的六路播放区看) */
+#player .vwrap, #player .cambar, #player .pbar, #player .pwrap { display:none; }
 /* 行车遥测面板 (视频上方, Tesla App 样式, 不遮挡画面) */
 .tpanel { display:none; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 18px 10px; max-width:980px; width:100%; margin:0 auto; }
 .tpanel.show { display:block; }
@@ -1216,6 +1372,7 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .ic-rows { display:none; font-size:12.5px; line-height:1.9; color:var(--muted); word-break:break-all; border-top:1px solid var(--line); margin-top:8px; padding-top:8px; }
 .ic-rows.open { display:block; }
 .ick { display:inline-block; min-width:64px; color:var(--muted); }
+.icmap { margin-left:8px; color:var(--acc,#4a9eff); text-decoration:none; border-bottom:1px solid rgba(74,158,255,.5); font-size:12px; }
 .ic-fold { background:none; border:none; color:var(--muted); font-size:12px; cursor:pointer; padding:10px 2px 6px; margin-left:auto; display:block; }
 .pbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:10px 16px calc(12px + env(safe-area-inset-bottom,0px)); max-width:1008px; margin:0 auto; width:100%; box-sizing:border-box; }
 .pp { width:44px; height:44px; border-radius:50%; background:var(--text); color:var(--panel); border:none; font-size:16px; cursor:pointer; flex:0 0 auto; }
@@ -1243,6 +1400,8 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .panel h2 { font-size:15px; margin-bottom:12px; display:flex; align-items:center; }
 .panel h2 .x { margin-left:auto; background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer; padding:4px 8px; }
 .stabs { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+.stabsec { font-size:12.5px; font-weight:600; color:var(--muted); margin:0 0 8px; }
+.stabsec.sep { margin:18px 0 8px; padding-top:14px; border-top:1px dashed var(--line2); }
 .stab { flex:0 1 calc(33.333% - 6px); min-width:0; padding:10px 4px; border-radius:10px; background:var(--panel2); color:var(--muted); text-align:center; cursor:pointer; font-size:12.5px; border:none; white-space:nowrap; }
 .stab.active { background:var(--accent); color:#fff; }
 .langgrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
@@ -1323,23 +1482,68 @@ select.ninput { cursor:pointer; }
 .expr .mini.primary { background:var(--accent); color:#fff; }
 .stitch { display:none; position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:260; align-items:center; justify-content:center; }
 .stitch.open { display:flex; }
+/* 图标裁切 */
+.cropmask { display:none; position:fixed; inset:0; background:rgba(0,0,0,.66); z-index:900; align-items:center; justify-content:center; padding:12px; }
+.cropmask.open { display:flex; }
+.croppanel { width:min(400px,94vw); background:var(--panel); border-radius:18px; padding:16px 16px 14px; box-shadow:0 12px 40px #000c; }
+.cropt { font-size:14.5px; font-weight:600; text-align:center; }
+.croph { font-size:11.5px; color:var(--muted2); text-align:center; margin:4px 0 12px; line-height:1.5; }
+.cropstage { position:relative; margin:0 auto; border-radius:50%; overflow:hidden; background:#1d1d1d; box-shadow:0 0 0 1px var(--line2), inset 0 0 0 1px #0002; touch-action:none; }
+.cropstage canvas { display:block; cursor:grab; }
+.cropstage canvas:active { cursor:grabbing; }
+.cropzoom { display:flex; align-items:center; gap:10px; margin:14px 4px 2px; font-size:12px; color:var(--muted); }
+.cropzoom input[type=range] { flex:1; accent-color:#b1553a; }
+.cropbtns { display:flex; gap:10px; margin-top:14px; }
+.cropbtns button { flex:1; padding:10px; border-radius:10px; font:inherit; }
+/* 详情小弹窗 (替代原来的全屏详情页) */
+.dpopmask { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:700; align-items:center; justify-content:center; padding:16px; }
+.dpopmask.open { display:flex; }
+.dpopbox { width:min(420px,94vw); background:var(--panel); border-radius:16px; padding:16px 16px 14px; box-shadow:0 12px 40px #000c; }
+.dph { display:flex; align-items:center; gap:8px; padding-right:26px; position:relative; }
+.dph .dpk { flex:0 0 auto; font-size:10.5px; line-height:1; padding:3px 6px; border-radius:5px; background:rgba(59,130,246,.14); color:#2f6fe4; }
+.dph b { font-size:14.5px; font-weight:650; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dph .x { position:absolute; right:-8px; top:-6px; background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer; }
+.dpi { font-size:12.5px; color:var(--muted); margin:10px 0 14px; line-height:1.5; }
+.dpbtns { display:flex; gap:8px; flex-wrap:wrap; }
+.dpbtns .mini { flex:1 1 auto; padding:9px 12px; border-radius:9px; background:var(--panel2);
+  border:1px solid var(--line2); color:var(--text); font-size:12.5px; font-family:inherit; cursor:pointer; }
+.dpbtns .mini.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+/* 自建日期选择器 */
+.dpopbox.dbox { width:min(360px,94vw); }
+.dnav { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0 10px; }
+.dnav .mini { min-width:56px; padding:6px 10px; border-radius:8px; background:var(--panel2);
+  border:1px solid var(--line2); color:var(--text); font-size:12.5px; font-family:inherit; cursor:pointer; text-align:center; }
+.dgrid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
+.dgrid .dw { text-align:center; font-size:10.5px; color:var(--muted); padding:2px 0; }
+.dgrid .dd { aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:12.5px;
+  border-radius:8px; border:1px solid transparent; color:var(--text); cursor:pointer; user-select:none; }
+.dgrid .dd:hover { background:var(--panel2); }
+.dgrid .dd.empty { cursor:default; }
+.dgrid .dd.sel { background:var(--blue); border-color:var(--blue); color:#fff; }
+.dgrid .dd.today { border-color:var(--muted2); }
+.dgrid .dd.nodata { color:var(--muted2); }
+.dgrid .dd.off { color:var(--muted2); opacity:.4; cursor:default; }
 .stbox { width:min(340px,88vw); background:var(--panel); border-radius:16px; padding:20px 20px 16px; box-shadow:0 12px 40px #000c; text-align:center; }
 .stt { font-size:14.5px; font-weight:600; margin-bottom:14px; }
 .stbar { height:8px; border-radius:5px; background:var(--line2); overflow:hidden; }
 .stfill { height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#60a5fa); border-radius:5px; transition:width .4s; }
 .stpct { font-size:13px; color:var(--muted); margin-top:8px; }
 .sthint { font-size:11.5px; color:var(--muted2); margin-top:4px; line-height:1.5; }
-/* 实时预览: 与其它三个分类页签同级, 内容直接排在页签下方 (不再是全屏浮层 + 返回按钮) */
+/* 实时浏览: 与其它三个分类页签同级, 内容直接排在页签下方 (不再是全屏浮层 + 返回按钮) */
 .livep { display:none; max-width:1180px; margin:0 auto; padding:12px 16px 24px; }
 .livep.open { display:block; }
 body.livemode #filters, body.livemode #dfilters, body.livemode #dpick,
 body.livemode #grid, body.livemode #empty { display:none !important; }
-.lvtop { display:flex; align-items:center; gap:10px; padding:0 0 10px; border-bottom:1px solid var(--line); }
+.lvtop { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:0 0 10px; border-bottom:1px solid var(--line); }
 .lvtitle { font-weight:600; font-size:14.5px; flex:1; min-width:0; line-height:1.35; }
 .lvtitle small { display:inline; font-size:12px; font-weight:400; margin-left:6px; }
-.lvstatus { font-size:12px; color:var(--muted); text-align:right; max-width:42%; line-height:1.4; word-break:break-all; }
+.lvstatus { font-size:12px; color:var(--muted); text-align:right; max-width:34%; line-height:1.4; word-break:break-all; }
+/* 画质胶囊: 和总览"6 路同步 / 360p"同样式, 点一下升一档 */
+.lvqbtn { flex:0 0 auto; font:inherit; font-size:13px; line-height:1; padding:7px 14px; border-radius:999px;
+  cursor:pointer; color:#9df2bd; background:#123a24; border:1px solid #2e6b45; font-weight:700; font-variant-numeric:tabular-nums; }
 .lvbody { padding:12px 0 0; display:flex; flex-direction:column; gap:10px; }
-.lvmeta { font-size:13px; color:var(--muted); }
+.lvmeta { font-size:13px; color:var(--muted); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.lvmeta #lv-name { flex:1; min-width:0; }
 /* 单路: 宽高由 JS 按片源真实比例定 (Tesla 多为 4:3), 上限 58vh 且居中,
    不写死 16/9, 也不靠 max-height 把画面压扁 */
 #lv-video { display:block; width:100%; height:auto; max-height:58vh; margin:0 auto;
@@ -1577,6 +1781,15 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 .lname { font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lsub { font-size:11px; color:var(--muted); margin-top:2px; }
 .lbtns { display:flex; gap:6px; flex:0 0 auto; }
+/* 作品库里的「进行中」任务: 分享/推送/合成 都能看到进度 */
+.libjob { padding:8px 10px; border:1px dashed var(--line2); border-radius:10px; margin-bottom:6px; }
+.libjob .ljh { display:flex; justify-content:space-between; gap:8px; font-size:12px; color:var(--muted); }
+.libjob .ljn { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.libjob .ljp { flex:0 0 auto; color:var(--text); font-variant-numeric:tabular-nums; }
+.libjob .ljb { height:6px; border-radius:4px; background:var(--line2); overflow:hidden; margin-top:6px; }
+.libjob .ljf { height:100%; width:0; background:linear-gradient(90deg,#3b82f6,#60a5fa); transition:width .35s ease; }
+.libjob .ljf.pending { width:35% !important; animation: ljslide 1.1s ease-in-out infinite alternate; }
+@keyframes ljslide { from { transform:translateX(-40%); } to { transform:translateX(190%); } }
 </style><script>
 /* 版本自检: 服务端升级后, 若当前页面仍是旧版本就自动重载 (看片时不打断, 最多 2 次防死循环) */
 (function () {
@@ -1633,7 +1846,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <span id="live" title="车机在线只读同步状态" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:4px 10px;white-space:nowrap"><span id="livedot" style="width:7px;height:7px;border-radius:50%;background:#5f6b76"></span><span id="livetxt">同步状态</span></span>
 <nav class="tabs" id="tabs"></nav><button id="libbtn" title="我的作品" onclick="openLib()"><svg class="ic"><use href="#i-folder"/></svg></button><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
 <nav class="storwrap" id="storwrap">
-  <div class="storcard open" id="storcard">
+  <div class="storcard" id="storcard">
 <div class="storrow"><span class="storlab">虚拟U盘</span><span class="storval" id="storvusb"></span></div>
 <div class="storbar"><i id="storvusbbar"></i></div>
 <div class="storextra" id="storextra">
@@ -1646,6 +1859,35 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <button class="stortog" id="stortog" onclick="toggleStor()" title="展开归档区、总占用与系统状态" aria-expanded="false" aria-controls="storextra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </nav>
+<div class="ovplay" id="ovplay">
+  <div class="ovtop">
+    <span class="ovk" id="ovcat">哨兵总览</span>
+    <span class="ovt" id="ovt">最新记录</span>
+    <span class="ovb" id="ovb"></span>
+    <button class="ovqtop" id="ovq" onclick="ovCycleQ()" title="切换播放画质">360p</button>
+  </div>
+  <div class="ovstage" id="ovstage">
+    <div class="ovgrid" id="ovgrid"></div>
+    <div class="ovmask hide" id="ovmask"><b></b><span id="ovst"></span></div>
+  </div>
+  <div class="ovbar">
+    <button class="pp" id="ovpp" onclick="ovPlayToggle()">▶</button>
+    <input type="range" id="ovseek" min="0" max="1000" value="0" oninput="ovSeek(this.value)">
+    <span class="t" id="ovcur">00:00</span>
+    <button class="spd" id="ovspd" onclick="ovRate()" title="点击切换 1x / 2x / 0.5x">1x</button>
+    <button class="qbtn" onclick="ovFull()">全屏</button>
+  </div>
+  <div class="ovtools">
+    <button onclick="ovSkip(-2)">◀ -2s</button>
+    <button onclick="ovSkip(2)">+2s ▶</button>
+    <button id="ovbrt" onclick="ovBright()">提亮</button>
+    <button onclick="ovShot()">截屏</button>
+    <button class="camon" id="ovall" onclick="ovCam('all')">六路全景</button>
+    <button class="camon" id="ovquad" onclick="ovCam('quad')">四路全景</button>
+  </div>
+  <div class="ovcams" id="ovcams"></div>
+  <div class="ovclips hide" id="ovclips"></div>
+</div>
 <nav class="filters" id="filters"></nav>
 <nav class="filters" id="dfilters"></nav>
 <input type="date" id="dpick" class="dpick" onchange="if(this.value) setDate(this.value)">
@@ -1657,7 +1899,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div class="ptop">
     <button class="pback" onclick="closePlayer()">‹ 返回</button>
     <span class="ptitle" id="ptitle"></span>
-    <button class="pdl" onclick="openExport()" title="导出"><svg class="ic"><use href="#i-download"/></svg></button>
+    <button class="pdl" onclick="shareEvent()" title="复制这条记录的链接, 发给别人直接打开" style="font-size:12.5px">分享</button>
+    <button class="pdl" onclick="openExport()" title="导出/保存视频" style="font-size:12.5px">导出</button>
   </div>
   <div class="pscroll">
     <div class="tpanel" id="tpanel">
@@ -1732,23 +1975,16 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 
 <div class="livep" id="livep">
   <div class="lvtop">
-    <span class="lvtitle">📡 准实时预览 <small style="color:#7d8894;font-weight:400">延时约 1~2 分钟</small></span>
+    <span class="lvtitle">📡 准实时浏览 <small style="color:#7d8894;font-weight:400">延时约 1~2 分钟</small></span>
     <span class="lvstatus" id="lv-status"></span>
   </div>
   <div class="lvbody">
-    <div class="lvmeta" id="lv-name">—</div>
+    <div class="lvmeta"><span id="lv-name">—</span>
+      <button class="lvqbtn" id="lv-q" onclick="lvCycleQ()" title="点击切换画质: 360p → 480p → 720p → 原画">360p</button>
+    </div>
     <video id="lv-video" controls playsinline muted></video>
     <div class="lvgrid" id="lv-grid"></div>
     <div class="lvrow" id="lv-cams"></div>
-    <div class="lvrow">
-      <span style="font-size:13px;color:var(--muted)">画质</span>
-      <select id="lv-q" onchange="setLiveQ(this.value)" title="与回放相同的几档画质; 非原画由设备后台转码, 首次先用已有档位立即开播, 转好后下次生效">
-        <option value="orig">原画</option>
-        <option value="720p">720p</option>
-        <option value="480p">480p</option>
-        <option value="360p">360p</option>
-      </select>
-    </div>
     <div class="lvrow">
       <span style="font-size:13px;color:var(--muted)">刷新检查</span>
       <select id="lv-iv" onchange="liveRestart()">
@@ -1759,24 +1995,17 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       </select>
       <button class="lvbtn" onclick="liveTick()">检查更新</button>
     </div>
-    <div class="hint">「全览」同时播放全部摄像头, 数据量较大 (4 路每分钟约 100MB), 建议流量充足时使用; 点任一格可切到单路。画质可选 原画 / 720p / 480p / 360p: 非原画由设备后台转码, 首次先用已有档位立即开播, 转好后下次打开即生效 (全览建议 480p 及以下)。原理: 车机循环录制 1 分钟一段; 后台的只读同步 (不打断车机) 把刚写完的片段持续收进归档, 这里自动发现并播放最新片段, 即约 1 分钟延时的"直播"。刚停车/刚触发录像的片段要等写完才会出现。</div>
   </div>
 </div>
 <div class="panel" id="panel">
   <h2><svg class="ic"><use href="#i-gear"/></svg>个性化 <button class="x" onclick="closePanel()">✕</button></h2>
   <div class="stabs">
-    <button class="stab" id="st-net" onclick="stab('net')"><svg class="ic"><use href="#i-globe"/></svg>网络设置</button>
-    <button class="stab active" id="st-files" onclick="stab('files')"><svg class="ic"><use href="#i-folder"/></svg>文件</button>
-    <button class="stab" id="st-audio" onclick="stab('audio')"><svg class="ic"><use href="#i-volume"/></svg>锁车语音</button>
-    <button class="stab" id="st-wraps" onclick="stab('wraps')"><svg class="ic"><use href="#i-brush"/></svg>涂装</button>
+    <button class="stab active" id="st-auth" onclick="stab('auth')"><svg class="ic"><use href="#i-key"/></svg>个人信息</button>
     <button class="stab" id="st-notify" onclick="stab('notify')"><svg class="ic"><use href="#i-bell"/></svg>推送</button>
-    <button class="stab" id="st-auth" onclick="stab('auth')"><svg class="ic"><use href="#i-key"/></svg>账号</button>
-    <button class="stab" id="st-lang" onclick="stab('lang')"><svg class="ic"><use href="#i-globe"/></svg>语言</button>
-    <button class="stab" id="st-skin" onclick="stab('skin')"><svg class="ic"><use href="#i-image"/></svg>网页背景</button>
-    <button class="stab" id="st-fan" onclick="stab('fan')"><svg class="ic"><use href="#i-gear"/></svg>风扇设置</button>
-    <button class="stab" id="st-brand" onclick="stab('brand')"><svg class="ic"><use href="#i-brand"/></svg>品牌</button>
-    <button class="stab" id="st-debug" onclick="stab('debug')"><svg class="ic"><use href="#i-gear"/></svg>杂项设置</button>
-    <button class="stab" id="st-update" onclick="stab('update')"><svg class="ic"><use href="#i-refresh"/></svg>更新</button>
+    <button class="stab" id="st-car" onclick="stab('car')"><svg class="ic"><use href="#i-brush"/></svg>车辆个性化</button>
+    <button class="stab" id="st-files" onclick="stab('files')"><svg class="ic"><use href="#i-usb"/></svg>虚拟磁盘</button>
+    <button class="stab" id="st-net" onclick="stab('net')"><svg class="ic"><use href="#i-globe"/></svg>网络设置</button>
+    <button class="stab" id="st-settings" onclick="stab('settings')"><svg class="ic"><use href="#i-gear"/></svg>设置</button>
   </div>
   <div id="tab-net" style="display:none">
     <div class="hint" id="net-roll" style="display:none;color:#e8443f"></div>
@@ -1854,33 +2083,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div id="net-bt-devs" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0"></div>
     <div class="hint" id="net-err" style="display:none;color:#e8443f"></div>
   </div>
-  <div id="tab-brand" style="display:none">
-    <div class="hint">标题栏左侧的图标与名称 · 改完立即生效, 访客刷新页面后看到新的; 名称留空即用默认「TSL哨兵云盘」</div>
-    <div class="brandbox">
-      <img class="blogo" id="brand-prev" src="/api/brand/logo" alt="">
-      <div class="brandmeta"><b id="brand-prevname">TSL哨兵云盘</b><span>当前效果</span></div>
-    </div>
-    <div class="brandrow">
-      <input class="ninput" id="brand-name" maxlength="24" placeholder="TSL哨兵云盘" autocomplete="off" autocapitalize="none" onkeydown="if(event.key==='Enter')saveBrandName()">
-      <button class="primary" onclick="saveBrandName()">保存</button>
-    </div>
-    <label class="upbtn">＋ 上传图标 (png/jpg/webp, ≤3MB)<input type="file" id="brand-file" accept=".png,.jpg,.jpeg,.webp" hidden></label>
-    <div style="margin-top:4px"><button class="brandreset" onclick="resetBrand()">恢复默认图标与名称</button></div>
-  </div>
-  <div id="tab-skin" style="display:none">
-    <div class="hint">界面风格 · 只换配色、圆角与阴影, 不动功能; 选完即时生效并记住</div>
-    <div class="stylepick" id="style-pick">
-      <button data-style="default" onclick="setStyle('default')"><span class="sw"><i style="background:#0e1216"></i><i style="background:#e8443f"></i></span>默认</button>
-      <button data-style="apple" onclick="setStyle('apple')"><span class="sw"><i style="background:#ffffff"></i><i style="background:#0071e3"></i></span>Apple</button>
-      <button data-style="claude" onclick="setStyle('claude')"><span class="sw"><i style="background:#faf9f5"></i><i style="background:#c96442"></i></span>Claude</button>
-      <button data-style="pixel" onclick="setStyle('pixel')"><span class="sw"><i style="background:#1a1c2c"></i><i style="background:#ff004d"></i></span>像素</button>
-    </div>
-    <div class="hint">上传 CSS 皮肤文件或背景图 (jpg/png/webp)。CSS 中引用图片请用 /skin-media/文件名。</div>
-    <div class="hint"><code>body{background:url(/skin-media/bg.jpg) center/cover}</code></div>
-    <label class="upbtn">＋ 上传皮肤文件 (css/jpg/png/webp)<input type="file" id="skin-file" accept=".css,.jpg,.jpeg,.png,.webp" hidden></label>
-    <div id="skin-list"></div>
-  </div>
   <div id="tab-fan" style="display:none">
+    <div class="stabsec">风扇</div>
     <div class="hint">自动模式按温度调速: 45°C 以下停转, 45.5°C 启动(最低 50%), 75°C 全速; 手动模式立即生效</div>
     <div class="brandrow" style="margin-top:8px">
       <select id="fan-mode" class="storage-select" onchange="fanModeChange()">
@@ -1898,6 +2102,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint" id="fan-err" style="display:none;color:#e8443f"></div>
   </div>
   <div id="tab-audio" style="display:none">
+    <div class="stabsec">锁车语音</div>
     <div class="hint">上传的音频 (wav/mp3, &lt;1MB) 会直接写入车机U盘根目录；文件名为 LockChime.wav 的即锁车音 (特斯拉只认根目录这个文件名)。文件在归档同步时写入车机U盘。</div>
     <label class="upbtn">＋ 上传音频 (wav/mp3, &lt;1MB)<input type="file" id="audio-file" accept=".wav,.mp3" hidden></label>
     <div class="hint" style="color:#4cc38a">⏳ 待写入车机U盘:</div>
@@ -1906,6 +2111,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div id="audio-done"></div>
   </div>
   <div id="tab-wraps" style="display:none">
+    <div class="stabsec sep">涂装 / 牌照</div>
     <div class="hint">车机涂装/牌照图片: 上传 png/jpg/webp, 直接写入车机U盘根目录 Wraps/ (车机端设置里选)。连接时会临时断开车机读取几秒, 用完点「恢复车机导出」; 5 分钟无操作也会自动恢复。</div>
     <div id="wraps-status" style="margin-bottom:10px"></div>
     <label class="upbtn" id="wraps-upbtn">＋ 上传图片到 Wraps/ (png/jpg/webp, ≤100MB)<input type="file" id="wraps-file" accept=".png,.jpg,.jpeg,.webp" hidden multiple></label>
@@ -2082,17 +2288,41 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint" id="nt-msg"></div>
   </div>
   <div id="tab-auth" style="display:none">
+    <b style="font-size:13px">图标与名称</b>
+    <div class="hint">标题栏左侧的图标与名称 · 改完立即生效, 访客刷新后看到新的; 名称留空即用默认「TSL哨兵云盘」</div>
+    <div class="brandbox">
+      <img class="blogo" id="brand-prev" src="/api/brand/logo" alt="">
+      <div class="brandmeta"><b id="brand-prevname">TSL哨兵云盘</b><span>标题栏效果</span></div>
+    </div>
+    <div class="brandrow">
+      <input class="ninput" id="brand-name" maxlength="24" placeholder="TSL哨兵云盘" autocomplete="off" autocapitalize="none" onkeydown="if(event.key==='Enter')saveBrandName()">
+      <button class="primary" onclick="saveBrandName()">保存</button>
+    </div>
+    <label class="upbtn">＋ 上传图标 (png/jpg/webp/heic, ≤3MB)<input type="file" id="brand-file" accept=".png,.jpg,.jpeg,.webp,.heic,.heif" hidden></label>
+    <div style="margin-top:4px"><button class="brandreset" onclick="resetBrand()">恢复默认图标与名称</button></div>
+
+    <b style="font-size:13px;display:block;margin-top:18px">用户名</b>
+    <div class="hint">当前用户名: <b id="pw-user">admin</b></div>
+    <div class="brandrow">
+      <input class="ninput" id="usr-new" maxlength="24" placeholder="新用户名 (2-24 位字母/数字)" autocomplete="off" autocapitalize="none">
+    </div>
+    <div class="brandrow">
+      <input class="ninput" id="usr-pass" type="password" placeholder="当前密码 (用来验证身份)" autocomplete="current-password">
+      <button class="primary" onclick="saveUserName()">改用户名</button>
+    </div>
+    <div class="hint" id="usr-msg"></div>
+
+    <b style="font-size:13px;display:block;margin-top:18px">密码</b>
     <div class="hint">改完本机会自动用新密码重新登录，手机/其它设备上的登录状态立即失效。</div>
     <input class="ninput" id="pw-old" type="password" placeholder="当前密码" autocomplete="current-password">
     <input class="ninput" id="pw-new" type="password" placeholder="新密码 (至少 6 位)" autocomplete="new-password">
     <input class="ninput" id="pw-new2" type="password" placeholder="再输一次新密码" autocomplete="new-password">
     <div class="updbtns"><button class="mini primary" onclick="pwSave()">修改密码</button></div>
     <div class="hint" id="pw-msg"></div>
-    <div class="hint" style="margin-top:12px"><span>用户名</span>: <b id="pw-user">admin</b></div>
-    <div class="hint">要改用户名请编辑设备上 /opt/tesla-sentry/auth.conf 的 user=</div>
     <div class="updbtns" style="margin-top:16px"><button class="mini logout" onclick="doLogout()">退出登录</button></div>
   </div>
   <div id="tab-debug" style="display:none">
+    <div class="stabsec sep">界面与播放</div>
     <div class="updrow"><span class="updk">默认画质</span>
       <select id="qmode" class="arc-select" onchange="setQMode(this.value)">
         <option value="auto">按网络自动</option>
@@ -2118,8 +2348,37 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="hint" id="dbg-net">—</div>
     <div class="hint" style="color:#8b96a3">提示: 档位完全按你选的处理, 多路不再自动降档; 6 路同时开高画质会占满上行, 想省流量可手动选 360p。</div>
   </div>
+  <div id="tab-skin" style="display:none">
+    <div class="stabsec sep">网页背景</div>
+    <div class="hint">界面风格 · 只换配色、圆角与阴影, 不动功能; 选完即时生效并记住</div>
+    <div class="stylepick" id="style-pick">
+      <button data-style="default" onclick="setStyle('default')"><span class="sw"><i style="background:#0e1216"></i><i style="background:#e8443f"></i></span>默认</button>
+      <button data-style="apple" onclick="setStyle('apple')"><span class="sw"><i style="background:#ffffff"></i><i style="background:#0071e3"></i></span>Apple</button>
+      <button data-style="claude" onclick="setStyle('claude')"><span class="sw"><i style="background:#faf9f5"></i><i style="background:#c96442"></i></span>Claude</button>
+      <button data-style="pixel" onclick="setStyle('pixel')"><span class="sw"><i style="background:#1a1c2c"></i><i style="background:#ff004d"></i></span>像素</button>
+    </div>
+    <div class="hint">上传 CSS 皮肤文件或背景图 (jpg/png/webp)。CSS 中引用图片请用 /skin-media/文件名。</div>
+    <div class="hint"><code>body{background:url(/skin-media/bg.jpg) center/cover}</code></div>
+    <label class="upbtn">＋ 上传皮肤文件 (css/jpg/png/webp)<input type="file" id="skin-file" accept=".css,.jpg,.jpeg,.png,.webp" hidden></label>
+    <div id="skin-list"></div>
+  </div>
+  <div id="tab-lang" style="display:none">
+    <div class="stabsec sep">语言</div>
+    <div class="hint" style="margin-bottom:8px">点下拉框选择界面语言，选完立即生效</div>
+    <select id="lang-sel" class="arc-select" style="width:min(240px,100%)" onchange="setLang(this.value)"></select>
+    <div class="hint">界面语言保存在本机浏览器</div>
+  </div>
   <div id="tab-update" style="display:none">
-    <div class="updrow"><span class="updk">当前版本</span><b id="upd-cur">—</b></div>
+    <div class="stabsec sep">地图与地点</div>
+    <div class="updrow"><span class="updk">高德 Key</span><span class="updtag" id="amap-key-tag">—</span></div>
+    <input id="amap-key" class="arc-input" style="width:100%;max-width:460px" autocomplete="off"
+      placeholder="高德「Web服务」Key，留空用内置">
+    <div class="updbtns">
+      <button class="mini" onclick="saveAmapKey()">保存</button>
+      <button class="mini" onclick="resetAmapKey()">恢复内置</button>
+    </div>
+    <div class="hint">用于把坐标反查成街道/地点名（逆地理编码），保存后立即生效。</div>
+    <div class="stabsec sep">更新</div>    <div class="updrow"><span class="updk">当前版本</span><b id="upd-cur">—</b></div>
     <div class="updrow"><span class="updk">最新版本</span><b id="upd-new">—</b><span class="updtag" id="upd-tag">未检查</span></div>
     <div class="updnotes" id="upd-notes"></div>
     <label class="updauto" title="检测到新版本时, 在没人看视频的空闲时刻自动升级 (只重启本服务, 约 5 秒)">
@@ -2135,13 +2394,50 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <div class="updbtns"><button class="mini" id="upd-rb" onclick="otaRollback()" style="display:none">↩ 回滚到上一版本</button></div>
     <div class="hint">升级会从 GitHub 及多个镜像并发竞速拉取最新程序, 覆盖本机文件并自动重启服务 (约5秒); 配置、录像、登录信息不受影响。</div>
   </div>
-  <div id="tab-lang" style="display:none">
-    <div class="hint" style="margin-bottom:8px">选择语言</div>
-    <div class="langgrid" id="lang-grid"></div>
-    <div class="hint">界面语言，保存在本机浏览器</div>
-  </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<div class="cropmask" id="crop">
+  <div class="croppanel">
+    <div class="cropt">裁切图标</div>
+    <div class="croph">拖动图片改位置, 滑块缩放 · 圆内就是最终显示效果</div>
+    <div class="cropstage" id="crop-stage"><canvas id="crop-canvas"></canvas></div>
+    <div class="cropzoom"><span>缩放</span><input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1" oninput="cropSetZoom(this.value)"></div>
+    <div class="cropbtns">
+      <button class="mini" onclick="cropCancel()">取消</button>
+      <button class="mini primary" onclick="cropOk()">用这张</button>
+    </div>
+  </div>
+</div>
+
+<div class="dpopmask" id="dpop">
+  <div class="dpopbox">
+    <div class="dph"><span class="dpk" id="dpc">—</span><b id="dpt">—</b><button class="x" onclick="closeDetailPop()">✕</button></div>
+    <div class="dpi" id="dpi">—</div>
+    <div class="dpbtns">
+      <button class="mini primary" onclick="dpopExport()">导出 / 保存</button>
+      <button class="mini" onclick="dpopShare()">分享链接</button>
+      <button class="mini" onclick="closeDetailPop()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 自建日期选择器: 跟着当前主题配色, 不再用系统白色日历 -->
+<div class="dpopmask" id="datepop">
+  <div class="dpopbox dbox">
+    <div class="dph"><b id="dpm">—</b><button class="x" onclick="closeDatePick()">✕</button></div>
+    <div class="dnav">
+      <button class="mini" onclick="dpMonthMove(-1)">◀</button>
+      <button class="mini" onclick="datePickToday()">今天</button>
+      <button class="mini" onclick="dpMonthMove(1)">▶</button>
+    </div>
+    <div class="dgrid" id="dpgrid"></div>
+    <div class="dpbtns">
+      <button class="mini" onclick="cdpSelectAll()">全部日期</button>
+      <button class="mini" onclick="closeDatePick()">关闭</button>
+    </div>
+  </div>
+</div>
 
 <div class="stitch" id="stitch">
   <div class="stbox">
@@ -2164,6 +2460,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         style="background:transparent;color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:2px 6px;font-size:12px"></select>
       天（1~180 天，超期自动清理）
     </div>
+    <div id="libjobs" style="display:none;margin:8px 0 0"></div>
     <div id="librows" style="max-height:58vh;overflow:auto;margin:8px 0"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:10px">
       <button class="mini" onclick="document.getElementById('lib').classList.remove('open')">关闭</button>
@@ -2173,7 +2470,9 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 
 <script>window.__I18N=__I18N__;window.__LANGS=__LANGS__;</script>
 <script>
-let data = {}, cur = null, syncTimer = null, currentCat = 'SentryClips', lastSig = '', reasonFilter = 'all', dateFilter = 'all';
+const ALL_CAT = '__all__';   // 哨兵总览: 把三类事件合成一条时间线, 默认页
+const DATA_CATS = ['SentryClips', 'SavedClips', 'RecentClips'];
+let data = {}, cur = null, syncTimer = null, currentCat = ALL_CAT, lastSig = '', reasonFilter = 'all', dateFilter = 'all';
 let curClips = [], curClipIx = 0, TEL = null;
 let tripView = true, autoNext = false, autoNexting = false;   // 行车记录默认按连续行程聚合
 try { if (localStorage.getItem('tsfTripView') === '0') tripView = false; } catch (e) {}
@@ -2228,16 +2527,16 @@ function applyLang() {
       el.setAttribute(a, val === key ? raw : raw.replace(key, val));
     });
   });
-  const g = document.getElementById('lang-grid');
-  if (g) renderLangGrid();
+  renderLangGrid();
   applyBrand();
 }
 function renderLangGrid() {
-  const g = document.getElementById('lang-grid');
-  if (!g) return;
-  g.innerHTML = LANGS.map(([c, n]) =>
-    '<button class="' + (c === LANG ? 'on' : '') + '" onclick="setLang(\'' + c + '\')">' +
-    n + '<span class="code">' + c.toUpperCase() + '</span></button>').join('');
+  const s = document.getElementById('lang-sel');
+  if (!s) return;
+  s.innerHTML = LANGS.map(([c, n]) =>
+    '<option value="' + c + '"' + (c === LANG ? ' selected' : '') + '>' +
+    n + ' (' + c.toUpperCase() + ')</option>').join('');
+  s.value = LANG;
 }
 function setLang(code) {
   if (!LANGS.some(l => l[0] === code)) return;
@@ -2299,15 +2598,47 @@ applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
     if (j && j.ui_style) applyStyle(j.ui_style);
   }).catch(() => {});
 })();
+/* ---------- 高德 Key: 设置页里填, 服务端存 settings.json, 用于坐标反查街道 ---------- */
+function loadAmapKey() {
+  fetch('/api/settings', {cache: 'no-store'}).then(r => r.json()).then(j => {
+    const el = document.getElementById('amap-key');
+    if (el && document.activeElement !== el) el.value = j.amap_key || '';
+    const tag = document.getElementById('amap-key-tag');
+    if (tag) tag.textContent = j.amap_key_custom ? '已配置' : '内置';
+  }).catch(() => {});
+}
+function saveAmapKey() {
+  const v = (document.getElementById('amap-key').value || '').trim();
+  fetch('/api/amap/key', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: v})})
+    .then(r => r.json()).then(d => {
+      toast(d.ok ? '高德 Key 已保存' : ('保存失败: ' + (d.msg || '未知错误')));
+      loadAmapKey();
+    })
+    .catch(e => toast('保存失败: ' + e));
+}
+function resetAmapKey() { document.getElementById('amap-key').value = ''; saveAmapKey(); }
+loadAmapKey();
 /* ---------- 存储卡展开/收起 ----------
-   默认只显示「虚拟U盘」一行; 点卡片右下角小箭头才展开「归档区 / 总占用」 */
-function toggleStor() {
+   默认只显示「虚拟U盘」一行; 点卡片右下角小箭头才展开「归档区 / 总占用」
+   展开/收起状态记在 localStorage: 打开着刷新还是打开, 收起后刷新保持收起 */
+const STOR_OPEN_KEY = 'tsf_stor_open';
+function applyStorState(open) {
   const c = document.getElementById('storcard'), b = document.getElementById('stortog');
   if (!c || !b) return;
-  const open = c.classList.toggle('open');
+  c.classList.toggle('open', !!open);
   b.title = open ? '收起归档区、总占用与系统状态' : '展开归档区、总占用与系统状态';
   b.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
+function toggleStor() {
+  const c = document.getElementById('storcard');
+  if (!c) return;
+  const open = !c.classList.contains('open');
+  try { localStorage.setItem(STOR_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+  applyStorState(open);
+}
+/* 启动时套用上次状态, 不再每次刷新都自己弹开 */
+applyStorState(localStorage.getItem(STOR_OPEN_KEY) === '1');
 if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if ((localStorage.getItem('tsf_theme') || 'auto') === 'auto') applyTheme('auto');
 });
@@ -2331,11 +2662,12 @@ let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAU
 if (!Q_LIST.some(x => x[0] === curQ)) { curQ = isLanNet ? 'orig' : '360p'; localStorage.setItem(Q_STORE_KEY, curQ); }
 /* 档位完全按用户选择走, 多路不再偷偷降档; 想省流量自己选 360p */
 let multiMode = false;
-/* 多路同播省解码: 局域网默认原画, 但 3 路以上就是 3×2896x1876, 手机浏览器解码直接卡死。
-   自动降一档用 720p 变体(肉眼差别不大, 起播和拖动快很多); 手动锁定画质时不干预。 */
-function effQ() {
-  if (qMode === 'auto' && curQ === 'orig'
-      && document.querySelectorAll('#vgrid video').length >= 3) return '720p';
+/* 多路同播硬限档: 3 路及以上时, 原画/1080p 一律压到 720p 播 ——
+   6 路 2896x1876 或 6 路 1440x932 同时解码, 手机浏览器会直接卡死, 上行也被打满;
+   单路仍按用户选择走(原画/1080p 都可以)。这是解码能力限制, 所以手动锁定 qMode 也照样压。 */
+function effQ(n) {
+  n = (n == null) ? document.querySelectorAll('#vgrid video').length : n;
+  if (n >= 3 && (curQ === 'orig' || curQ === '1080p')) return '720p';
   return curQ;
 }
 /* 当前访问走的是哪条链路: 本机 / 局域网 / 远程(Tailscale) / 远程 */
@@ -2494,8 +2826,8 @@ function qModeLabel() {
   return '按网络自动 · ' + (netKindSrv === 'lan' ? '局域网 → 原画' : (netKindSrv ? '公网 → 360p' : '检测中…'));
 }
 function qName(q) { return q === 'orig' ? '原画' : q; }
-function qUrl(u) {
-  const q = effQ();
+function qUrl(u, n) {
+  const q = effQ(n);
   if (q === 'orig') return u;
   let x = u + '?q=' + q;
   if (playbackSid) x += '&sid=' + encodeURIComponent(playbackSid);
@@ -2561,12 +2893,12 @@ function setQuality(q) {
   const wasPlaying = v0el ? !v0el.paused : false;
   const times = [...document.querySelectorAll('#vgrid video')].map(v => v.currentTime || 0);
   const hint = document.getElementById('qhint');
-  /* 延迟提示取消: 现在 /media 未命中画质缓存时先给原画 + 后台转码, 首帧不再干等
-     十几秒, 只需说明「本次是原画、转好后下次生效」即可 */
+  /* 未命中目标档时服务端先用已缓存的低档顶上(秒开), 目标档转好后播放器自动热切;
+     这里只说明"正在准备", 不要让人以为要一直看低清 */
   clearTimeout(setQuality._ht); clearTimeout(setQuality._show);
   hint.style.display = 'none';
   if (q !== 'orig') {
-    hint.textContent = '正在后台生成 ' + q + ' 画质, 本次先用现有档位播放 (切段或下次打开即生效)';
+    hint.textContent = '正在准备 ' + q + ' 画质: 先用现有档位秒开, 转好后自动切到 ' + q;
     hint.style.display = 'block';
     setQuality._ht = setTimeout(() => { hint.style.display = 'none'; }, 6000);
   }
@@ -2693,6 +3025,12 @@ function clipStartOf(ev) {
 function tripRangeText(trip) {
   return localClock(trip.start) + '–' + localClock(trip.end);
 }
+/* 行程卡标题: 起始时刻 HH:MM:SS */
+function tripHMS(trip) {
+  const d = new Date(trip.start);
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
 function tripMinutes(trip) {
   return Math.max(1, Math.round((trip.end - trip.start) / 60000));
 }
@@ -2727,7 +3065,18 @@ function groupTrips(evs) {
     return tripToEvent(g);
   }).sort((a, b) => b._trip.start - a._trip.start);
 }
+/* 事件排序键: 行程卡用起点(秒), 普通事件用目录名里的时刻(秒) */
+function evSortKey(ev) {
+  if (ev && ev._trip && ev._trip.start) return ev._trip.start;
+  return clipEpoch(ev && ev.name) / 1000;
+}
 function displayEvents(cat) {
+  /* 哨兵总览: 三类事件合成一条时间线, 按事件时刻倒序; 每条记住自己属于哪个分类 */
+  if (cat === ALL_CAT) {
+    let all = [];
+    for (const c of DATA_CATS) displayEvents(c).forEach(ev => { ev._cat = c; all.push(ev); });
+    return all.sort((a, b) => evSortKey(b) - evSortKey(a));
+  }
   const raw = data[cat] || [];
   return cat === 'RecentClips' && tripView ? groupTrips(raw) : raw;
 }
@@ -2740,8 +3089,8 @@ function totalDisplayCount() {
 function updateHeaderCounts() {
   const tabs = document.getElementById('tabs');
   if (tabs) {
-    [...tabs.children].forEach((b, i) => {
-      const c = Object.keys(data)[i];
+    [...tabs.children].forEach(b => {
+      const c = b.dataset && b.dataset.cat;
       if (!c) return;
       b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
     });
@@ -2803,31 +3152,569 @@ function prekickList() {
   /* 列表页不再提交完整转码; 归档视频的 10 秒预缓冲由服务端空闲循环统一处理。 */
 }
 
-async function load() {
-  data = await (await fetch('/api/events')).json();
+/* 页签渲染: 第一个固定是「哨兵总览」(默认页), 之后是三个分类 + 实时浏览 */
+function renderTabs() {
   const tabs = document.getElementById('tabs');
-  tabs.innerHTML = '';
   const liveOpen = document.getElementById('livep').classList.contains('open');
-  for (const c of Object.keys(data)) {
+  tabs.innerHTML = '';
+  const mk = (c, label) => {
     const b = document.createElement('button');
     b.className = 'tab' + (!liveOpen && c === currentCat ? ' active' : '');
-    b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
-    b.onclick = () => { document.querySelectorAll('.tab').forEach(t => t.classList.remove('active')); b.classList.add('active'); currentCat = c; reasonFilter = 'all'; dateFilter = 'all'; closeLive(); render(c); prekickList(); };
+    b.dataset.cat = c;
+    b.innerHTML = `<span class="tl">${t(label)}</span><span class="tn">${displayCount(c)}</span>`;
+    b.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      currentCat = c; reasonFilter = 'all'; dateFilter = 'all'; closeLive();
+      try { localStorage.setItem('tsf_cat', c); } catch (e) {}
+      render(c); prekickList();
+    };
     tabs.appendChild(b);
-  }
-  /* 第 4 个页签: 实时预览 (与分类页签同级) */
+  };
+  /* 页签文案沿用以前的叫法(手动保存/行车记录/实时预览), 分类名本身仍是 CATS_NAME */
+  const TAB_LABEL = { __all__: '哨兵总览', SentryClips: '哨兵告警', SavedClips: '手动保存', RecentClips: '行车记录' };
+  mk(ALL_CAT, TAB_LABEL[ALL_CAT] || ALL_CAT);
+  for (const c of Object.keys(data)) mk(c, TAB_LABEL[c] || CATS_NAME[c] || c);
+  /* 最后一个页签: 实时预览 (与分类页签同级) */
   const lv = document.createElement('button');
   lv.className = 'tab' + (liveOpen ? ' active' : '');
   lv.id = 'tab-live';
   lv.innerHTML = `<span class="tl">${t('实时预览')}</span>`;   // 与其它页签同结构 (单行分段控件里才不会错位)
   lv.onclick = () => { document.querySelectorAll('.tab').forEach(x => x.classList.remove('active')); lv.classList.add('active'); openLive(); };
   tabs.appendChild(lv);
+}
+async function load() {
+  data = await (await fetch('/api/events')).json();
+  /* 恢复上次停留的页签, 刷新不再一律跳回「哨兵总览」 */
+  let want = '';
+  try { want = localStorage.getItem('tsf_cat') || ''; } catch (e) {}
+  if (want === '__live__') currentCat = ALL_CAT;
+  else if (want === ALL_CAT || (want && data[want])) currentCat = want;
+  else currentCat = ALL_CAT;
+  renderTabs();
   document.getElementById('stat').textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
   lastSig = sigOf(data);
   renderQSel();
   render(currentCat);
+  ovBind();
+  if (want === '__live__') {
+    /* 上次停在实时预览: 进页时直接回到实时预览并高亮该页签 */
+    openLive();
+    const lv = document.getElementById('tab-live');
+    if (lv) {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      lv.classList.add('active');
+    }
+  } else {
+    autoOpenOverview();
+  }
   openDeepLink();
   prekickList();
+}
+/* 打开网站直接落在「哨兵总览」: 默认把最新的那条事件加载到上方播放区。
+   深链 (?ev= / ?cat= / ?lib=1) 有自己的目标, 不抢。 */
+function autoOpenOverview() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('ev') || q.get('cat') || q.get('lib') === '1') return;
+  if (currentCat !== ALL_CAT || cur) return;
+  if (document.getElementById('player').classList.contains('open')) return;
+  const first = displayEvents(ALL_CAT)[0];
+  if (first) ovOpen(first);
+}
+/* ---------- 哨兵总览: 顶部内嵌「六路合成」播放控件 ---------- */
+let ovEv = null, ovJob = null, ovPoll = null, ovTimer = null, ovRateN = 1,
+    ovCamSel = 'all', ovClipIx = 0, ovBrightOn = false, ovRateVal = 1, ovQ = '360p';
+try { const q0 = String(localStorage.getItem('ovq') || ''); if (['360p','480p','720p','1080p'].indexOf(q0) >= 0) ovQ = q0; } catch (e) {}
+const ovCovers = {};       // 'cat/name' -> 合成帧封面
+const ovJobs = {};         // 'cat/name' -> 合成任务 id (本页内复用; 服务端按事件缓存产物)
+function ovVids() { return [...document.querySelectorAll('#ovgrid video')].filter(v => v._base); }
+function ovVid() { return ovVids()[0] || null; }
+function ovFmt(s) { s = Math.max(0, Math.floor(s || 0)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+function ovKey(ev) { return ((ev && ev._cat) || currentCat) + '/' + ((ev && ev.name) || ''); }
+function ovCams(ev) {
+  const out = [];
+  ((ev && ev.videos) || []).forEach(v => { if (v.cam && out.indexOf(v.cam) < 0) out.push(v.cam); });
+  return out.slice(0, 6);
+}
+function ovBadge(txt, ok) {
+  const b = document.getElementById('ovb');
+  if (!b) return;
+  b.textContent = txt;
+  b.classList.toggle('ok', !!ok);
+}
+function ovMask(show, title, sub) {
+  const m = document.getElementById('ovmask');
+  if (!m) return;
+  m.classList.toggle('hide', !show);
+  if (show) {
+    const b = m.querySelector('b'), s = document.getElementById('ovst');
+    if (b && title !== undefined) b.textContent = title;
+    if (s && sub !== undefined) s.textContent = sub;
+  }
+}
+function ovInfo(ev) {
+  const el = document.getElementById('ovinfo');
+  if (!el) return;
+  if (!ev) { el.textContent = '上面播放六路合成视频, 下面点事件切换。'; return; }
+  const mm = ev.meta || {}, n = (ev.videos || []).length, groups = groupVideos(ev.videos || []);
+  const mb = (ev.size || 0) / 1048576;
+  const sz = mb >= 1 ? mb.toFixed(1) + ' MB' : Math.round(mb * 1024) + ' KB';
+  const l1 = t(CATS_NAME[ev._cat || currentCat] || (ev._cat || '')) + ' · ' + fmtName(ev.name);
+  let l2 = '';
+  if (mm.reason) l2 = '触发: ' + (reasonLabel(mm.reason) || mm.reason);
+  const loc = locShort(mm);
+  if (loc) l2 += (l2 ? ' · ' : '') + loc;
+  const segN = ev._trip ? ev._trip.count : groups.length;
+  el.innerHTML = '<b>' + l1 + '</b>' + (l2 ? '<br>' + l2 : '') + '<br>' +
+    n + ' 路画面 · ' + segN + ' 段 · ' + sz;
+}
+/* 吸顶偏移: 顶部 header 也是 sticky, 播放区要正好贴在 header 下沿 */
+function ovStickTop() {
+  const hd = document.querySelector('header'), op = document.getElementById('ovplay');
+  if (!hd || !op) return;
+  op.style.top = Math.round(hd.getBoundingClientRect().height) + 'px';
+}
+window.addEventListener('resize', ovStickTop);
+function ovOpen(ev) {
+  if (!ev) return;
+  ovStickTop();
+  ovEv = ev;
+  ovCamSel = 'all';
+  const vt = document.getElementById('ovt');
+  if (vt) {
+    const _h = amapHref(ev.meta || {});
+    vt.textContent = ovTitle(ev) + (_h ? ' 📍' : '');
+    vt.style.cursor = _h ? 'pointer' : '';
+    vt.onclick = _h ? (e) => { e.stopPropagation(); window.open(_h, '_blank'); } : null;
+    vt.title = _h ? '点击在高德地图打开' : '';
+  }
+  const vc = document.getElementById('ovcat');
+  const cat = ev._cat || currentCat;
+  if (vc) { vc.textContent = t(CATS_NAME[cat] || cat); vc.className = 'ovk k-' + cat; }
+  const qb = document.getElementById('ovq');
+  if (qb) { qb.textContent = ovQ; qb.classList.toggle('hi', ovQ !== '360p'); }
+  ovBuildGrid(ev, 0);
+}
+/* 取该事件第一组片段的 6 路: 总览只播第一分钟, 六格各开一个播放器同时播 */
+function ovPickVids(ev, ix) {
+  const groups = groupVideos((ev && ev.videos) || []);
+  const g = groups.length ? (groups[ix || 0] || groups[groups.length - 1]) : null;
+  let src = g ? g.vids : ((ev && ev.videos) || []);
+  if (ovCamSel === 'quad') {
+    /* 四路全景: 1前视 2左B柱 3后视 4右B柱, 按 2x2 从左上到右下数 */
+    const want = ['front', 'left_repeater', 'back', 'right_repeater'];
+    const four = want.map(c => src.find(v => (v.cam || '') === c)).filter(Boolean);
+    if (four.length >= 2) return four;
+    ovCamSel = 'all';
+  } else if (ovCamSel !== 'all') {
+    const one = src.filter(v => (v.cam || '') === ovCamSel);
+    if (one.length) src = one; else ovCamSel = 'all';
+  }
+  return camSort(src.slice()).slice(0, 6);
+}
+function ovClipKey(k) {
+  const m = String(k || '').match(/_(\d{2})-(\d{2})-(\d{2})/);
+  return m ? m[2] + ':' + m[3] : String(k || '').slice(-5);
+}
+function ovRenderClips(ev, ix) {
+  const el = document.getElementById('ovclips');
+  if (!el) return;
+  const groups = groupVideos((ev && ev.videos) || []);
+  if (groups.length < 2) { el.innerHTML = ''; el.classList.add('hide'); return; }
+  el.classList.remove('hide');
+  el.innerHTML = groups.map((g, i) =>
+    `<button class="${i === ix ? 'on' : ''}" onclick="ovClip(${i})">${ovClipKey(g.key)}</button>`).join('');
+}
+function ovClip(i) {
+  ovClipIx = i || 0;
+  if (!ovEv) return;
+  ovBuildGrid(ovEv, ovClipIx);
+}
+/* ---------- 总览工具: 前后 2 秒 / 提亮 / 截屏 / 倍速 / 方位切换 ---------- */
+function ovSkip(d) {
+  const vs = ovVids();
+  if (!vs.length) return;
+  vs.forEach(v => {
+    try { v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.2, (v.currentTime || 0) + d)); } catch (e) {}
+  });
+}
+function ovBright() {
+  ovBrightOn = !ovBrightOn;
+  const g = document.getElementById('ovgrid');
+  if (g) g.style.filter = ovBrightOn ? 'brightness(1.9) contrast(1.15)' : '';
+  const b = document.getElementById('ovbrt');
+  if (b) b.classList.toggle('on', ovBrightOn);
+}
+function ovRateTo(r) {
+  ovRateVal = r; ovRateN = r;
+  ovVids().forEach(v => { try { v.playbackRate = r; } catch (e) {} });
+  document.querySelectorAll('.ovrate').forEach(b => b.classList.toggle('on', +b.dataset.r === r));
+  const b = document.getElementById('ovspd');
+  if (b) b.textContent = r + 'x';
+}
+function ovShot() {
+  const vs = ovVids();
+  if (!vs.length) return;
+  const n = vs.length, cols = n >= 5 ? 3 : (n >= 2 ? 2 : 1), rows = Math.ceil(n / cols);
+  const W = 320, H = 240;
+  const cv = document.createElement('canvas');
+  cv.width = W * cols; cv.height = H * rows;
+  const ctx = cv.getContext('2d');
+  vs.forEach((v, i) => {
+    if (!v.videoWidth || !v.videoHeight) return;
+    const dx = (i % cols) * W, dy = Math.floor(i / cols) * H;
+    const vw = v.videoWidth, vh = v.videoHeight, boxAr = W / H, srcAr = vw / vh;
+    let sw = vw, sh = vh, sx = 0, sy = 0;
+    if (srcAr > boxAr) { sw = vh * boxAr; sx = (vw - sw) / 2; } else { sh = vw / boxAr; sy = (vh - sh) / 2; }
+    try { ctx.drawImage(v, sx, sy, sw, sh, dx, dy, W, H); } catch (e) {}
+  });
+  const u = cv.toDataURL('image/jpeg', 0.92);
+  /* iOS Safari 对 a.download 支持差: 直接开新窗口显示图片, 让用户长按保存 */
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent || '')) {
+    const w = window.open('');
+    if (w) w.document.write('<img src="' + u + '" style="max-width:100%;display:block">');
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = u;
+  a.download = 'sentry_' + ((ovEv && ovEv.name) || 'shot') + '.jpg';
+  a.click();
+}
+function ovRenderCams(ev) {
+  const el = document.getElementById('ovcams');
+  if (!el) return;
+  const groups = groupVideos((ev && ev.videos) || []);
+  const base = groups.length ? groups[Math.min(ovClipIx, groups.length - 1)].vids
+                             : ((ev && ev.videos) || []);
+  const vs = camSort(base.slice());
+  const bAll = document.getElementById('ovall'), bQuad = document.getElementById('ovquad');
+  if (vs.length < 2) {
+    el.innerHTML = ''; el.classList.remove('show');
+    if (bAll) { bAll.classList.remove('on'); bAll.disabled = true; }
+    if (bQuad) { bQuad.classList.remove('on'); bQuad.disabled = true; }
+    return;
+  }
+  if (bAll) { bAll.disabled = false; bAll.classList.toggle('on', ovCamSel === 'all'); }
+  if (bQuad) { bQuad.disabled = false; bQuad.classList.toggle('on', ovCamSel === 'quad'); }
+  el.classList.add('show');
+  el.innerHTML = vs.map(v => `<button class="${ovCamSel === (v.cam || '') ? 'on' : ''}" onclick="ovCam('${v.cam || ''}')">${camLabel(v.cam || '')}</button>`).join('');
+}
+function ovCam(c) {
+  ovCamSel = c || 'all';
+  if (ovEv) ovBuildGrid(ovEv, ovClipIx);
+}
+/* 点下载: 直接生成/复用六路合成并下载 mp4, 不再跳进播放器详情 */
+async function ovDl(btn) {
+  const card = btn && btn.closest ? btn.closest('.card') : null;
+  const cat = (card && card.dataset.cat) || (ovEv && ovEv._cat) || 'SentryClips';
+  const nm = (card && card.dataset.name) || (ovEv ? ovTarget(ovEv).name : '');
+  const ev = displayEvents(ALL_CAT).find(x => (x._cat === cat) && (ovTarget(x).name === nm)) || ovEv;
+  if (!ev || !nm) return;
+  const old = btn ? btn.textContent : '';
+  const busy = (txt, dis) => { if (!btn) return; btn.textContent = txt; btn.disabled = !!dis; };
+  busy('合成中…', true);
+  let jid = '';
+  try {
+    const r = await fetch('/api/stitch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cat: cat, name: nm, cams: ovCams(ev) }) });
+    const d = await r.json().catch(() => ({ ok: false, error: '返回异常' }));
+    if (!d || !d.ok) {
+      busy((d && d.error) || '失败', false);
+      setTimeout(() => busy(old, false), 2500);
+      return;
+    }
+    jid = d.id;
+    jobAdd(jid, (ev ? evTime(ev) : '') + (nm ? (ev ? ' · ' : '') + nm : ''));
+  } catch (e) {
+    busy('失败', false);
+    setTimeout(() => busy(old, false), 2000);
+    return;
+  }
+  const timer = setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/stitch/status?id=' + encodeURIComponent(jid), { cache: 'no-store' })).json();
+      if (s.state === 'running') { busy('合成 ' + (s.pct || 0) + '%', true); return; }
+      clearInterval(timer);
+      if (s.state === 'done') {
+        jobDrop(jid);
+        busy('下载中…', true);
+        location.href = '/api/stitch/dl?id=' + encodeURIComponent(jid);
+        setTimeout(() => busy(old, false), 1500);
+      } else {
+        jobDrop(jid);
+        busy('失败', false);
+        setTimeout(() => busy(old, false), 2000);
+      }
+    } catch (e) {}
+  }, 1500);
+}
+/* 连续行程是逻辑聚合的假目录(没有 evs 字段): 从第一个视频的 url 反解真实归档目录
+   /media/<cat>/<name>/<file> -> cat/name, 总览封面与后端接口都靠它 */
+function ovTarget(ev) {
+  const v0 = (ev && ev.videos && ev.videos[0]) || null;
+  let cat = (ev && ev._cat) || currentCat, name = (ev && ev.name) || '';
+  const m = v0 && String(v0.url || '').match(/^\/media\/([^/]+)\/([^/]+)\//);
+  if (m) { cat = decodeURIComponent(m[1]); name = decodeURIComponent(m[2]); }
+  return { cat: cat, name: name };
+}
+/* 地点短名: 优先高德短名(街道/镇), 否则从完整地址里去掉门牌号, 太长只留核心地名 */
+function locShort(md) {
+  md = md || {};
+  let s = md.short || '';
+  if (!s) {
+    s = md.street || '';
+    if (s) {
+      const cut = s.replace(/[A-Za-z]{0,2}\d+号.*$/, '').replace(/\d+号.*$/, '').trim();
+      s = cut || s;
+    }
+  }
+  if (!s) s = md.city || '';
+  return s;
+}
+
+/* 高德地图: 有坐标就生成 marker 链接(手机上会直接唤起高德App) */
+function amapHref(md) {
+  md = md || {};
+  if (!md.est_lat || !md.est_lon) return '';
+  const nm = encodeURIComponent((md.city || '') + (md.street || '') || '特斯拉哨兵事件');
+  return 'https://uri.amap.com/marker?position=' + md.est_lon + ',' + md.est_lat +
+         '&name=' + nm + '&callnative=1';
+}
+
+/* 播放区标题: 时间 · 地点 (分类已由左边的彩色小标签表示, 这里不再重复"手动保存"这类分类名) */
+function ovTitle(ev) {
+  const mm = (ev && ev.meta) || {};
+  const parts = [];
+  const tm = fmtCardTime(mm.timestamp, (ev && ev.name));
+  if (tm) parts.push(tm);
+  const loc = locShort(mm);
+  if (loc) parts.push(loc);
+  /* 发生什么事: 哨兵类带触发原因; 手动保存是用户主动点的, 不写 */
+  const rs = mm.reason || '';
+  if (rs && rs.indexOf('user_interaction') !== 0) {
+    const rl = reasonLabel(rs) || '';
+    if (rl) parts.push(rl);
+  }
+  return parts.join(' · ');
+}
+/* 卡片时间: 当年只写 26-11-24 22:51, 跨年补全年份; 没事件时间就从目录名取 */
+function fmtCardTime(ts, name) {
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (m) {
+    const y = m[1] === String(new Date().getFullYear()) ? m[1].slice(2) : m[1];
+    return y + '-' + m[2] + '-' + m[3] + ' ' + m[4] + ':' + m[5];
+  }
+  const n = String(name || '').match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/);
+  return n ? n[1].slice(2) + '-' + n[2] + '-' + n[3] + ' ' + n[4] + ':' + n[5] : fmtName(name || '');
+}
+/* 精确到秒的时间 HH:MM:SS, 列表标题统一用它 */
+function fmtHMS(ts, name) {
+  const m = String(ts || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))/);
+  if (m) return m[4] + ':' + m[5] + ':' + (m[6] || '00');
+  const n = String(name || '').match(/_(\d{2})-(\d{2})-(\d{2})/);
+  return n ? n[1] + ':' + n[2] + ':' + n[3] : '';
+}
+function ovStopAll() {
+  if (ovTimer) { clearInterval(ovTimer); ovTimer = null; }
+  /* 只停播放、不删节点: 6 个格子常驻复用, 换事件只换 src, 不会重建 DOM 而闪白 */
+  const g = document.getElementById('ovgrid');
+  if (!g) return;
+  [...g.querySelectorAll('video')].forEach(v => {
+    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    v._base = ''; v._qswapped = false;
+  });
+  [...g.querySelectorAll('.ovcell')].forEach(c => { c.style.display = 'none'; });
+}
+/* 切换播放画质: 只换当前 6 路的 src, 保留播放进度; 新档位立刻排进服务端转码队列 */
+function ovSetQuality(q) {
+  ovQ = q;
+  try { localStorage.setItem('ovq', q); } catch (e) {}
+  const btn = document.getElementById('ovq');
+  if (btn) { btn.textContent = q; btn.classList.toggle('hi', q !== '360p'); }
+  const vs = ovVids();
+  if (!vs.length) return;
+  const at = vs[0].currentTime || 0, playing = !vs[0].paused;
+  ovBadge(q + ' 切换中…');
+  let left = vs.length;
+  vs.forEach(v => {
+    /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
+    v._qswapped = false;
+    try { v.pause(); } catch (e) {}
+    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + q + '&preview=' + PREV_SEC;
+    v.addEventListener('loadedmetadata', function h() {
+      v.removeEventListener('loadedmetadata', h);
+      try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
+      try { v.playbackRate = ovRateVal; } catch (e) {}
+      if (playing) v.play().catch(() => {});
+      if (--left <= 0) ovBadge(vs.length + ' 路同步', true);
+    });
+  });
+  try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths: vs.map(v => v._base), q: q }) }).catch(() => {}); } catch (e) {}
+}
+function ovCycleQ() {
+  const list = ['360p', '480p', '720p', '1080p'];
+  ovSetQuality(list[(list.indexOf(ovQ) + 1) % list.length]);
+}
+function ovBuildGrid(ev, ix) {
+  const g = document.getElementById('ovgrid');
+  if (!g) return;
+  ovClipIx = ix || 0;
+  const vids = ovPickVids(ev, ix);
+  g.classList.toggle('one', vids.length === 1);
+  g.classList.toggle('quad', vids.length === 4);
+  /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
+  let cells = [...g.querySelectorAll('.ovcell')];
+  while (cells.length < 6) {
+    const cell = document.createElement('div'); cell.className = 'ovcell';
+    const vid = document.createElement('video');
+    vid.muted = true; vid.defaultMuted = true; vid.playsInline = true; vid.preload = 'auto';
+    vid.setAttribute('playsinline', ''); vid.setAttribute('webkit-playsinline', 'true');
+    cell.appendChild(vid);
+    const lb = document.createElement('span'); lb.className = 'ovcam';
+    cell.appendChild(lb);
+    g.appendChild(cell); cells.push(cell);
+  }
+  cells.forEach((c, i) => {
+    const vid = c.querySelector('video'), lb = c.querySelector('.ovcam');
+    if (i < vids.length) {
+      const v = vids[i];
+      c.style.display = '';
+      if (lb) lb.textContent = camLabel(v.cam || '');
+      vid._base = v.url; vid._qswapped = false;
+      const src = v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC;
+      if (vid.getAttribute('src') !== src) {
+        try { vid.pause(); } catch (e) {}
+        vid.src = src;
+      } else {
+        try { vid.currentTime = 0; } catch (e) {}
+      }
+    } else {
+      c.style.display = 'none';
+      try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {}
+      vid._base = ''; vid._qswapped = false;
+    }
+  });
+  ovBadge(vids.length ? (vids.length + ' 路同步') : '', !!vids.length);
+  ovRenderClips(ev, ix || 0);
+  ovRenderCams(ev);
+  if (vids.length) {
+    ovMask(false);          /* 不再压"加载中"遮罩, 直接起播 */
+    ovPlayAll();
+    try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: vids.map(v => v.url), q: ovQ }) }).catch(() => {}); } catch (e) {}
+  } else {
+    ovMask(true, '没有可播放的画面', '这条事件没有视频文件');
+  }
+}
+function ovPlayAll() {
+  const vs = ovVids();
+  if (!vs.length) return;
+  vs.forEach(v => {
+    try { v.currentTime = 0; } catch (e) {}
+    v.muted = true;
+    try { v.playbackRate = ovRateVal; } catch (e) {}   /* 换源/重建后把用户选的倍速补回来 */
+    v.play().catch(() => {});
+  });
+  ovSyncOn();
+}
+function ovSyncOn() {
+  if (ovTimer) return;
+  ovTimer = setInterval(() => {
+    const vs = ovVids();
+    if (!vs.length) return;
+    const main = vs[0];
+    vs.forEach((v, i) => {
+      if (i === 0 || !v.duration || v.seeking) return;
+      if (Math.abs((v.currentTime || 0) - (main.currentTime || 0)) > 0.45) {
+        try { v.currentTime = main.currentTime || 0; } catch (e) {}
+      }
+      if (main.paused && !v.paused) { try { v.pause(); } catch (e) {} }
+      if (!main.paused && v.paused && main.currentTime > 0.2) v.play().catch(() => {});
+    });
+    /* 预缓冲只覆盖 PREV_SEC 秒: 到点给每路换成 360p 完整档, 接着当前位置继续播;
+       完整档还没转好(duration 仍是 20 秒)就隔 2.5 秒再试, 最多 8 次 */
+    if (!main._qswapped && main.currentTime > Math.max(8, PREV_SEC - 5)) {
+      main._qswapped = true;
+      ovSwapFull(0);
+    }
+  }, 400);
+}
+function ovSwapFull(tries) {
+  const vs = ovVids();
+  if (!vs.length) return;
+  const main = vs[0], at = main.currentTime || 0;
+  let pending = vs.length, doneFlag = false;
+  const finish = () => {
+    if (doneFlag) return;
+    doneFlag = true;
+    if ((main.duration || 0) <= PREV_SEC + 2 && tries < 8) {
+      ovBadge('转码中');
+      setTimeout(() => ovSwapFull(tries + 1), 2500);
+    }
+  };
+  /* 某一路加载失败也不能一直等: 8 秒兜底收尾 */
+  setTimeout(finish, 8000);
+  const done = () => { if (--pending <= 0) finish(); };
+  vs.forEach(v => {
+    try { v.pause(); } catch (e) {}
+    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
+    v.addEventListener('loadedmetadata', () => {
+      try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.5)); } catch (e) {}
+      try { v.playbackRate = ovRateVal; } catch (e) {}
+      v.play().catch(() => {});
+      done();
+    }, { once: true });
+  });
+}
+function ovPlayToggle() {
+  const vs = ovVids();
+  if (!vs.length) { if (ovEv) ovOpen(ovEv); return; }
+  const main = vs[0];
+  if (main.paused) {
+    /* 已经播到末尾再点播放: 从头来, 否则 play() 会立刻又结束 */
+    const ended = main.ended || (main.duration && main.currentTime >= main.duration - 0.3);
+    const t = ended ? 0 : (main.currentTime || 0);
+    vs.forEach(v => { try { v._qswapped = false; v.currentTime = t; } catch (e) {} v.play().catch(() => {}) ; });
+    ovSyncOn();
+  } else {
+    vs.forEach(v => { try { v.pause(); } catch (e) {} });
+  }
+}
+function ovSyncBtn() {
+  const v = ovVids()[0], b = document.getElementById('ovpp');
+  if (b) b.textContent = (v && !v.paused) ? '⏸' : '▶';
+}
+function ovSeek(val) {
+  const vs = ovVids(), main = vs[0];
+  if (!main || !main.duration) return;
+  const t = Math.max(0, Math.min(main.duration - 0.05, main.duration * (+val / 1000)));
+  vs.forEach(v => { try { v.currentTime = t; } catch (e) {} });
+}
+function ovRate() {
+  const rates = [0.5, 1, 2];
+  ovRateTo(rates[(rates.indexOf(ovRateVal) + 1) % rates.length] || 1);
+}
+function ovFull() {
+  const st = document.getElementById('ovstage');
+  if (st && st.requestFullscreen) st.requestFullscreen().catch(() => {});
+}
+function ovBind() {
+  const g = document.getElementById('ovgrid');
+  if (!g || g._ovBound) return;
+  g._ovBound = true;
+  /* timeupdate 不冒泡: 用捕获阶段接主路(第一格)的事件, 驱动进度条与时钟 */
+  g.addEventListener('timeupdate', function (e) {
+    const main = ovVids()[0];
+    if (e.target !== main) return;
+    const v = e.target, s = document.getElementById('ovseek'), c = document.getElementById('ovcur');
+    if (v.duration && s) s.value = Math.round(v.currentTime / v.duration * 1000);
+    if (c) c.textContent = ovFmt(v.currentTime) + ' / ' + ovFmt(v.duration || 0);
+  }, true);
+  g.addEventListener('play', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
+  g.addEventListener('pause', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
+  g.addEventListener('waiting', function (e) { if (e.target === ovVids()[0]) ovBadge('缓冲中'); }, true);
+  g.addEventListener('playing', function (e) { if (e.target === ovVids()[0]) ovBadge(ovVids().length + ' 路同步', true); }, true);
 }
 
 /* 支持 ?ev=SentryClips/2026-11-04_12-30-00 直接打开某个事件 */
@@ -2838,13 +3725,13 @@ function openDeepLink() {
   /* ?date=2026-11-03 只看某一天 */
   const qd = q.get('date');
   if (/^\d{4}-\d{2}-\d{2}$/.test(qd || '')) { dateFilter = qd; render(currentCat); }
-  /* ?cat=SavedClips 直接切到某个分类 */
+  /* ?cat=SavedClips 直接切到某个分类 (也支持 ?cat=__all__) */
   const qc = q.get('cat');
-  if (qc && Object.keys(data).includes(qc)) {
+  if (qc && (qc === ALL_CAT || Object.keys(data).includes(qc))) {
     const tabs = document.getElementById('tabs');
     [...tabs.children].forEach(b => b.classList.remove('active'));
-    const idx = Object.keys(data).indexOf(qc);
-    if (tabs.children[idx]) tabs.children[idx].classList.add('active');
+    const tb = [...tabs.children].find(b => b.dataset.cat === qc);
+    if (tb) tb.classList.add('active');
     currentCat = qc; reasonFilter = 'all'; render(qc);
   }
   const m = q.get('ev');
@@ -2855,9 +3742,9 @@ function openDeepLink() {
     if (!ev) continue;
     const tabs = document.getElementById('tabs');
     [...tabs.children].forEach(b => b.classList.remove('active'));
-    const idx = keys.indexOf(c);
-    if (tabs.children[idx]) tabs.children[idx].classList.add('active');
-    currentCat = c; reasonFilter = 'all'; render(c); openPlayer(ev);
+    const tb = [...tabs.children].find(b => b.dataset.cat === c);
+    if (tb) tb.classList.add('active');
+    currentCat = c; reasonFilter = 'all'; render(c); openDetailPop(ev);
     const cam = new URLSearchParams(location.search).get('cam');
     if (cam) setCam(cam);
     if (q.get('exp') === '1') setTimeout(openExport, 600);
@@ -2865,8 +3752,53 @@ function openDeepLink() {
   }
 }
 
-function sigOf(d) {
-  return Object.keys(d).map(c => c + ':' + d[c].map(e => e.name + '/' + e.videos.length).join(',')).join('|');
+/* 分享: 复制一条能直接打开这条记录详情页的链接 (对方打开后可导出/保存) */
+function shareEventFor(ev) {
+  if (!ev) { toast('❌ 没有可分享的记录'); return; }
+  const cat = ev._cat || currentCat || 'SentryClips';
+  const nm = (typeof ovTarget === 'function' ? ovTarget(ev).name : ev.name);
+  const u = location.origin + '/?ev=' + encodeURIComponent(cat + '/' + nm);
+  const ok = () => toast('✅ 链接已复制, 对方打开就是这条记录');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(u).then(ok).catch(() => { window.prompt('复制这条链接发给对方', u); });
+  } else {
+    window.prompt('复制这条链接发给对方', u);
+  }
+}
+function shareEvent() { shareEventFor(cur); }
+/* 列表里直接导出: 不打开详情页, 直接把这条当"当前记录"喂给导出面板 */
+function exportFromList(ev) {
+  if (!ev) return;
+  if (!ev._cat) ev._cat = currentCat;
+  cur = ev;
+  curClips = groupVideos(ev.videos || []);
+  curClipIx = 0;
+  camSel = pickDefaultCam();
+  TEL = null;          // 列表直出没加载遥测, 水印就只有时间+地点
+  openExport();
+}
+/* 详情小弹窗: 记录信息 + 导出/分享, 不再进全屏详情页 */
+let dpEv = null;
+function openDetailPop(ev) {
+  if (!ev) return;
+  if (!ev._cat) ev._cat = currentCat;
+  dpEv = ev;
+  const md = ev.meta || {};
+  const cat = ev._cat || 'SentryClips';
+  document.getElementById('dpc').textContent = t(CATS_NAME[cat] || cat);
+  document.getElementById('dpt').textContent = evTime(ev) + (locShort(md) ? ' · ' + locShort(md) : '');
+  const g = groupVideos(ev.videos || []);
+  const nv = g.length ? g[0].vids.length : (ev.videos || []).length;
+  const segs = g.length > 1 ? (' · ' + g.length + ' ' + t('段')) : '';
+  const mb = (ev.size || 0) / 1048576;
+  const sz = mb >= 1 ? mb.toFixed(1) + ' MB' : Math.round(mb * 1024) + ' KB';
+  document.getElementById('dpi').textContent = nv + ' ' + t('路画面') + segs + ' · ' + sz;
+  document.getElementById('dpop').classList.add('open');
+}
+function closeDetailPop() { document.getElementById('dpop').classList.remove('open'); }
+function dpopExport() { const e = dpEv; closeDetailPop(); if (e) exportFromList(e); }
+function dpopShare() { if (dpEv) shareEventFor(dpEv); }
+function sigOf(d) {  return Object.keys(d).map(c => c + ':' + d[c].map(e => e.name + '/' + e.videos.length).join(',')).join('|');
 }
 
 /* 容量条配色: <30% 绿 / 30%~85% 蓝 / >85% 红 (三行同规则) */
@@ -2971,8 +3903,8 @@ async function refreshLive() {
     if (s !== lastSig) {
       lastSig = s; data = d;
       const tabs = document.getElementById('tabs');
-      [...tabs.children].forEach((b, i) => {
-        const c = Object.keys(d)[i];
+      [...tabs.children].forEach(b => {
+        const c = b.dataset && b.dataset.cat;
         if (c) b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
       });
       document.getElementById('stat').textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
@@ -3031,6 +3963,8 @@ const SENTRY_TABS = [['all', '全部'], ['aware', '哨兵警觉'], ['door', '车
 /* 筛选匹配: 哨兵分类按官方三分类的 key 匹配, 其他分类按原始 reason 精确匹配 */
 function matchReason(cat, ev) {
   if (reasonFilter === 'all') return true;
+  /* 总览是三类混排, 原因维度不统一, 不做原因筛选(切页签时已经复位成 all) */
+  if (cat === ALL_CAT) return true;
   if (cat === 'SentryClips') return reasonTab(reasonOf(ev)) === reasonFilter;
   return reasonOf(ev) === reasonFilter;
 }
@@ -3052,6 +3986,9 @@ function renderFilters(cat) {
     rbox.innerHTML = SENTRY_TABS.map(([k, label]) =>
       `<button class="chip${k === reasonFilter ? ' on' : ''}" onclick="setReason('${k}')">${t(label)}<span class="n">${cnt[k] || 0}</span></button>`
     ).join('');
+  } else if (cat === ALL_CAT) {
+    /* 总览里混着哨兵/手动/行车三类, 触发原因维度各不相同, 只保留日期筛选 */
+    rbox.className = 'filters'; rbox.innerHTML = '';
   } else {
     const rcnt = {};
     byDate.forEach(ev => { const r = reasonOf(ev); rcnt[r] = (rcnt[r] || 0) + 1; });
@@ -3069,6 +4006,7 @@ function renderFilters(cat) {
 
   const dcnt = {};
   byReason.forEach(ev => { const d = dateOf(ev); if (d) dcnt[d] = (dcnt[d] || 0) + 1; });
+  DAY_COUNTS = dcnt;
   if (dateFilter !== 'all' && !/^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) dateFilter = 'all';
   const alldays = [...new Set(evs.map(dateOf).filter(Boolean))].sort().reverse();
   let days = alldays.filter(d => dcnt[d] > 0 || d === dateFilter);
@@ -3085,17 +4023,44 @@ function renderFilters(cat) {
       (tripView ? '按分钟查看' : '按行程查看') + '</button>'
     : '') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
 }
-/* 原生日期选择器: 分类里只有一天时也能翻到别的日期 */
+/* 自建日期选择器 (跟随当前主题/配色, 不再弹系统白色日历) */
+let DAY_COUNTS = {};
+let dpMonth = null;
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtYMD(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
 function pickDate() {
-  const inp = document.getElementById('dpick');
-  if (!inp) return;
-  const t = new Date();
-  inp.max = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' +
-    String(t.getDate()).padStart(2, '0');
-  inp.value = dateFilter !== 'all' ? dateFilter : '';
-  try { if (inp.showPicker) { inp.showPicker(); return; } } catch (e) {}
-  inp.click();
+  const base = /^\d{4}-\d{2}-\d{2}$/.test(dateFilter) ? dateFilter : fmtYMD(new Date());
+  dpMonth = new Date(base + 'T00:00:00');
+  dpMonth.setDate(1);
+  renderDatePick();
+  document.getElementById('datepop').classList.add('open');
 }
+function closeDatePick() { const p = document.getElementById('datepop'); if (p) p.classList.remove('open'); }
+function dpMonthMove(n) { if (!dpMonth) dpMonth = new Date(); dpMonth.setMonth(dpMonth.getMonth() + n); renderDatePick(); }
+function datePickToday() { setDate(fmtYMD(new Date())); closeDatePick(); }
+function cdpSelectAll() { setDate('all'); closeDatePick(); }
+function renderDatePick() {
+  if (!dpMonth) dpMonth = new Date();
+  const y = dpMonth.getFullYear(), m = dpMonth.getMonth();
+  document.getElementById('dpm').textContent = LANG === 'zh'
+    ? (y + '年' + (m + 1) + '月')
+    : dpMonth.toLocaleDateString(LANG, {year: 'numeric', month: 'long'});
+  const wk = LANG === 'zh' ? ['日', '一', '二', '三', '四', '五', '六'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const startW = new Date(y, m, 1).getDay();
+  const days = new Date(y, m + 1, 0).getDate();
+  const today = fmtYMD(new Date());
+  const cells = wk.map(w => '<div class="dw">' + w + '</div>');
+  for (let i = 0; i < startW; i++) cells.push('<div class="dd empty"></div>');
+  for (let d = 1; d <= days; d++) {
+    const ds = y + '-' + pad2(m + 1) + '-' + pad2(d);
+    const has = !!DAY_COUNTS[ds];
+    const cls = 'dd' + (ds === dateFilter ? ' sel' : '') + (ds === today ? ' today' : '') +
+      (has ? '' : ' nodata') + (ds > today ? ' off' : '');
+    cells.push('<div class="' + cls + '"' + (ds > today ? '' : ' onclick="pickDay(\'' + ds + '\')"') + '>' + d + '</div>');
+  }
+  document.getElementById('dpgrid').innerHTML = cells.join('');
+}
+function pickDay(ds) { setDate(ds); closeDatePick(); }
 function setReason(k) {
   reasonFilter = k;
   render(currentCat);
@@ -3127,6 +4092,10 @@ function dheadLabel(d) {
   catch (e) { return d.slice(5); }
 }
 function render(cat) {
+  /* 所有分类页都带顶部六路播放器 (和总览同一套), 点卡片就在上面播 */
+  const isAll = cat === ALL_CAT;
+  document.body.classList.add('ovmode');
+  document.body.classList.toggle('allmode', isAll);
   const g = document.getElementById('grid'), e = document.getElementById('empty');
   g.innerHTML = '';
   renderFilters(cat);
@@ -3151,45 +4120,82 @@ function render(cat) {
     }
     const card = document.createElement('div'); card.className = 'card';
     const isTrip = !!ev._trip;
+    /* 哨兵总览: 大六路封面 + 时间/下载 + 文件名, 点开就在上面六路一起播 */
+    if (cat === ALL_CAT) {
+      const groups0 = groupVideos(ev.videos || []);
+      const vids0 = camSort(groups0.length ? groups0[0].vids : (ev.videos || []));
+      const fb0 = sentryThumbSrc(ev, groups0) ||
+        (vids0.length ? (vids0.find(v => v.cam === 'front') || vids0[0]).url.replace('/media/', '/thumb/') : '');
+      const ovSrc0 = '/api/ovthumb?cat=' + encodeURIComponent(ev._cat || 'SentryClips') +
+        '&name=' + encodeURIComponent(ovTarget(ev).name) + '&v=' + Math.round(ev.size || 0);
+      const src0 = ovSrc0 || fb0;
+      const mm0 = ev.meta || {};
+      const full0 = String(mm0.timestamp || '').replace('T', ' ').slice(0, 19) || fmtName(ev.name);
+      card.className = 'card ovcard';
+      const cat0 = ev._cat || 'SentryClips';
+      card.dataset.cat = cat0;
+      card.dataset.name = ovTarget(ev).name;
+      card.innerHTML = `<div class="ovthumb"><img loading="lazy" decoding="async" src="${src0}" alt="" onerror="this.onerror=null;this.src='${fb0}'"><span class="cnum">${vids0.length} ${t('路')}</span></div>` +
+        `<div class="ovrow"><span class="ovcat k-${cat0}">${t(CATS_NAME[cat0] || cat0)}</span>` +
+        `<span class="ovtime">${fmtHMS(mm0.timestamp, ev.name)}</span></div>`;
+      card.onclick = () => ovOpen(ev);
+      g.appendChild(card);
+      continue;
+    }
     const groups = groupVideos(ev.videos);
     /* 行程卡用第一分钟的前视画面当封面; 普通事件仍用最后一组 */
     const vids = camSort(groups.length ? (isTrip ? groups[0] : groups[groups.length - 1]).vids : []);
     let th;
     if (vids.length) {
       /* 哨兵事件: 用触发摄像头在触发那一帧当封面; 其他/回落: 前摄像头第1秒 */
-      const src = sentryThumbSrc(ev, groups) ||
+      const fbSrc = sentryThumbSrc(ev, groups) ||
         (vids.find(v => v.cam === 'front') || vids[0]).url.replace('/media/', '/thumb/');
-      th = `<div class="thumb"><img loading="lazy" decoding="async" src="${src}" alt="" onerror="thumbErr(this)"><span class="cnum">${vids.length} ${t('路')}</span></div>`;
+      /* 总览卡片封面: 服务端把 6 路各抽一帧拼成 3x2 一张图; 生成失败就回落单路封面 */
+      const ovSrc = (cat === ALL_CAT)
+        ? '/api/ovthumb?cat=' + encodeURIComponent(ev._cat || 'SentryClips') +
+          '&name=' + encodeURIComponent(ovTarget(ev).name) : '';
+      const src = ovSrc || fbSrc;
+      th = `<div class="thumb"><img loading="lazy" decoding="async" src="${src}" alt="" onerror="this.onerror=null;this.src='${fbSrc}'"><span class="cnum">${vids.length} ${t('路')}</span></div>`;
     } else {
       th = `<div class="thumb"><div class="ph">🎞</div></div>`;
     }
     const mm = ev.meta || {};
-    /* 标题: 触发原因·触发摄像头 (哨兵), 否则分类名 */
-    let title = t(CATS_NAME[cat] || cat);
-    if (isTrip) title = t('连续行程');
-    if (mm.reason) {
-      title = reasonLabel(mm.reason) || mm.reason;
-      if (isSentryEv(mm) && mm.camera) {
-        const ck = CAM_IDX[+mm.camera];
-        if (ck) title += ' · ' + camLabel(ck);
-      }
+    const evCat = (cat === ALL_CAT) ? (ev._cat || 'SentryClips') : cat;
+    /* 列表上只显示一个时间 HH:MM:SS; 地点/路数/大小 全部收进「详情」弹窗 */
+    const tm = fmtHMS(mm.timestamp, ev.name);
+    const tmTxt = isTrip ? tripHMS(ev._trip) : (tm || fmtName(ev.name));
+    const title = tmTxt;
+    card.innerHTML = th + `<div class="meta"><div class="l1"><span class="rt" title="${title}">${title}</span>${cat === ALL_CAT ? `<span class="ky k-${evCat}">${t(CATS_NAME[evCat] || evCat)}</span>` : ''}</div></div>`;
+    /* 卡片按钮竖排: 分享(上) / 导出(中) / 详情(下, 贴着图标那一列) */
+    const metaEl = card.querySelector('.meta');
+    if (metaEl) {
+      const acts = document.createElement('div'); acts.className = 'acts';
+      [['分享', () => shareEventFor(ev)],
+       ['导出', () => exportFromList(ev)],
+       ['详情', () => openDetailPop(ev)]].forEach(([txt, fn]) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'dcbtn'; b.textContent = t(txt);
+        b.onclick = (e) => { e.stopPropagation(); fn(); };
+        acts.appendChild(b);
+      });
+      metaEl.appendChild(acts);
     }
-    /* 列表时间优先用 event.json 的触发时刻, 与点进去后播放器标题一致
-       (目录名是录制收尾时间, 常比触发晚几十秒) */
-    const tsM = String(mm.timestamp || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-    const tm = tsM ? tsM[4] + ':' + tsM[5]
-                   : (ev.name.match(/_(\d{2}-\d{2})/) || [,''])[1].replace('-', ':');
-    const tmTxt = isTrip ? tripRangeText(ev._trip) : (tm ? tm : fmtName(ev.name));
-    const extra = isTrip ? '' : ((mm.city ? ' · ' + mm.city : '') + (mm.street ? ' ' + mm.street : ''));
-    const dayTxt = !isTrip && dateFilter === 'all' && day ? day.slice(5).replace('-', '/') + ' · ' : '';
-    const mb = ev.size / 1048576;
-    const szTxt = mb >= 1 ? mb.toFixed(1) + ' MB' : (mb * 1024).toFixed(0) + ' KB';
-    const l2Txt = isTrip
-      ? (ev._trip.count + ' ' + t('段') + ' · ' + tripMinutes(ev._trip) + ' ' + t('分钟') + ' · ' + vids.length + ' ' + t('路画面'))
-      : (dayTxt + vids.length + ' ' + t('路画面'));
-    card.innerHTML = th + `<div class="meta"><div class="l1"><span class="rt" title="${title}">${title}</span><span class="tm">${tmTxt}${extra}</span></div><div class="l2"><span>${l2Txt}</span><span class="sz">${szTxt}</span></div></div>`;
-    card.onclick = () => openPlayer(ev);
+    card.onclick = () => ovOpen(ev);
     g.appendChild(card);
+  }
+  /* 播放器默认放本分类最新一条; 点了别的卡片就换到那条 (同步刷新时仍同一条就不重开, 避免画面重置) */
+  if (evs.length) {
+    document.body.classList.remove('ovnone');
+    const same = ovEv && evs.some(x => ovTarget(x).name === ovTarget(ovEv).name);
+    if (!same) {
+      const f = evs[0];
+      setTimeout(() => { if (document.body.classList.contains('ovmode')) ovOpen(f); }, 0);
+    }
+  } else {
+    /* 空分类: 把播放器收起, 别留一个带旧标题的黑框 */
+    document.body.classList.add('ovnone');
+    ovStopAll();
+    ovEv = null;
   }
   applyLang();
 }
@@ -3280,16 +4286,22 @@ function renderCamBar() {
   if (all.length < 2) { bar.className = 'cambar'; bar.innerHTML = ''; return; }
   const tc = triggerCam(cur);
   bar.className = 'cambar show';
-  bar.innerHTML = all.map(v => {
-    const c = v.cam || '';
-    const isTrig = !!c && c === tc;
-    return `<button class="${camSel === c ? 'on' : ''}${isTrig ? ' trig' : ''}"` +
-      (isTrig ? ' title="触发画面"' : '') + ` onclick="setCam('${c}')">${camLabel(c)}</button>`;
-  }).join('') +
-    `<button class="${camSel === 'all' ? 'on' : ''}" onclick="setCam('all')">${t('全览')}</button>`;
+  bar.innerHTML =
+    `<button class="${camSel === 'all' ? 'on' : ''}" onclick="setCam('all')">${t('六路全景')}</button>` +
+    `<button class="${camSel === 'quad' ? 'on' : ''}" onclick="setCam('quad')">${t('四路全景')}</button>` +
+    all.map(v => {
+      const c = v.cam || '';
+      const isTrig = !!c && c === tc;
+      return `<button class="${camSel === c ? 'on' : ''}${isTrig ? ' trig' : ''}"` +
+        (isTrig ? ' title="触发画面"' : '') + ` onclick="setCam('${c}')">${camLabel(c)}</button>`;
+    }).join('');
 }
-function openPlayer(ev) {
+let detailNoPlay = false;   // 从列表「详情」进入: 只显示首帧+信息, 不自动起播
+function openPlayer(ev, noPlay) {
+  /* 从总览点开时事件已经带 _cat; 从分类页点开就用当前分类补上 */
+  if (ev && !ev._cat) ev._cat = currentCat;
   cur = ev;
+  detailNoPlay = !!noPlay;
   startPlaybackSession();
   autoNext = true;   // 所有记录都连续播: 行车行程整段、哨兵/手动保存事件内的多分钟段
   autoNexting = false;
@@ -3315,7 +4327,7 @@ function kickGroup(ix) {
   kicked.add(tag);
   /* 6 路全览时只预转前 2 路: 一次把六路全塞进转码队列会占满 4 核, 连正在播的画面都跟着卡;
      其余几路等播放时按需转, 谁先看谁先转。 */
-  const vids = camSel === 'all' ? camSort(c.vids).slice(0, 2)
+  const vids = (camSel === 'all' || camSel === 'quad') ? camSort(c.vids).slice(0, 2)
                                 : c.vids.filter(v => (v.cam || '') === camSel);
   const paths = vids.map(v => v.url);
   if (!paths.length) return;
@@ -3507,13 +4519,18 @@ function renderClip() {
   /* 单路模式: 只这一路进 DOM —— 没被选中的方位连请求都不会发出去 */
   const allVids = camSort(clip.vids);
   let shown = allVids;
-  if (camSel !== 'all') {
+  if (camSel === 'quad') {
+    /* 四路全景: 1前视 2左B柱 3后视 4右B柱 (2x2 从左上到右下) */
+    const want = ['front', 'left_repeater', 'back', 'right_repeater'];
+    const four = want.map(c => allVids.find(v => (v.cam || '') === c)).filter(Boolean);
+    if (four.length >= 2) shown = four; else camSel = 'all';
+  } else if (camSel !== 'all') {
     const one = allVids.filter(v => (v.cam || '') === camSel);
     if (one.length) shown = one;
     else camSel = 'all';          // 这一段没有该方位, 退回全览
   }
   multiMode = shown.length > 1;   // 仅标记多路, 不再据此改档位
-  shown.forEach(v => {
+  shown.forEach((v, vi) => {
     const cell = document.createElement('div'); cell.className = 'vcell';
     cell.dataset.cam = v.cam || '';
     const vid = document.createElement('video');
@@ -3521,8 +4538,33 @@ function renderClip() {
        预缓冲没命中时后端先给原画 + 后台马上转, 这里轮询到预览就原地热切,
        不再出现「选了 360p 却整段放原画」 */
     vid._baseUrl = v.url;
-    vid._fullUrl = qUrl(v.url);
+    /* 多路时按实际路数算档位: 3 路以上自动压到 720p, 单路按用户选择 */
+    vid._fullUrl = qUrl(v.url, shown.length);
     let vsrc = vid._fullUrl;
+    /* 多路(3路以上)+选了非原画档: 目标档没就绪时先用 360p 预缓冲顶上。
+       6 路同时等其他档要十几秒, 这期间播 4K 原画手机必卡; 360p 转码最快, 首帧 3 秒内,
+       播到 14 秒由 tick/switchPreviewVideos 自动切回目标档。先 0 字节 probe 一次确认,
+       目标档已就绪(响应头无 X-TSF-Variant)就保持原 src, 不做多余降档。 */
+    const multiLow = shown.length >= 3 && effQ(shown.length) !== 'orig' && vi < 2;
+    if (multiLow) {
+      const sep0 = vid._fullUrl.indexOf('?') >= 0 ? '&' : '?';
+      fetch(vid._fullUrl + sep0 + 'probe=1', {headers: {Range: 'bytes=0-0'}, cache: 'no-store'})
+        .then(r => r.headers.get('X-TSF-Variant') || '')
+        .then(note => {
+          if (!vid.isConnected || !note || vid._preview) return;
+          vid._preview = true; vid._wantPreview = true;
+          const t0 = vid.currentTime || 0;
+          vid.src = v.url + '?q=360p&preview=' + PREV_SEC +
+            (playbackSid ? '&sid=' + encodeURIComponent(playbackSid) : '');
+          /* 换了 360p 顶上, 目标档就没人请求过, 后台也不会生成 -> 永远停在 360p。
+             这里再打一个目标档的 0 字节请求, 服务端据此把目标 preview + 完整档排进队列。 */
+          try { fetch(vid._fullUrl + sep0 + 'preview=' + PREV_SEC,
+            {headers: {Range: 'bytes=0-0'}, cache: 'no-store'}).catch(() => {}); } catch (e) {}
+          vid.addEventListener('loadedmetadata', () => {
+            try { if (t0 > 0.2) vid.currentTime = t0; } catch (e) {}
+          }, {once: true});
+        }).catch(() => {});
+    }
     if (seekTo < PREV_SEC - 1) {
       vsrc += (vsrc.indexOf('?') >= 0 ? '&' : '?') + 'preview=' + PREV_SEC;
       vid._wantPreview = true;
@@ -3537,6 +4579,8 @@ function renderClip() {
           if (++tries > 40) return;                       // 最多等 60 秒, 之后保持原画
           variantStateOf(vid, (d) => {
             if (!vid.isConnected || vid._preview || curQ !== qAt) return;
+            /* 目标完整档已经好了: 不要再退回短预览(会把画质降下来), 交给 waitFullQ 原地切 */
+            if (d && d.ok && d.full) { vid._wantPreview = false; return; }
             if (!(d && d.ok && d.preview)) { setTimeout(hot, 1500); return; }
             const sep = vid._fullUrl.indexOf('?') >= 0 ? '&' : '?';
             const keep = vid.currentTime || 0;
@@ -3552,6 +4596,18 @@ function renderClip() {
         setTimeout(hot, 1000);
       });
     }
+    /* 目标档没转好时服务端会先给原画/低档顶上: 元数据一到就静默等目标完整档, 就绪后原地热切。
+       若拿到的是 20 秒左右的预缓冲档(服务端低档兜底), 按预缓冲处理, 到点由 tick 切完整档。 */
+    vid.addEventListener('loadedmetadata', () => {
+      if (!vid.isConnected) return;
+      if (!vid._preview && !vid._wantPreview && vid.duration
+          && vid.duration <= PREV_SEC + 1.5 && String(vid.src).indexOf('preview=') < 0) {
+        vid._preview = true;
+      }
+      if (vid._preview || !vid.isConnected) return;
+      const qAt = effQ(shown.length);
+      if (qAt && qAt !== 'orig') waitFullQ(vid, qAt);
+    });
     vid.src = vsrc;
     vid.muted = true; vid.defaultMuted = true; vid.preload = 'metadata';
     /* 每格加载状态: 转码/缓冲时显示提示, 避免黑屏让人以为坏了 */
@@ -3636,15 +4692,23 @@ function renderClip() {
   renderCamBar();
   document.getElementById('ic-time').textContent = evTime(ev);
   const pt = document.getElementById('ptitle');
-  if (pt) pt.textContent = t(CATS_NAME[currentCat] || currentCat) + ' · ' + evTime(ev);
-  document.getElementById('ic-cat').textContent = t(CATS_NAME[currentCat] || currentCat);
+  /* 总览里混着三类事件, 标题按这条事件真实归属的分类走 */
+  const pcat = (cur && cur._cat) ? cur._cat : currentCat;
+  /* 标题: 时间 · 地点 (分类已由下面的小标签体现, 不在这里重复"手动保存") */
+  const _mP = ev.meta || {};
+  const locP = locShort(_mP);
+  const _rsP = _mP.reason || '';
+  const _rlP = (_rsP && _rsP.indexOf('user_interaction') !== 0) ? (reasonLabel(_rsP) || '') : '';
+  if (pt) pt.textContent = evTime(ev) + (locP ? ' · ' + locP : '') + (_rlP ? ' · ' + _rlP : '');
+  document.getElementById('ic-cat').textContent = t(CATS_NAME[pcat] || pcat);
   const md0 = ev.meta || {};
-  document.getElementById('ic-big').textContent =
-    (md0.reason && (reasonLabel(md0.reason) || md0.reason)) || CATS_NAME[currentCat] || currentCat;
+  /* 大字也用短名: 地点 > 哨兵触发原因 > 分类; 手动保存这类不再写"点击行车记录仪图标保存" */
+  const _bigLoc = locShort(md0);
+  const _bigR = (md0.reason && md0.reason.indexOf('user_interaction') !== 0) ? (reasonLabel(md0.reason) || '') : '';
+  document.getElementById('ic-big').textContent = _bigLoc || _bigR || t(CATS_NAME[pcat] || pcat);
   const mb = (ev.size || 0) / 1048576;
-  const camTxt = camSel === 'all'
-    ? (shown.length + ' 路同屏')
-    : (camLabel(camSel) + ' 单路' + (clip.vids.length > shown.length ? ' (共 ' + clip.vids.length + ' 路可选)' : ''));
+  /* 详情页不再放播放器, 这里只报这条记录有几路画面 */
+  const camTxt = clip.vids.length ? (clip.vids.length + ' ' + t('路画面')) : t('无画面');
   document.getElementById('ic-sub').innerHTML = camTxt + ' · <span id="ic-dur">--:--</span>' + (mb >= 0.05 ? ' · ' + (mb >= 1 ? mb.toFixed(1) + ' MB' : Math.round(mb * 1024) + ' KB') : '');
   const cb = document.getElementById('clipbar');
   if (curClips.length > 1) {
@@ -3666,7 +4730,8 @@ function renderClip() {
   let rh = '';
   rh += '<div data-k="time"><span class="ick">时间</span>' + (md.timestamp ? md.timestamp.replace('T', ' ') : fmtFull(ev.name)) + '</div>';
   if (md.city) rh += '<div data-k="city"><span class="ick">城市</span>' + md.city + '</div>';
-  if (md.street) rh += '<div data-k="street"><span class="ick">位置</span>' + md.street + '</div>';
+  const _ah = amapHref(md);
+  if (md.street || _ah) rh += '<div data-k="street"><span class="ick">位置</span>' + (md.street || md.city || '') + (_ah ? ' <a class="icmap" href="' + _ah + '" target="_blank" rel="noopener">看地图</a>' : '') + '</div>';
   if (md.est_lat && md.est_lon) rh += '<div data-k="coord"><span class="ick">坐标</span>' + md.est_lat + ', ' + md.est_lon + '</div>';
   if (md.reason) rh += '<div><span class="ick">触发原因</span>' + (reasonLabel(md.reason) || md.reason) + '</div>';
   /* camera 字段只有哨兵事件有意义; 手动保存等也会带 camera:"0" */
@@ -3684,10 +4749,16 @@ function renderClip() {
   document.getElementById('player').classList.add('open');
   requestAnimationFrame(layoutPlayer);  // 可见后再算一次, 保证拿到真实宽度设置像素行高
   const sm = document.getElementById('startmask');
-  if ('ontouchstart' in window) { sm.classList.add('show'); }
-  playAll();
+  if (detailNoPlay) {
+    /* 列表「详情」进来: 画面停在首帧, 点遮罩才开始播, 不跟顶部播放器抢解码 */
+    detailNoPlay = false;
+    sm.classList.add('show');
+  } else {
+    if ('ontouchstart' in window) { sm.classList.add('show'); }
+    playAll();
+  }
   /* 相邻组预热只在单路时做: 6 路全览时再预热前后两组, 等于同时排十几条转码, 反而把当前播放拖死 */
-  if (camSel !== 'all') {
+  if (camSel !== 'all' && camSel !== 'quad') {
     kickGroup(curClipIx + 1);   // 前后相邻组提前转码, 切段不再等十几秒
     kickGroup(curClipIx - 1);
   }
@@ -3707,8 +4778,7 @@ function loadTelemetry(url, meta) {
   if (card) card.classList.remove('plain');
   p.classList.add('folded');   // 详细数据默认折叠
   document.getElementById('tp-fold').textContent = '展开详细数据 ⌄';
-  document.getElementById('tp-loc').textContent =
-    [TEL_META.city, TEL_META.street].filter(Boolean).join(' · ');
+  document.getElementById('tp-loc').textContent = locShort(TEL_META);
   // 触发画面摄像头: 只有哨兵事件显示 (手动保存等也会带无意义的 camera:"0")
   const camTag = document.getElementById('tp-tag');
   if (TEL_META.camera && isSentryEv(TEL_META)) {
@@ -3849,7 +4919,7 @@ function drawWm(ctx, t, W) {
   const dateStr = telT0 ? fmtTelDate(new Date(telT0.getTime() + f[0] * 1000)) : '';
   ctx.fillText(dateStr, pad, yc + Math.round(1 * s));
   const dw = ctx.measureText(dateStr).width;
-  const loc = [(TEL_META || {}).city, (TEL_META || {}).street].filter(Boolean).join(' · ');
+  const loc = locShort(TEL_META || {});
   if (loc) {
     ctx.font = '500 ' + Math.round(13 * s) + 'px system-ui,"Segoe UI",sans-serif';
     ctx.fillStyle = '#eef3f8';
@@ -3935,7 +5005,7 @@ function updateHud(t) {
 }
 window.addEventListener('resize', () => { if (document.getElementById('player').classList.contains('open')) layoutPlayer(); });
 
-/* ---------- 准实时预览 ---------- */
+/* ---------- 准实时浏览 ---------- */
 /* 画面框跟片源尺寸匹配 (与哨兵/记录仪播放器同一套思路):
    单路按 videoWidth/Height 定宽高, 最高 58vh 并居中; 全览按第一路比例算
    像素行高。Tesla 片源多为 4:3, 固定 16/9 + cover 会把上下裁掉一截。 */
@@ -3953,10 +5023,14 @@ function layoutLiveGrid() {
   if (!g || !g.classList.contains('on')) return;
   const v0 = g.querySelector('video');
   if (!v0 || !v0.videoWidth || !v0.videoHeight) return;
-  const cols = (g.children.length === 1 || g.classList.contains('n1')) ? 1 : 2;
+  const n = g.children.length;
+  /* 6 路按总览同样的 3x2 排: 左前翼/前视/右前翼 + 左B柱/后视/右B柱; 四路 2x2; 单路 1 列 */
+  const cols = n >= 5 ? 3 : (n <= 1 ? 1 : 2);
+  g.style.gridTemplateColumns = 'repeat(' + cols + ',1fr)';
   const w = g.clientWidth || 0;
   if (!w) return;
-  const cw = (w - 3 * (cols - 1)) / cols;
+  const gap = 3;
+  const cw = (w - gap * (cols - 1)) / cols;
   g.style.gridAutoRows = Math.round(cw * v0.videoHeight / v0.videoWidth) + 'px';
   g.classList.add('ready');
 }
@@ -3972,23 +5046,38 @@ let liveFolder = '', liveTimer = null, liveBusy = false, liveLoading = false, li
 function liveQv() { return liveQ || curQ || 'orig'; }
 function lvUrl(u) {
   const q = liveQv();
-  /* live=1: 服务端据此把实时预览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
+  /* live=1: 服务端据此把实时浏览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
   const sep = u.indexOf('?') < 0 ? '?' : '&';
   if (q === 'orig') return u + sep + 'live=1';
   return u + sep + 'q=' + q + '&live=1';
 }
+const LIVE_Q_ORDER = ['360p', '480p', '720p', 'orig'];
+function lvQText(q) { return q === 'orig' ? '原画' : q; }
+function lvQSync() {
+  const b = document.getElementById('lv-q');
+  if (b) b.textContent = lvQText(liveQv());
+}
+function lvCycleQ() {
+  const ix = LIVE_Q_ORDER.indexOf(liveQv());
+  setLiveQ(LIVE_Q_ORDER[(ix + 1) % LIVE_Q_ORDER.length]);
+}
 function setLiveQ(v) {
   liveQ = v;
   localStorage.setItem(LIVE_Q_STORE_KEY, v);
+  lvQSync();
   if (liveEv) renderLive(liveEv);
 }
 function latestLiveEv() { const arr = (data && data.RecentClips) || []; return arr[0] || null; }
 function openLive() {
+  try { localStorage.setItem('tsf_cat', '__live__'); } catch (e) {}
   document.getElementById('livep').classList.add('open');
   document.body.classList.add('livemode');       /* 隐藏分类/日期筛选与归档列表 */
+  document.body.classList.remove('ovmode');      /* 实时浏览时不显示总览播放控件 */
+  if (typeof ovStopAll === 'function') ovStopAll();   /* 同停掉 6 路播放, 别和实时浏览抢带宽 */
   const qs = document.getElementById('lv-q');
   if (qs) qs.value = liveQv();
-  /* 从播放器切过来时把播放器收起, 免得浮层盖在实时预览上 */
+  lvQSync();
+  /* 从播放器切过来时把播放器收起, 免得浮层盖在实时浏览上 */
   if (document.getElementById('player').classList.contains('open')) closePlayer();
   const ev = latestLiveEv();
   if (ev) { liveFolder = ev.name; renderLive(ev); }
@@ -4003,7 +5092,7 @@ function closeLive() {
   clearLiveGrid();
   const v = document.getElementById('lv-video');
   try { v.pause(); v.removeAttribute('src'); v.load(); } catch (err) {}
-  /* 从实时预览返回时, 高亮恢复到当前分类页签 (不是固定第一个) */
+  /* 从实时浏览返回时, 高亮恢复到当前分类页签 (不是固定第一个) */
   const tl = document.getElementById('tab-live');
   if (tl && tl.classList.contains('active')) {
     tl.classList.remove('active');
@@ -4018,7 +5107,10 @@ function renderLive(ev) {
   document.getElementById('lv-name').textContent = '最新片段: ' + ev.name.replace(/_/g, ' ');
   const vids = camSort(ev.videos || []);
   if (!vids.length) return;
-  if (liveCam !== '__all' && !vids.find(v => v.cam === liveCam)) liveCam = '__all';
+  /* 四路全景固定顺序: 1前视 2左B柱 3后视 4右B柱 (2x2 从左上到右下) */
+  const QUAD_CAMS = ['front', 'left_repeater', 'back', 'right_repeater'];
+  const quadVids = QUAD_CAMS.map(c => vids.find(v => v.cam === c)).filter(Boolean);
+  if (liveCam !== '__all' && liveCam !== '__quad' && !vids.find(v => v.cam === liveCam)) liveCam = '__all';
   const row = document.getElementById('lv-cams');
   row.innerHTML = '';
   const mkBtn = (cam, label) => {
@@ -4028,15 +5120,16 @@ function renderLive(ev) {
     b.onclick = () => { liveCam = cam; localStorage.setItem('tsflivecam', liveCam); renderLive(ev); };
     row.appendChild(b);
   };
+  /* 顺序固定: 六路全景 / 四路全景 / 左前翼 / 前视 / 右前翼 / 左B柱 / 后视 / 右B柱 */
+  mkBtn('__all', t('六路全景'));
+  if (quadVids.length >= 2) mkBtn('__quad', t('四路全景'));
   vids.forEach(v => mkBtn(v.cam, camLabel(v.cam)));
-  /* 最后一个: 全览 (所有摄像头同屏) */
-  mkBtn('__all', '全览 (' + vids.length + ')');
   const vid = document.getElementById('lv-video');
   const grid = document.getElementById('lv-grid');
-  if (liveCam === '__all') {
+  if (liveCam === '__all' || liveCam === '__quad') {
     vid.style.display = 'none';
     try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (err) {}
-    buildLiveGrid(vids);
+    buildLiveGrid(liveCam === '__quad' ? quadVids : vids);
   } else {
     clearLiveGrid();
     vid.style.display = '';
@@ -4052,6 +5145,7 @@ function clearLiveGrid() {
   const g = document.getElementById('lv-grid');
   g.classList.remove('on', 'n1', 'ready');
   g.style.gridAutoRows = '';
+  g.style.gridTemplateColumns = '';
   [...g.querySelectorAll('video')].forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} });
   g.innerHTML = '';
 }
@@ -4279,16 +5373,19 @@ function startServerExport(sel, wm, push) {
                            q: ({ 'orig': 'orig', '1080p': '1080p', '720p': '720p', '480p': '480p', '360p': '360p' })[expQ] || '720p' })
   }).then(r => r.json()).then(d => {
     if (!d.ok) { stitchFail(d.error || '导出失败'); return; }
+    jobAdd(d.id, (push ? '推送飞书 · ' : '合成导出 · ') +
+      (cur ? evTime(cur) + (locShort(cur.meta || {}) ? ' · ' + locShort(cur.meta || {}) : '') : name));
     pollExport(d.id);
   }).catch(e => stitchFail('导出失败: ' + e));
 }
 function pollExport(id) {
   fetch('/api/stitch/status?id=' + encodeURIComponent(id)).then(r => r.json()).then(d => {
-    if (d.state === 'error') { stitchFail(d.err || '导出失败'); return; }
+    if (d.state === 'error') { jobDrop(id); stitchFail(d.err || '导出失败'); return; }
     const pct = d.pct || 0;
     document.getElementById('stfill').style.width = pct + '%';
     document.getElementById('stpct').textContent = pct + '%';
     if (d.state === 'done') {
+      jobDrop(id);
       const H = document.getElementById('sthint');
       H.textContent = lastStitchPush ? '合成完成, 已保存并推送到飞书' : '合成完成, 已保存到「我的作品」';
       document.getElementById('stfill').style.width = '100%';
@@ -4430,16 +5527,18 @@ function startDeviceStitch(vids) {
     body: JSON.stringify({cat: cat, name: name, cams: vids.map(v => v.cam)})})
     .then(r => r.json()).then(d => {
       if (!d.ok) { stitchFail(d.error || '合成失败'); return; }
+      jobAdd(d.id, (cur ? (evTime(cur) + (locShort(cur.meta || {}) ? ' · ' + locShort(cur.meta || {}) : '')) : name));
       pollStitch(d.id);
     }).catch(e => stitchFail('合成请求失败: ' + e));
 }
 function pollStitch(id) {
   fetch('/api/stitch/status?id=' + encodeURIComponent(id)).then(r => r.json()).then(d => {
-    if (d.state === 'error') { stitchFail(d.err || t('合成失败')); return; }
+    if (d.state === 'error') { jobDrop(id); stitchFail(d.err || t('合成失败')); return; }
     const pct = d.pct || 0;
     document.getElementById('stfill').style.width = pct + '%';
     document.getElementById('stpct').textContent = pct + '%';
     if (d.state === 'done') {
+      jobDrop(id);
       document.getElementById('sthint').textContent = '合成完成, 开始下载…';
       location.href = '/api/stitch/dl?id=' + encodeURIComponent(id);
       setTimeout(() => document.getElementById('stitch').classList.remove('open'), 2500);
@@ -4449,6 +5548,66 @@ function pollStitch(id) {
   }).catch(() => setTimeout(() => pollStitch(id), 1500));
 }
 /* ---------- 我的作品: 后台合成/导出的成品在这里下载、补推飞书、删除 ---------- */
+/* 任务进度: 合成/导出记在本地, 打开「我的作品」就能看到进度条 */
+const JOBS_KEY = 'tsf_jobs';
+let pushJobs = {};      // 运行期的推送任务 (没有服务端 id, 只在本次打开期间显示)
+function jobsRead() {
+  try { return JSON.parse(localStorage.getItem(JOBS_KEY) || '[]') || []; } catch (e) { return []; }
+}
+function jobsWrite(list) {
+  try { localStorage.setItem(JOBS_KEY, JSON.stringify(list.slice(-20))); } catch (e) {}
+}
+function jobAdd(id, title) {
+  const l = jobsRead().filter(x => x.id !== id);
+  l.push({ id: id, title: title || '', ts: Date.now() });
+  jobsWrite(l);
+}
+function jobDrop(id) { jobsWrite(jobsRead().filter(x => x.id !== id)); }
+function libJobRows() {
+  const l = jobsRead()
+    .filter(j => j && j.id && (Date.now() - (Number(j.ts) || 0) < 6 * 3600 * 1000))
+    .map(j => ({ id: j.id, label: j.title || ('合成 ' + String(j.id).slice(-6)), pct: null }));
+  Object.keys(pushJobs).forEach(k => l.push({ id: k, label: pushJobs[k].label, pct: 'push' }));
+  return l;
+}
+function renderLibJobs() {
+  const box = document.getElementById('libjobs');
+  if (!box) return;
+  const rows = libJobRows();
+  if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.innerHTML = rows.map(r => `<div class="libjob" data-jid="${r.id}">
+      <div class="ljh"><span class="ljn"></span><span class="ljp">${r.pct === 'push' ? '推送中…' : '排队中'}</span></div>
+      <div class="ljb"><div class="ljf${r.pct === 'push' ? ' pending' : ''}" style="width:${r.pct === 'push' ? '35' : '0'}%"></div></div>
+    </div>`).join('');
+  rows.forEach(r => {
+    const row = box.querySelector('.libjob[data-jid="' + String(r.id).replace(/"/g, '') + '"]');
+    if (row) row.querySelector('.ljn').textContent = r.label;
+  });
+  rows.filter(r => r.pct !== 'push').forEach(r => pollLibJob(r.id));
+}
+function pollLibJob(id) {
+  const row = document.querySelector('#libjobs .libjob[data-jid="' + String(id).replace(/"/g, '') + '"]');
+  if (!row) return;
+  fetch('/api/stitch/status?id=' + encodeURIComponent(id), { cache: 'no-store' })
+    .then(r => r.json()).then(d => {
+      const pctEl = row.querySelector('.ljp'), fill = row.querySelector('.ljf');
+      if (!d || !d.state) { jobDrop(id); renderLibJobs(); return; }
+      if (d.state === 'error') { jobDrop(id); row.remove(); renderLibJobs(); return; }
+      const pct = d.pct || 0;
+      if (pctEl) pctEl.textContent = pct + '%';
+      if (fill) fill.style.width = pct + '%';
+      if (d.state === 'done') {
+        jobDrop(id);
+        toast('✅ 合成完成, 已存到「我的作品」');
+        setTimeout(openLib, 300);
+        return;
+      }
+      setTimeout(() => { if (document.getElementById('lib').classList.contains('open')) pollLibJob(id); }, 1500);
+    }).catch(() => setTimeout(() => {
+      if (document.getElementById('lib').classList.contains('open')) pollLibJob(id);
+    }, 2500));
+}
 function fmtSize(n) {
   n = Number(n) || 0;
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
@@ -4481,7 +5640,7 @@ function openLib() {
   p.classList.add('open');
   document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">加载中…</div>';
   fetch('/api/library', {cache: 'no-store'}).then(r => r.json())
-    .then(d => { libTtlSel(d.ttl_days || 7); renderLib(d.items || []); })
+    .then(d => { libTtlSel(d.ttl_days || 7); renderLib(d.items || []); renderLibJobs(); })
     .catch(() => { document.getElementById('librows').innerHTML = '<div style="color:var(--muted);font-size:13px;padding:14px">读取失败</div>'; });
 }
 function renderLib(items) {
@@ -4515,10 +5674,17 @@ function renderLib(items) {
 }
 function libPush(f) {
   toast('正在推送到飞书…');
+  const key = 'push:' + f;
+  pushJobs[key] = { label: '推送飞书: ' + String(f || '').replace(/_/g, ' '), ts: Date.now() };
+  renderLibJobs();
   fetch('/api/library/push', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({f: f})})
-    .then(r => r.json()).then(d => toast(d.ok ? (d.msg || '已推送到飞书') : ('推送失败: ' + (d.msg || '未知错误'))))
-    .catch(e => toast('推送失败: ' + e));
+    .then(r => r.json()).then(d => {
+      delete pushJobs[key]; renderLibJobs();
+      toast(d.ok ? (d.msg || '已推送到飞书') : ('推送失败: ' + (d.msg || '未知错误')));
+      if (d.ok) openLib();
+    })
+    .catch(e => { delete pushJobs[key]; renderLibJobs(); toast('推送失败: ' + e); });
 }
 function libDel(f) {
   fetch('/api/library/del', {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -4602,6 +5768,38 @@ function variantStateOf(v, cb) {
   fetch('/api/variant_state?u=' + encodeURIComponent(v._baseUrl) + '&q=' + encodeURIComponent(curQ), {cache: 'no-store'})
     .then(r => r.json()).then(d => cb(d)).catch(() => cb(null));
 }
+/* 目标档还没转好时, 服务端会先用已缓存的低档/原画顶上(秒开), 这里静默等目标完整档,
+   就绪后用服务端给的 d.w 核对 videoWidth, 不一致才原地热切 —— 不会把低档误当目标档。*/
+function waitFullQ(vid, qAt) {
+  if (!vid || !vid.isConnected || !qAt || qAt === 'orig' || vid._preview) return;
+  if (vid._waitFullQ === qAt) return;                 // 同一档只挂一个等待
+  vid._waitFullQ = qAt;
+  let tries = 0;
+  const go = () => {
+    if (!vid.isConnected || curQ !== qAt || vid._preview) { vid._waitFullQ = ''; return; }
+    if (++tries > 40) { vid._waitFullQ = ''; return; }  // 最多等 60 秒, 之后保持现状
+    variantStateOf(vid, (d) => {
+      if (!vid.isConnected || curQ !== qAt || vid._preview) { vid._waitFullQ = ''; return; }
+      if (!(d && d.ok && d.full)) { setTimeout(go, 1500); return; }
+      const wNow = vid.videoWidth || 0, hNow = vid.videoHeight || 0;
+      /* 必须同时核对宽高, 且不能比目标档更大: 原画 1448x938 与 1080p 1440x928 只差 8 像素,
+         只看宽度会把原画误判成目标档, 用户就一直停在原画上。 */
+      if (d.w && d.h && wNow && hNow
+          && wNow <= d.w + 4 && hNow <= d.h + 4
+          && wNow >= d.w * 0.94 && hNow >= d.h * 0.94) { vid._waitFullQ = ''; return; }
+      const ct = vid.currentTime || 0, wasPlaying = !vid.paused;
+      const sep = vid._fullUrl.indexOf('?') >= 0 ? '&' : '?';
+      vid._preview = false;
+      vid.src = vid._fullUrl + sep + 'hot=1';           // 加参数绕过浏览器对同一 URL 的旧响应缓存
+      vid.addEventListener('loadedmetadata', () => {
+        try { vid.currentTime = Math.min(ct, Math.max(0, (vid.duration || 0) - 0.2)); } catch (e) {}
+        if (wasPlaying) tryPlay(vid);
+        vid._waitFullQ = '';
+      }, { once: true });
+    });
+  };
+  setTimeout(go, 1200);
+}
 function swapToFull(v, ct) {
   v.loop = false;
   v.src = v._fullUrl;
@@ -4646,6 +5844,9 @@ function switchPreviewVideos(target) {
           }
         }
         if (tries < 20) { setTimeout(() => goFull(tries + 1), 1500); return; }
+        /* 目标档迟迟没好: 绝不掉回 4K 原画(公网/手机必卡死), 继续循环当前低档慢慢等,
+           5 分钟还没转出来才最后兜底切完整档(原画或替代档) */
+        if (tries < 150) { setTimeout(() => goFull(tries + 1), 2000); return; }
         swapToFull(v, ct);
       });
     };
@@ -4658,8 +5859,16 @@ function tick() {
   if (!vs.length || !vs[0].duration) return;
   const t = vs[0].currentTime;
   const anyPrev = vs.some(v => v._preview);
-  /* 播到 14 秒切完整档; 命中的是老 10 秒预览时, 播完(ended)也必须切, 否则会停在 10 秒 */
-  if (anyPrev && (t >= PREV_SEC - 1 || vs[0].ended)) switchPreviewVideos(t);
+  /* 播到 14 秒切完整档; 命中的是老 10 秒预览时, 播完(ended)也必须切, 否则会停在 10 秒。
+     另外从第 3 秒起就提前检查目标档: 720p 完整档约 7 秒、1080p 完整档约 6.5 秒就转好了,
+     转好立刻切, 不要干等预缓冲播到 19 秒 —— 那是"点开以后画质半天不上去"的主因。
+     提前切换时若目标档还没好, 内部会让当前预缓冲循环播放并每 2 秒复查, 不黑屏不跳段。 */
+  if (anyPrev) {
+    if (t >= PREV_SEC - 1 || vs[0].ended) switchPreviewVideos(t);
+    /* 提前切换只对单路做: 多路同时换档会一瞬间打出一串 Range 请求 + 排队转码,
+       把正在播的连接全顶掉(实测客户端连续 BrokenPipe), 多路仍按播到 14 秒再切。 */
+    else if (t >= 3 && vs.length === 1) switchPreviewVideos(null);
+  }
   vs.forEach((v, i) => {
     if (i && v.paused && !vs[0].paused && !v.ended) {
       if (v.readyState >= 2) tryPlay(v);   // 还在缓冲(waiting)的视频不要反复强拉, 会卡
@@ -4766,22 +5975,33 @@ function doLogout() {
   location.href = '/logout';
 }
 function stab(which) {
-  ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'].forEach(k => {
-    const b = document.getElementById('st-' + k), t = document.getElementById('tab-' + k);
-    if (b) b.classList.toggle('active', k === which);
-    if (t) t.style.display = k === which ? '' : 'none';
+  /* 一个页签可以带多块内容: 车辆个性化=锁车语音+涂装, 设置=风扇+杂项 */
+  const GROUPS = { car: ['audio', 'wraps'], settings: ['fan', 'debug', 'skin', 'lang', 'update'] };
+  const ALL = ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'];
+  const show = GROUPS[which] || [which];
+  ALL.forEach(k => {
+    const t = document.getElementById('tab-' + k);
+    if (t) t.style.display = (show.indexOf(k) >= 0) ? '' : 'none';
   });
+  document.querySelectorAll('.stabs .stab').forEach(b => b.classList.remove('active'));
+  const cur = document.getElementById('st-' + which);
+  if (cur) cur.classList.add('active');
   if (fanTimer) { clearInterval(fanTimer); fanTimer = null; }
   if (netTimer) { clearInterval(netTimer); netTimer = null; }
-  if (which === 'fan') { fanLoad(); fanTimer = setInterval(fanTick, 5000); }
+  if (which === 'settings') {
+    fanLoad(); fanTimer = setInterval(fanTick, 5000);
+    dbgLoad();
+    applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
+    renderLangGrid();
+    otaCheck(false); autoLoad();
+  }
   if (which === 'net') { netLoad(); netTimer = setInterval(netTick, 5000); }
-  if (which === 'update') { otaCheck(false); autoLoad(); }
   if (which === 'notify') ntLoad();
-  if (which === 'auth') pwLoad();
-  if (which === 'wraps') refreshWraps();
-  if (which === 'brand') refreshBrand();
+  if (which === 'auth') { pwLoad(); refreshBrand(); }
+  if (which === 'car') refreshWraps();
   if (which === 'skin') applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
   if (which === 'debug') dbgLoad();
+  if (which === 'update') { otaCheck(false); autoLoad(); }
 }
 
 /* ---------- 风扇设置 ---------- */
@@ -5230,6 +6450,25 @@ async function pwSave() {
     m.style.color = '#4cc38a';
   } catch (e) { m.textContent = t('修改失败') + ': ' + e; m.style.color = 'var(--accent)'; }
 }
+/* 改用户名: 后端验证密码后重写 auth.conf, 并直接下发新 cookie, 本机不掉线 */
+async function saveUserName() {
+  const m = document.getElementById('usr-msg');
+  const u = (document.getElementById('usr-new').value || '').trim();
+  const p = document.getElementById('usr-pass').value || '';
+  if (!/^[A-Za-z0-9_.\-]{2,24}$/.test(u)) { m.textContent = t('用户名 2-24 位, 仅字母/数字/下划线/点/横线'); m.style.color = 'var(--accent)'; return; }
+  if (!p) { m.textContent = t('请输入当前密码'); m.style.color = 'var(--accent)'; return; }
+  m.textContent = t('提交中…'); m.style.color = '';
+  try {
+    const j = await (await fetch('/api/auth/user', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store', body: JSON.stringify({ user: u, pass: p }) })).json();
+    if (!j.ok) { m.textContent = '❌ ' + t(j.msg); m.style.color = 'var(--accent)'; return; }
+    document.getElementById('usr-new').value = '';
+    document.getElementById('usr-pass').value = '';
+    m.textContent = '✅ ' + j.msg;
+    m.style.color = '#4cc38a';
+    setTimeout(() => location.reload(), 900);
+  } catch (e) { m.textContent = t('修改失败') + ': ' + e; m.style.color = 'var(--accent)'; }
+}
 
 /* ---------- 系统更新 (OTA) ---------- */
 let otaInfo = null;
@@ -5358,7 +6597,7 @@ setTimeout(() => {
 document.getElementById('gear').onclick = () => {
   document.getElementById('mask').classList.add('open');
   document.getElementById('panel').classList.add('open');
-  stab('files');
+  stab('auth');
   refreshSkins(); refreshAudio(); refreshFiles();
 };
 function closePanel() {
@@ -5449,9 +6688,131 @@ async function saveBrandName() {
   applyBrand();
   toast(v ? '✅ 名称已改为 ' + v : '✅ 已恢复默认名称');
 }
-document.getElementById('brand-file').onchange = async function () {
-  const j = await uploadFile(this, '/api/upload/brand-logo');
-  if (j && j.ok) { await refreshBrand(); }
+/* 图标裁切: 选图后先弹方形/圆形取景框, 拖 + 缩放选好再上传, 长图不会被压扁 */
+const CROP = { img: null, stage: 300, scale: 1, min: 1, ox: 0, oy: 0, drag: null, busy: false };
+function cropStagePx() {
+  return Math.max(180, Math.min(320, Math.round(Math.min(window.innerWidth - 120, window.innerHeight - 300))));
+}
+function cropStart(img) {
+  CROP.busy = false;
+  CROP.img = img; CROP.ox = 0; CROP.oy = 0;
+  CROP.stage = cropStagePx();
+  CROP.min = Math.max(CROP.stage / img.width, CROP.stage / img.height);
+  CROP.scale = CROP.min;
+  const st = document.getElementById('crop-stage');
+  st.style.width = CROP.stage + 'px'; st.style.height = CROP.stage + 'px';
+  const cv = document.getElementById('crop-canvas');
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = CROP.stage * dpr; cv.height = CROP.stage * dpr;
+  cv.style.width = CROP.stage + 'px'; cv.style.height = CROP.stage + 'px';
+  cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  document.getElementById('crop-zoom').value = '1';
+  document.getElementById('crop').classList.add('open');
+  cropDraw();
+}
+function cropOpen(file) {
+  if (!file) return;
+  CROP.busy = true;
+  const fr = new FileReader();
+  fr.onload = () => {
+    const img = new Image();
+    img.onload = () => cropStart(img);
+    /* 浏览器自己解不了 (iPhone 的 HEIC 在部分手机上就是这样) → 先让设备转成 PNG 再裁 */
+    img.onerror = () => cropViaServer(file);
+    img.src = fr.result;
+  };
+  fr.readAsDataURL(file);
+}
+async function cropViaServer(file) {
+  toast('正在用设备转换这张图…');
+  const fd = new FormData(); fd.append('file', file, file.name || 'logo.heic');
+  let j = {};
+  try {
+    const r = await fetch('/api/brand/preview', { method: 'POST', body: fd });
+    j = await r.json();
+  } catch (e) { j = { ok: false, msg: '网络异常' }; }
+  if (!j.ok || !j.data) { CROP.busy = false; toast('❌ ' + (j.msg || '这张图打不开, 换一张试试')); return; }
+  const img = new Image();
+  img.onload = () => cropStart(img);
+  img.onerror = () => { CROP.busy = false; toast('❌ 转换后的图还是打不开, 换一张试试'); };
+  img.src = j.data;
+}
+function cropClamp(v, d) {
+  const lim = Math.max(0, (d - CROP.stage) / 2);
+  return Math.min(lim, Math.max(-lim, v));
+}
+function cropDraw() {
+  const img = CROP.img; if (!img) return;
+  const cv = document.getElementById('crop-canvas');
+  const ctx = cv.getContext('2d');
+  const st = CROP.stage;
+  const dw = img.width * CROP.scale, dh = img.height * CROP.scale;
+  CROP.ox = cropClamp(CROP.ox, dw); CROP.oy = cropClamp(CROP.oy, dh);
+  ctx.clearRect(0, 0, st, st);
+  ctx.fillStyle = '#1d1d1d'; ctx.fillRect(0, 0, st, st);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, st / 2 - dw / 2 + CROP.ox, st / 2 - dh / 2 + CROP.oy, dw, dh);
+}
+function cropSetZoom(v) {
+  const img = CROP.img; if (!img) return;
+  CROP.scale = CROP.min * parseFloat(v || '1');
+  cropDraw();
+}
+function cropCancel() {
+  document.getElementById('crop').classList.remove('open');
+  CROP.img = null;
+}
+function cropOk() {
+  const img = CROP.img; if (!img) return;
+  const st = CROP.stage, sc = CROP.scale;
+  const dw = img.width * sc, dh = img.height * sc;
+  const tx = st / 2 - dw / 2 + CROP.ox, ty = st / 2 - dh / 2 + CROP.oy;
+  const side = st / sc;
+  const sx = Math.max(0, (0 - tx) / sc), sy = Math.max(0, (0 - ty) / sc);
+  const sw = Math.min(side, img.width - sx), sh = Math.min(side, img.height - sy);
+  const out = document.createElement('canvas'); out.width = out.height = 256;
+  const o = out.getContext('2d');
+  o.imageSmoothingQuality = 'high';
+  o.drawImage(img, sx, sy, sw, sh, 0, 0, 256, 256);
+  out.toBlob(async blob => {
+    if (!blob) { toast('❌ 裁切失败, 换张图试试'); return; }
+    cropCancel();
+    const fd = new FormData(); fd.append('file', blob, 'logo.png');
+    const r = await fetch('/api/upload/brand-logo', { method: 'POST', body: fd });
+    const j = await r.json().catch(() => ({}));
+    toast(j.ok ? '✅ ' + j.msg : '❌ ' + (j.msg || '上传失败'));
+    if (j.ok) await refreshBrand();
+  }, 'image/png');
+}
+(function cropBind() {
+  const cv = document.getElementById('crop-canvas');
+  const pos = e => ({ x: e.clientX, y: e.clientY });
+  cv.addEventListener('pointerdown', e => {
+    if (!CROP.img) return;
+    cv.setPointerCapture(e.pointerId);
+    CROP.drag = Object.assign(pos(e), { ox: CROP.ox, oy: CROP.oy });
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!CROP.drag) return;
+    const p = pos(e), d = CROP.drag;
+    CROP.ox = d.ox + (p.x - d.x); CROP.oy = d.oy + (p.y - d.y);
+    cropDraw();
+  });
+  const end = () => { CROP.drag = null; };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+  cv.addEventListener('wheel', e => {
+    if (!CROP.img) return;
+    e.preventDefault();
+    const z = document.getElementById('crop-zoom');
+    const v = Math.min(3, Math.max(1, parseFloat(z.value) + (e.deltaY < 0 ? 0.06 : -0.06)));
+    z.value = String(v); cropSetZoom(v);
+  }, { passive: false });
+})();
+document.getElementById('brand-file').onchange = function () {
+  const f = this.files && this.files[0];
+  this.value = '';
+  cropOpen(f);
 };
 async function resetBrand() {
   if (!confirm('恢复默认图标与名称?')) return;
@@ -6070,6 +7431,138 @@ def safe_name(name):
 
 _EVENTS_CACHE = {"t": 0.0, "v": None}
 
+# ---------- 高德地图: 车机 event.json 只给城市名, 用坐标逆地理编码补出街道 ----------
+AMAP_KEY = os.environ.get("TSF_AMAP_KEY", "")
+
+
+def amap_key():
+    """设置页填的高德 Key 优先, 留空回落到环境变量/内置"""
+    try:
+        k = (load_settings().get("amap_key") or "").strip()
+        if k:
+            return k
+    except Exception:
+        pass
+    return AMAP_KEY
+
+
+GEO_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/geo"
+GEO_LOCK = threading.Lock()
+GEO_BUSY = set()
+
+
+def geo_short(a):
+    """完整地址裁成短名: 阜阳北路g40号 -> 阜阳北路"""
+    a = (a or "").strip()
+    if not a:
+        return ""
+    s = re.sub(r"[A-Za-z]{0,2}\d+号.*$", "", a).strip()
+    s = re.sub(r"\d+号.*$", "", s).strip()
+    return s or a
+
+
+def amap_regeo(lat, lon):
+    """坐标 -> (完整地址, 短名); 命中磁盘缓存直接返回, 失败返回 ('','')"""
+    try:
+        lat = float(lat); lon = float(lon)
+    except (TypeError, ValueError):
+        return ("", "")
+    if not (-90.0 < lat < 90.0 and -180.0 < lon < 180.0):
+        return ("", "")
+    ck = "%.4f_%.4f" % (lat, lon)
+    fp = os.path.join(GEO_DIR, ck + ".json")
+    if os.path.isfile(fp):
+        try:
+            with open(fp, encoding="utf-8") as f:
+                d0 = json.load(f) or {}
+            a0 = d0.get("addr") or ""
+            if a0:
+                return (a0, d0.get("short") or geo_short(a0))
+        except Exception:
+            pass
+    url = ("https://restapi.amap.com/v3/geocode/regeo?key=%s&location=%.6f,%.6f"
+           "&extensions=base&radius=800" % (amap_key(), lon, lat))
+    addr = ""
+    short = ""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "tsf-geo/" + APP_VERSION})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        if str(d.get("status")) == "1":
+            rc = d.get("regeocode") or {}
+            ac = rc.get("addressComponent") or {}
+            sn = ac.get("streetNumber") or {}
+            st = ac.get("street") or ""
+            if (not isinstance(st, str) or not st) and isinstance(sn, dict):
+                st = sn.get("street") or ""
+            num = (sn.get("number") or "") if isinstance(sn, dict) else ""
+            dis = ac.get("district") or ""
+            tw = ac.get("township") or ""
+            if not isinstance(st, str):
+                st = ""
+            if not isinstance(num, str):
+                num = ""
+            if not isinstance(dis, str):
+                dis = ""
+            if not isinstance(tw, str):
+                tw = ""
+            addr = (st + num) if st else (dis + tw)
+            short = st or tw or dis
+            if not addr:
+                addr = (rc.get("formatted_address") or "")[2:]
+            if not short:
+                short = geo_short(addr)
+    except Exception:
+        return ("", "")
+    try:
+        os.makedirs(GEO_DIR, exist_ok=True)
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump({"addr": addr, "short": short, "lat": lat, "lon": lon, "ts": int(time.time())},
+                      f, ensure_ascii=False)
+    except OSError:
+        pass
+    return (addr, short)
+
+
+def amap_enrich(meta):
+    """补街道: 有缓存立刻填; 没有就丢后台线程查(不拖慢列表接口), 10 秒后的轮询自动带上"""
+    if not isinstance(meta, dict) or meta.get("street"):
+        return meta
+    lat, lon = meta.get("est_lat"), meta.get("est_lon")
+    if not lat or not lon:
+        return meta
+    try:
+        ck = "%.4f_%.4f" % (float(lat), float(lon))
+    except (TypeError, ValueError):
+        return meta
+    fp = os.path.join(GEO_DIR, ck + ".json")
+    if os.path.isfile(fp):
+        try:
+            with open(fp, encoding="utf-8") as f:
+                d0 = json.load(f) or {}
+            a = d0.get("addr") or ""
+            if a:
+                meta["street"] = a
+                meta["amap"] = a
+                meta["short"] = d0.get("short") or geo_short(a)
+            return meta
+        except Exception:
+            pass
+    with GEO_LOCK:
+        if ck in GEO_BUSY:
+            return meta
+        GEO_BUSY.add(ck)
+
+    def run():
+        try:
+            amap_regeo(lat, lon)
+        finally:
+            with GEO_LOCK:
+                GEO_BUSY.discard(ck)
+
+    threading.Thread(target=run, daemon=True).start()
+    return meta
+
 
 def list_events(force=False):
     """归档事件列表; 10 秒缓存, 避免页面轮询时反复 stat 1296 个 mp4。"""
@@ -6103,7 +7596,7 @@ def list_events(force=False):
                             meta = json.load(jf)
                     except Exception:
                         meta = {}
-                events.append({"name": name, "videos": vids, "size": total, "meta": meta})
+                events.append({"name": name, "videos": vids, "size": total, "meta": amap_enrich(meta)})
         out[cat] = events
     _EVENTS_CACHE.update(t=now, v=out)
     return out
@@ -8212,8 +9705,8 @@ def _range_bounds(hdr, size):
     return (start, min(end, size - 1))
 
 
-def serve_file(self, fp, head_only=False):
-    """流式发送文件 (支持 Range / HEAD), 用于下载"""
+def serve_file(self, fp, head_only=False, inline=False):
+    """流式发送文件 (支持 Range / HEAD), 用于下载 (inline=True 时内联播放)"""
     fn = os.path.basename(fp)
     ext = fn.rsplit(".", 1)[-1].lower() if "." in fn else ""
     ct = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp",
@@ -8243,7 +9736,7 @@ def serve_file(self, fp, head_only=False):
     self.send_header("Content-Type", ct)
     self.send_header("Content-Length", str(length))
     self.send_header("Accept-Ranges", "bytes")
-    self.send_header("Content-Disposition", 'attachment; filename="%s"' % urllib.parse.quote(fn))
+    self.send_header("Content-Disposition", '%s; filename="%s"' % ("inline" if inline else "attachment", urllib.parse.quote(fn)))
     if rb:
         self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
     self.end_headers()
@@ -8997,7 +10490,11 @@ RES_SCALE = {"360p": (480, 360, 600), "480p": (640, 480, 900), "720p": (960, 720
 RES_FPS = {"360p": 24, "480p": 24, "720p": 24, "1080p": 24}
 # 编码参数版本号: 参与缓存 key。v5: 主转码换 ffmpeg-rockchip(rkmpp 硬解+RGA 缩放+硬编),
 # 旧 v4 缓存由旧的软件编码管道产出, 尺寸与码率模式不同, 提升版本号让它们自然重建。
-RES_ENC_VER = "5"
+# v6: 2026-11-25 所有档位宽高对齐到 16 的倍数(旧缓存 1440x932/960x622/480x310 在 iOS 上
+# 会被判定不可硬解而退回软解); 版本号一变启动时就清空旧缓存按新规格重建。
+# v7: RGA 加 force_divisible_by=16, 720p 从 960x622 修正为 960x624; 清 v6 的非对齐产物。
+# v8: RGA/setsar 重置 SAR=1(旧产物 SAR 2353:2345/20996:21105, 浏览器显示成 963x624/1440x933)。
+RES_ENC_VER = "8"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
@@ -9010,7 +10507,7 @@ VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-t
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
 # 并发上限保持 3 (不是越高越好): RK3568 只有一路硬编实例, 实测单路 720p 7.5s,
 # 4 路同时跑每路都拖到 48s、总吞吐反而下降, 排队(3 槽)比全放开更快; 内存也只在排队时可控。
-Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))  # 2 个预览/预热 + 1 个用户请求
+Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "2")))  # 实测: 并发3路 RGA缩放+编码会 mpp buffer NULL 失败, 2路稳定; 1个预览/预热 + 1个用户请求
 USER_TRANS = [0]      # 正在排队/占用转码槽的用户请求数; 后台预热看到 >0 就让位
 RES_MAX = 4 * 1024 * 1024 * 1024  # 清晰度缓存上限 4GB(外接盘 445G 可用, 1080p 档体积翻倍)
 
@@ -10817,6 +12314,23 @@ def notify_status():
     }
 
 
+def _scale16(sw, sh, bw, bh):
+    """等比缩进 bw×bh 框内, 宽高四舍五入到 16 的倍数(至少 16)。
+    硬转脚本 tsf-vpu-transcode.sh 里做同样的对齐; 这里给软件回退路径算尺寸,
+    两条路径产物尺寸必须一致, 否则 .meta 里的 w/h 与实际不符, 播放端判定会错。
+    2026-11-25: 非 16 对齐的 H.264 高度在 iOS/部分安卓浏览器会被判不可硬解。
+    用四舍五入而不是向上取整: 310->304(-1.9%) 比 310->320(+3.2%) 更接近原比例。"""
+    if not sw or not sh:
+        return max(16, ((bw + 8) // 16) * 16), max(16, ((bh + 8) // 16) * 16)
+    if bw * sh <= bh * sw:          # 框比源更窄: 以宽为准
+        w = bw
+        h = int(round(float(sh) * bw / sw))
+    else:                           # 框比源更高: 以高为准
+        h = bh
+        w = int(round(float(sw) * bh / sh))
+    return max(16, ((w + 8) // 16) * 16), max(16, ((h + 8) // 16) * 16)
+
+
 def _variant_path(fp, qv, seconds=0, legacy=False):
     """清晰度缓存文件路径; 源文件一变 (size/mtime) 自然换 key, 不会拿旧缓存糊弄。
     seconds>0 表示只缓存前 N 秒的预缓冲, 与完整缓存分开 key。
@@ -10975,6 +12489,9 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
         except Exception:
             pass
         w, h, kbps = RES_SCALE[qv]
+        # 软件回退也必须输出 16 对齐尺寸, 与 tsf-vpu-transcode.sh 硬转产物保持一致
+        sw, sh = probe_size(fp) or (0, 0)
+        tw, th = _scale16(sw, sh, w, h)
         tmp = out + ".%d_%d.tmp" % (os.getpid(), threading.get_ident())
         fps = RES_FPS.get(qv, 24)
         preset = "ultrafast" if qv == "360p" else "superfast"
@@ -10986,7 +12503,7 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
                     'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
                     FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
                     "-threads", enc_threads] + limit_args + ["-i", fp,
-                    "-vf", "fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bilinear" % (fps, w, h),
+                    "-vf", "fps=%d,scale=%d:%d:flags=bilinear,setsar=1" % (fps, tw, th),
                     "-c:v", "libx264", "-preset", preset,
                     "-b:v", "%dk" % kbps, "-maxrate", "%dk" % (kbps * 3 // 2),
                     "-bufsize", "%dk" % (kbps * 3),
@@ -11125,7 +12642,7 @@ def spawn_variant(fp, qv, owner=None, seconds=0, wait_for=None, urgent=False):
             if cancel.is_set():
                 return
             if not urgent:
-                # 后台补档/升级: 前台(播放/实时预览/用户转码)一出现就中途让路,
+                # 后台补档/升级: 前台(播放/实时浏览/用户转码)一出现就中途让路,
                 # 不让第一优先级的请求排在后台作业后面等并发名额
                 def _yield_watch():
                     while not cancel.is_set():
@@ -11212,16 +12729,16 @@ PREWARM_QS = ["360p"]                   # 360p 是最高优先级: 白天软解�
                                         # 480p/720p 由后台硬解补档(见 hw_fill_loop), 只在 360p 空闲时跑
 PREWARM_PENDING = set()                 # 正在预热的文件, 两个预热线程靠它避免撞同一条
 _PREWARM_PICK_LOCK = threading.Lock()
-# 转码优先级 (用户定稿 2026-11-23): 实时预览在看的文件 与 哨兵告警 并列第一,
+# 转码优先级 (用户定稿 2026-11-23): 实时浏览在看的文件 与 哨兵告警 并列第一,
 # 其次手动保存, 最后行车记录。360p 预缓冲优先于 480p/720p 硬解补档。
 CAT_PRIO = {"SentryClips": 0, "SavedClips": 1, "RecentClips": 2}
-LIVE_HOT = {}                           # fp -> 最近一次实时预览请求时间; 120s 无请求自动过期
+LIVE_HOT = {}                           # fp -> 最近一次实时浏览请求时间; 120s 无请求自动过期
 PREVIEW_SECONDS = 30     # 预解码默认 30 秒, 设置里可改 5-120
 PREWARM_SEC = 30         # 后台预解码沿用同一目标长度, 旧 10/15 秒档仍兜底可播
 
 
 def _preview_pick(qs=None, skip=None):
-    """按优先级挑一个还没预缓的归档视频: 实时预览在看的文件与哨兵告警并列第一,
+    """按优先级挑一个还没预缓的归档视频: 实时浏览在看的文件与哨兵告警并列第一,
     再手动保存, 最后行车记录; 同级内新文件优先。后台硬解补档也复用此顺序。
     (旧版跨分类比 mtime, 行车记录每分钟出新片永远最新, 哨兵/手动保存永远排不上)"""
     qs = PREWARM_QS if qs is None else qs
@@ -11350,7 +12867,9 @@ def prewarm_loop():
 # 有人播放/媒体请求/360p 预缓冲在跑时立即取消让路; 硬解失败自动回退软解, 补档进度不受影响。
 NIGHT_HW = {"on": os.environ.get("TSF_NIGHT_HW", "1") != "0",
             "done": 0, "last": "", "skip": {}, "busy": False, "qidx": 0}
-NIGHT_HW_QS = ["480p", "720p", "1080p"]
+# 1080p 不生成 20 秒预缓冲(2026-11-25 用户明确要求): 1440 级转一条约 15s/50s 片,
+# 预缓冲收益抵不上 CPU 占用; 1080p 起播改为用已缓存的低档预缓冲/完整档顶上, 后台转完整档再热切。
+NIGHT_HW_QS = ["480p", "720p"]
 
 
 def _night_window():
@@ -11937,6 +13456,44 @@ def _stitch_worker(job_id, paths, out_path, total):
                 job["err"] = str(e)[:300]
 
 
+def ov_thumb(cat, name):
+    """总览卡片封面: 6 路各抽一帧拼成 3x2 一张图 (缓存 thumbs/ov_<cat>_<name>.jpg)"""
+    evdir = safe_archive_dir(os.path.join(ARCHIVE, cat, name))
+    if not evdir or not os.path.isdir(evdir):
+        return None
+    files = [f for f in os.listdir(evdir) if f.lower().endswith(".mp4")]
+    files = order_files(latest_group(files))[:6]
+    if len(files) < 2:
+        return None
+    try:
+        os.makedirs(THUMB_DIR, exist_ok=True)
+    except OSError:
+        return None
+    out = os.path.join(THUMB_DIR, "ov_%s_%s.jpg" % (safe_name(cat), safe_name(name)))
+    if os.path.isfile(out) and os.path.getsize(out) > 0:
+        return out
+    n = len(files)
+    cols = 3 if n >= 5 else 2
+    W, H = 320, 240
+    cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y"]
+    for f in files:
+        cmd += ["-ss", "2", "-i", os.path.join(evdir, f)]
+    fc = []
+    for i in range(n):
+        fc.append("[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,setsar=1[v%d]"
+                  % (i, W, H, W, H, i))
+    layout = "|".join("%d_%d" % ((i % cols) * W, (i // cols) * H) for i in range(n))
+    fc.append("".join("[v%d]" % i for i in range(n)) +
+              "xstack=inputs=%d:layout=%s:fill=black[vout]" % (n, layout))
+    cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-frames:v", "1",
+            "-q:v", "4", out]
+    try:
+        subprocess.run(cmd, timeout=45, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    return out if os.path.isfile(out) and os.path.getsize(out) > 0 else None
+
+
 def start_stitch(cat, name, cams, push=False):
     """创建合成任务, 返回 (job_id, 错误信息)"""
     # 历史: 软解软编 4 路 1080p 会把 1.4G 内存吃光并触发内核 lockup -> panic=5 重启,
@@ -11979,8 +13536,30 @@ def start_stitch(cat, name, cams, push=False):
                 os.unlink(fp_old)
         except OSError:
             pass
+    # 同一事件 + 同一路数复用已有合成结果: 总览页反复点开/导出时不再重复转码
+    # 先看临时缓存, 再看「我的作品库」里已入库的同名成品(合成完会自动入库, 缓存文件被移走)
+    cache_name = "%s__%s__%d.mp4" % (cat, name, len(paths))
+    cache_fp = os.path.join(STITCH_DIR, cache_name)
+    hit_fp = cache_fp if (os.path.isfile(cache_fp) and os.path.getsize(cache_fp) > 0) else None
+    if not hit_fp:
+        for m in lib_list():
+            mcams = m.get("cams") or []
+            if (m.get("kind") == "stitch" and m.get("cat") == cat and m.get("name") == name
+                    and (not mcams or len(mcams) == len(paths))):
+                p2 = os.path.join(LIB_DIR, m.get("f") or "")
+                if os.path.isfile(p2):
+                    hit_fp = p2
+                    break
+    if hit_fp:
+        jid = "hit-" + os.path.basename(hit_fp)[:-4]
+        with STITCH_LOCK:
+            STITCH_JOBS[jid] = {"state": "done", "pct": 100, "path": hit_fp,
+                                "name": "%s_%d路.mp4" % (name, len(paths)), "total": 0,
+                                "cams": list(cams or []), "cat": cat, "src_name": name,
+                                "push": bool(push), "size": os.path.getsize(hit_fp)}
+        return jid, None
     job_id = "%s-%d" % (name.replace(":", "-"), int(time.time() * 1000) % 1000000)
-    out_path = os.path.join(STITCH_DIR, job_id + ".mp4")
+    out_path = cache_fp
     total = probe_duration(paths[0])
     with STITCH_LOCK:
         STITCH_JOBS[job_id] = {"state": "running", "pct": 0, "path": None,
@@ -12849,6 +14428,50 @@ def auth_set_pass(old, new):
     return True, "密码已更新, 其它设备需要重新登录"
 
 
+def auth_set_user(new_user, passwd):
+    """改网页登录用户名; 旧 cookie 绑的是旧用户名, 其它设备需重新登录"""
+    global AUTH_USER
+    if os.environ.get("TSF_AUTH_USER"):
+        return False, "用户名由环境变量 TSF_AUTH_USER 控制, 改文件不生效"
+    if AUTH_ON and not pw_ok(passwd or ""):
+        return False, "密码不对"
+    n = (new_user or "").strip()
+    if not re.match(r'^[A-Za-z0-9_.\-]{2,24}$', n):
+        return False, "用户名 2-24 位, 仅字母/数字/下划线/点/横线"
+    if n == AUTH_USER:
+        return False, "和当前用户名一样"
+    try:
+        with open(AUTH_FILE, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    out, has_user = [], False
+    for ln in lines:
+        s = ln.strip()
+        k = s.split("=", 1)[0].strip().lower() if ("=" in s and not s.startswith("#")) else ""
+        if k == "user":
+            out.append("user=" + n)
+            has_user = True
+        else:
+            out.append(ln)
+    if not has_user:
+        out.insert(0, "user=" + n)
+    try:
+        os.makedirs(os.path.dirname(AUTH_FILE) or ".", exist_ok=True)
+        tmp = AUTH_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(out) + "\n")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, AUTH_FILE)
+    except OSError as ex:
+        return False, "写入失败: %s" % str(ex)[:80]
+    AUTH_USER = n
+    return True, "用户名已改, 其它设备需重新登录"
+
+
 def sess_token(exp):
     raw = "%s|%d" % (AUTH_USER, exp)
     sig = hmac.new(AUTH_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()[:32]
@@ -13113,7 +14736,17 @@ class Handler(BaseHTTPRequestHandler):
             out = fp
             qv = q.get("q", [""])[0]
             if qv in RES_SCALE:
-                out = get_variant(fp, qv)
+                # HEAD 只探大小, 绝不能阻塞等转码(iOS/安卓下载器会先 HEAD):
+                # 有目标档给目标档, 否则给已缓存的低档, 都没有给原画
+                out = _variant_play(fp, qv)
+                if not out:
+                    for fq in (("720p", "480p", "360p") if qv == "1080p" else (
+                               ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ()))):
+                        out = _variant_play(fp, fq)
+                        if out:
+                            break
+                if not out:
+                    out = fp
             serve_file(self, out, head_only=True)
             return
         m = re.match(r"^/media/([\w-]+)/([\w\-. ]+)/([\w\-. ]+)$", path)
@@ -13185,6 +14818,41 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"state": job["state"], "pct": job.get("pct", 0),
                         "err": job.get("err", ""), "size": job.get("size", 0)})
+        elif path == "/api/stitch/stream":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            jid = q.get("id", [""])[0]
+            job = STITCH_JOBS.get(jid)
+            if not job or job.get("state") != "done" or not os.path.isfile(job.get("path") or ""):
+                self._send(404, b"not ready")
+                return
+            serve_file(self, job["path"], inline=True)
+        elif path == "/api/stitch/thumb":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            jid = q.get("id", [""])[0]
+            job = STITCH_JOBS.get(jid)
+            fp = (job or {}).get("path") or ""
+            if not job or job.get("state") != "done" or not os.path.isfile(fp):
+                self._send(404, b"not ready")
+                return
+            tj = fp + ".thumb.jpg"
+            if not os.path.isfile(tj) or os.path.getsize(tj) == 0:
+                try:
+                    subprocess.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                                    "-ss", "1", "-i", fp, "-frames:v", "1", "-vf", "scale=480:-2", tj],
+                                   timeout=25)
+                except Exception:
+                    pass
+            if not os.path.isfile(tj):
+                self._send(404, b"no thumb")
+                return
+            serve_file(self, tj, inline=True)
+        elif path == "/api/ovthumb":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            fp = ov_thumb(q.get("cat", [""])[0], q.get("name", [""])[0])
+            if not fp:
+                self._send(404, b"no thumb")
+                return
+            serve_file(self, fp, inline=True)
         elif path == "/api/stitch/dl":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             jid = q.get("id", [""])[0]
@@ -13208,10 +14876,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
             with STITCH_LOCK:
                 STITCH_JOBS.pop(jid, None)
-            try:
-                os.unlink(fp)
-            except OSError:
-                pass
+            # 下载产物保留(由 2 小时清理任务回收): 同一事件再点下载直接命中缓存, 不用重新合成
         elif path == "/api/export/burn/dl":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             jid = q.get("id", [""])[0]
@@ -13284,6 +14949,8 @@ class Handler(BaseHTTPRequestHandler):
                         "brand_name": brand_name(), "brand_default": BRAND_NAME_DEFAULT,
                         "brand_logo": load_settings().get("brand_logo", ""),
                         "brand_logo_v": brand_logo_ver(),
+                        "amap_key": amap_key(),
+                        "amap_key_custom": bool(load_settings().get("amap_key")),
                         "auto_checked": AUTO_UPD["last_check"], "auto_msg": AUTO_UPD["last_result"]})
         elif path == "/api/font":
             fp = _wm_font()
@@ -13450,11 +15117,17 @@ class Handler(BaseHTTPRequestHandler):
             ok = bool(fp) and fp.startswith(ARCHIVE) and os.path.isfile(fp)
             if ok and qv in RES_SCALE:
                 pv = 0
+                full = _variant_play(fp, qv)
                 for sec in (preview_seconds(), 15, 10):
                     if _variant_play(fp, qv, sec):
                         pv = sec
                         break
-                self._json({"ok": True, "full": bool(_variant_play(fp, qv)),
+                m = _read_meta(full) if full else None
+                # w 给前端核对「现在播的是不是目标档」: 服务端在目标档没转好时可能先给低档/原画,
+                # 前端用 videoWidth 与 w 比对, 不一致就等 full 就绪后原地热切
+                self._json({"ok": True, "full": bool(full),
+                            "w": int((m or {}).get("w") or 0),
+                            "h": int((m or {}).get("h") or 0),
                             "preview": pv, "sec": preview_seconds()})
             else:
                 self._json({"ok": False, "full": False, "preview": 0, "sec": preview_seconds()})
@@ -13664,7 +15337,7 @@ class Handler(BaseHTTPRequestHandler):
                 want_preview_sec = 0
             want_preview_sec = 0 if want_preview_sec < 5 else min(want_preview_sec, 120)
             if qs.get("live", [""])[0]:
-                LIVE_HOT[fp] = time.time()   # 实时预览并列第一: 记住在看的文件, 预缓冲优先补它
+                LIVE_HOT[fp] = time.time()   # 实时浏览并列第一: 记住在看的文件, 预缓冲优先补它
             variant_note = ""
             if qv in RES_SCALE and qv != "orig":
                 src = fp
@@ -13673,7 +15346,7 @@ class Handler(BaseHTTPRequestHandler):
                 if want_preview_sec:
                     pp = _variant_play(src, qv)
                     if pp:
-                        fp = pp
+                        fp = pp      # 完整档已转好: 直接给完整档, 比预缓冲更长更清晰
                     else:
                         # 长的预览优先, 已缓存的短预览兜底, 免得重建全部缓存
                         hit = 0
@@ -13685,12 +15358,12 @@ class Handler(BaseHTTPRequestHandler):
                         if hit:
                             fp = pp
                             variant_note = "preview%d" % hit
-                            if want_preview_sec > hit:
+                            if want_preview_sec > hit and qv != "1080p":
                                 # 已用短档顶上: 把长档排到空闲时补(不抢正在播放的 CPU)
                                 spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec,
-                                              wait_for=(src, qv, hit), urgent=False)
+                                              wait_for=(src, qv, hit), urgent=True)
                         else:
-                            # 目标档还没转好时, 先用已缓存的低档预览顶上, 不让用户干看原画
+                            # 目标档还没转好时, 先用已缓存的低档预览顶上, 保证秒开
                             alt = (("720p", "480p", "360p") if qv == "1080p" else (
                                   ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ())))
                             for fq in alt:
@@ -13703,28 +15376,67 @@ class Handler(BaseHTTPRequestHandler):
                                     variant_note = "%s_p%d" % (fq, sec)
                                     break
                             if not variant_note:
+                                # 连低档预览都没有: 退到低档完整档, 不用等转码, 打开就能播
+                                for fq in alt:
+                                    pp = _variant_play(src, fq)
+                                    if pp:
+                                        fp = pp
+                                        variant_note = "alt:%s" % fq
+                                        break
+                            if not variant_note:
                                 variant_note = "orig"
-                            # 先建 15 秒短档保证尽快有画面, 长档等短档建好后空闲补
-                            short = 15 if want_preview_sec > 15 else want_preview_sec
-                            if short < want_preview_sec:
-                                spawn_variant(src, qv, owner=sid or None, seconds=short, urgent=True)
-                                spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec,
-                                              wait_for=(src, qv, short), urgent=False)
+                            if qv == "1080p":
+                                # 1080p 不做预缓冲(2026-11-25 用户要求): 直接排完整档,
+                                # 前端先用低档播, 完整档转好后按真实尺寸热切
+                                spawn_variant(src, qv, owner=sid or None, urgent=True)
                             else:
-                                spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec, urgent=True)
-                            # 不阻塞: 目标档后台转, 已缓存的低档先顶上; 转好后前端热切换到目标档
-                    # 真的在播放(带 sid)就顺带把完整档也排上, 但要等预览先转完, 不抢 CPU
-                    if sid and not _variant_ready(src, qv):
-                        spawn_variant(src, qv, owner=sid,
-                                      wait_for=(src, qv, want_preview_sec))
+                                # 先建 15 秒短档保证尽快有画面, 长档等短档建好后空闲补
+                                short = 15 if want_preview_sec > 15 else want_preview_sec
+                                if short < want_preview_sec:
+                                    spawn_variant(src, qv, owner=sid or None, seconds=short, urgent=True)
+                                    spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec,
+                                                  wait_for=(src, qv, short), urgent=True)
+                                else:
+                                    spawn_variant(src, qv, owner=sid or None, seconds=want_preview_sec, urgent=True)
+                            # 不阻塞: 目标档后台转, 低档先顶上; 转好后前端热切换到目标档
+                    # 完整档一定要排: 以前只在带 sid 时才排, 前端一些请求不带 sid,
+                    # 结果完整档从来没进过队列, 播放期间永远停在原画/预览档。
+                    if not _variant_ready(src, qv):
+                        if qv == "1080p" or variant_note.startswith("alt:"):
+                            spawn_variant(src, qv, owner=sid, urgent=True)   # 已在等低档: 立刻转, 别排 preview 后面
+                        else:
+                            spawn_variant(src, qv, owner=sid,
+                                          wait_for=(src, qv, want_preview_sec), urgent=True)
                 else:
                     pp = _variant_play(src, qv)
                     if pp:
                         fp = pp
                     else:
+                        # 目标完整档没转好: 先用已缓存的较低档完整文件顶上, 前端按真实尺寸
+                        # 判定后会自动热切; 全都没有才回原画(局域网能播, 远程会慢, 只是兜底)
+                        alt = (("720p", "480p", "360p") if qv == "1080p" else (
+                              ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ())))
+                        for fq in alt:
+                            pp = _variant_play(src, fq)
+                            if pp:
+                                fp = pp
+                                variant_note = "alt:%s" % fq
+                                break
+                        if not variant_note:
+                            # 低档完整档也没有: 用低档预缓冲顶上(远程链路原画 12MB 必卡,
+                            # 360p 预缓冲由后台预热, 覆盖率高; 前端识别成预缓冲档, 到点自动切完整档)
+                            for fq in alt:
+                                for sec in (preview_seconds(), 15, 10):
+                                    pp = _variant_play(src, fq, sec) if sec else ""
+                                    if pp:
+                                        break
+                                if pp:
+                                    fp = pp
+                                    variant_note = "%s_p%d" % (fq, sec)
+                                    break
+                        if not variant_note:
+                            variant_note = "orig"
                         spawn_variant(src, qv, owner=sid or None, urgent=True)
-                        # 不阻塞: 目标档没转好先用原画秒开, 转好后下次播放/切档即生效
-                        variant_note = "orig"
             preview_hot_mark(fp)
             size = os.path.getsize(fp)
             rng = self.headers.get("Range")
@@ -14041,6 +15753,26 @@ class Handler(BaseHTTPRequestHandler):
             playback_leave(str(body.get("sid") or "")[:64])
             self._json({"ok": True})
             return
+        if path == "/api/auth/user":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            ok, msg = auth_set_user(str(body.get("user") or ""), str(body.get("pass") or ""))
+            if ok:
+                exp = int(time.time()) + AUTH_TTL
+                b2 = json.dumps({"ok": True, "msg": msg, "user": AUTH_USER}, ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b2)))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                self.send_header("Set-Cookie", "tsf_sess=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax%s"
+                                 % (sess_token(exp), AUTH_TTL, self._cookie_secure()))
+                self.end_headers()
+                self.wfile.write(b2)
+                return
+            self._json({"ok": False, "msg": msg, "user": AUTH_USER})
+            return
         if path == "/api/auth/pass":
             body = self._read_json()
             if body == "TOOBIG":
@@ -14166,6 +15898,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             save_settings({"ui_style": st})
             self._json({"ok": True, "style": st})
+            return
+        if path == "/api/amap/key":
+            body = self._read_json()
+            if body == "TOOBIG" or not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            k = str(body.get("key") or "").strip()
+            if k and (len(k) > 64 or any(c in k for c in ' <>"\'')):
+                self._json({"ok": False, "msg": "Key 格式不对"}, 400)
+                return
+            save_settings({"amap_key": k})
+            self._json({"ok": True, "key": amap_key()})
             return
         if path == "/api/ota/auto":
             body = self._read_json()
@@ -14309,27 +16053,62 @@ class Handler(BaseHTTPRequestHandler):
             nm = nm.replace("<", "").replace(">", "").replace("&", "").replace('"', "").replace("'", "")
             save_settings({"brand_name": nm})
             self._json({"ok": True, "name": nm or BRAND_NAME_DEFAULT})
+        elif path == "/api/brand/preview":
+            # 先把上传的图(含 HEIC)转成 PNG 返回给前端做裁切预览, 不落盘
+            fn, data, _f = self._read_upload()
+            if fn == "TOOBIG":
+                self._json({"ok": False, "msg": "文件超过 3MB"}, 400)
+                return
+            if not data:
+                self._json({"ok": False, "msg": "空文件"}, 400)
+                return
+            stamp = int(time.time() * 1000)
+            tmp = "/tmp/brand-prev-in-%d" % stamp
+            out = "/tmp/brand-prev-out-%d.png" % stamp
+            ff = os.environ.get("TSF_FFMPEG") or "ffmpeg"
+            ok = False
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                try:
+                    r = subprocess.run(
+                        [ff, "-y", "-hide_banner", "-loglevel", "error", "-i", tmp,
+                         "-vf", "scale=800:800:force_original_aspect_ratio=decrease",
+                         "-frames:v", "1", out],
+                        capture_output=True, timeout=30)
+                    ok = (r.returncode == 0 and os.path.isfile(out)
+                          and os.path.getsize(out) > 200)
+                except (OSError, subprocess.SubprocessError):
+                    ok = False
+                if not ok and data[:8] == b"\x89PNG\r\n\x1a\n":
+                    with open(out, "wb") as f:
+                        f.write(data)
+                    ok = True
+                if not ok:
+                    self._json({"ok": False, "msg": "这张图设备也解不开, 请换一张"}, 400)
+                    return
+                with open(out, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                self._json({"ok": True,
+                            "data": "data:image/png;base64," + b64})
+            except OSError as ex:
+                self._json({"ok": False, "msg": "转换失败: %s" % str(ex)[:60]}, 500)
+            finally:
+                for p in (tmp, out):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
         elif path == "/api/upload/brand-logo":
             fn, data, _f = self._read_upload()
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "文件超过 3MB"}, 400)
                 return
-            ext = os.path.splitext(fn or "")[1].lower()
-            if ext == ".jpeg":
-                ext = ".jpg"
-            if not data or ext not in (".jpg", ".png", ".webp"):
-                self._json({"ok": False, "msg": "仅支持 png/jpg/webp"}, 400)
+            ok, msg = brand_save_logo(data)
+            if not ok:
+                self._json({"ok": False, "msg": msg}, 400)
                 return
-            try:
-                os.makedirs(BRAND_DIR, exist_ok=True)
-                brand_clear_files()          # 换格式时旧文件不能留着, 否则会两份并存
-                with open(os.path.join(BRAND_DIR, "logo" + ext), "wb") as f:
-                    f.write(data)
-            except OSError as ex:
-                self._json({"ok": False, "msg": "写入失败: %s" % ex}, 500)
-                return
-            save_settings({"brand_logo": "logo" + ext})
-            self._json({"ok": True, "msg": "图标已更新", "logo": "logo" + ext})
+            self._json({"ok": True, "msg": msg, "logo": "logo.png"})
         elif path == "/api/brand/reset":
             save_settings({"brand_name": "", "brand_logo": ""})
             brand_clear_files()
@@ -14592,6 +16371,13 @@ class BoundedServer(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._slots = threading.BoundedSemaphore(self.max_workers)
+
+    def handle_error(self, request, client_address):
+        """客户端切换/关闭视频时连接被掐断属于正常现象, 不再刷整屏堆栈污染 journal"""
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):
