@@ -3613,7 +3613,7 @@ function ovQFromWidth(w) {
 /* 服务端目标档没建好时会先用低档顶上; 播放器按真实宽度把档位标签同步下来。
    只在完整档(duration > PREV_SEC+2)上判断, 避免把 20 秒低档预览误判成最终档。 */
 function ovNoteActualQ(v) {
-  if (!v || !v.videoWidth || ovQ === 'orig' || !isFinite(v.duration) || v.duration <= PREV_SEC + 2) return;
+  if (!v || v._composite || !v.videoWidth || ovQ === 'orig' || !isFinite(v.duration) || v.duration <= PREV_SEC + 2) return;
   const actual = ovQFromWidth(v.videoWidth);
   if (!actual || ovQRank(actual) < 0 || ovQRank(actual) >= ovQRank(ovQ)) return;
   const from = ovQ;
@@ -3819,7 +3819,8 @@ function ovClip(i) {
    切段时直接命中缓存秒开, 不再等首播兜底那 2-3s。当前段已在播(服务端只发缓存、CPU 空闲),
    正好用来建下一段; urgent 作业仍受 Q_SEM 与车机写入闸约束, 不抢车机。 */
 function ovLookahead(main) {
-  if (!ovEv || !playbackSid || !main || main.paused || main._composite) return;
+  /* 合成模式也要预转下一段: 合成输入命中 _variant_play 缓存才不用现解 6 路 4K */
+  if (!ovEv || !playbackSid || !main || main.paused) return;
   const n = ovTL.n || 1;
   if (ovClipIx >= n - 1) return;                 // 已是最后一段, 无下一段
   const dur = main.duration || 0;
@@ -4054,7 +4055,8 @@ function ovSetQuality(q, opts) {
   if (btn) { btn.textContent = ovQLabel(q); btn.classList.toggle('hi', q !== '360p'); }
   const vs = ovVids();
   if (!vs.length) return;
-  const at = vs[0].currentTime || 0, playing = !vs[0].paused;
+  /* 合成是实时 fMP4, 没有索引不能可靠 seek: 换档从头播, 不拽旧进度 */
+  const at = vs[0]._composite ? 0 : (vs[0].currentTime || 0), playing = !vs[0].paused;
   ovBadge(ovQLabel(q) + (opts.auto ? ' 自动切换中…' : ' 切换中…'));
   /* 某一路一直不 loadedmetadata(转码没生成/网络卡)时不能永远挂在"切换中" */
   let left = vs.length;
@@ -4253,9 +4255,13 @@ function ovSyncOn() {
         ovResetNoProg();
       }
     }
-    /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮 */
-    if (!main._composite && !ovAutoLock && main && main.duration > 0 &&
-        (main.ended || (main.duration > PREV_SEC + 2 && main.currentTime >= main.duration - 0.25))) {
+    /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮。
+       合成流 duration 是边播边长的, 不能用"接近 duration"判段尾, 只认 ended(服务端吐完关闭)。 */
+    const segDone = main && (main._composite
+      ? main.ended
+      : (main.duration > 0 && (main.ended ||
+         (main.duration > PREV_SEC + 2 && main.currentTime >= main.duration - 0.25))));
+    if (!ovAutoLock && segDone) {
       const groups = groupVideos((ovEv && ovEv.videos) || []);
       if (ovClipIx + 1 < groups.length) {
         ovAutoLock = true;
@@ -4479,6 +4485,13 @@ function ovBind() {
   g.addEventListener('error', function (e) {
     const v = e.target;
     if (!v || v.tagName !== 'VIDEO') return;
+    /* 合成流加载失败(503/编码挂了): 退回六路原生, 不让自愈反复重挂同一条坏流 */
+    if (v._composite && !compositeFallback) {
+      compositeFallback = true;
+      try { toast('服务端合成加载失败, 已退回六路原生'); } catch (err) {}
+      ovBuildGrid(ovEv, ovClipIx);
+      return;
+    }
     if (ovQ === '1080p' && (v.src || '').indexOf('q=1080p') >= 0) {
       ovBadge('1080p 不被支持, 已降到 720p', true);
       ovSetQuality('720p');
@@ -16359,6 +16372,16 @@ def _media_fp(p):
 def _composite_cmd(paths, qv):
     qv = qv if qv in ("360p", "480p", "720p", "1080p", "orig") else "360p"
     cw, ch = _composite_dims(qv)
+    # 黑带根因: scale_rkrga 默认等比(decrease), 480x310 的源缩完实际高只有 ~310,
+    # 而 xstack 行距按 ch=360 摆, 两行之间就空出一条黑带。
+    # 这里按第一路真实宽高比把单格高算准(偶数), 再强制每格精确 cw x ch, 既无黑带也不拉伸。
+    try:
+        src0 = _variant_play(paths[0], qv) if qv != "orig" else ""
+        wh = probe_size(src0 or paths[0])
+        if wh and wh[0] > 0 and wh[1] > 0:
+            ch = max(2, int(round(cw * wh[1] / wh[0])) - int(round(cw * wh[1] / wh[0])) % 2)
+    except Exception:
+        pass
     layout, ow, oh = _composite_layout(len(paths), cw, ch)
     cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "warning", "-y"]
     for fp in paths:
@@ -16370,7 +16393,8 @@ def _composite_cmd(paths, qv):
                 "-i", src]
     fc = []
     for i in range(len(paths)):
-        fc.append("[%d:v]scale_rkrga=w=%d:h=%d,hwdownload,format=nv12,fps=24,setsar=1[v%d]"
+        fc.append("[%d:v]scale_rkrga=w=%d:h=%d:force_original_aspect_ratio=disable:reset_sar=1,"
+                  "hwdownload,format=nv12,fps=24,setsar=1[v%d]"
                   % (i, cw, ch, i))
     fc.append("".join("[v%d]" % i for i in range(len(paths))) +
               "xstack=inputs=%d:layout=%s:fill=black[vout]" % (len(paths), layout))
@@ -16659,7 +16683,9 @@ class Handler(BaseHTTPRequestHandler):
             COMPOSITE_STATE["proc"] = proc
             COMPOSITE_STATE["started"] = time.time()
         try:
-            first = proc.stdout.read(65536)
+            # 首块最多等 30s: 硬件被占/ffmpeg 卡死时不能把请求线程永远挂住
+            r0, _, _ = select.select([proc.stdout], [], [], 30)
+            first = proc.stdout.read(65536) if r0 else b""
             if not first:
                 try:
                     proc.wait(timeout=3)
@@ -16681,6 +16707,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(first)
             self.wfile.flush()
             while True:
+                # 60s 没有任何输出视为合成卡死: 断开让前端走回退, 不留挂死线程
+                r, _, _ = select.select([proc.stdout], [], [], 60)
+                if not r:
+                    break
                 chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
