@@ -1134,6 +1134,8 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 /* 事件卡片: 官方App横排列表 (封面左, 信息右) */
 .card { display:flex; gap:12px; align-items:center; background:var(--panel); border-radius:14px; overflow:hidden; cursor:pointer; transition:transform .15s,box-shadow .15s; border:1px solid var(--line); box-shadow:var(--shadow); padding:9px; }
 .card:hover { transform:translateY(-2px); }
+@keyframes cardflash { 0%,100% { box-shadow:0 0 0 2px var(--blue), var(--shadow); } 50% { box-shadow:0 0 0 4px color-mix(in srgb, var(--blue) 50%, transparent), var(--shadow); } }
+.card.flash { box-shadow:0 0 0 2px var(--blue), var(--shadow); animation:cardflash 1.2s ease-in-out 1; }
 .thumb { flex:0 0 132px; width:132px; height:76px; border-radius:10px; overflow:hidden; background:#000; position:relative; }
 .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
 .cnum { position:absolute; right:5px; bottom:5px; background:#000000b8; color:#fff; font-size:10.5px; line-height:1; padding:3px 6px; border-radius:8px; }
@@ -1156,6 +1158,18 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 /* 哨兵总览: 顶部内嵌「六路合成」播放控件 (替代存储卡/系统状态); 其它分类也带播放器, 但保留存储卡与筛选 */
 body.ovmode.allmode .storwrap { display:none; }
 .ovplay { display:none; max-width:980px; margin:10px auto 0; padding:0 12px; }
+/* 分类页点开记录: 同一套六路控件整屏弹出 (二级播放页), 返回即回列表 */
+body.ovfull { overflow:hidden; }
+body.ovfull .ovplay { display:block; position:fixed; inset:0; z-index:120; max-width:none; margin:0;
+  padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px)); background:var(--bg); overflow-y:auto;
+  -webkit-overflow-scrolling:touch; }
+body.ovfull .ovstage { max-width:980px; margin:0 auto; }
+body.ovfull .ovbar, body.ovfull .ovtools, body.ovfull .ovcams, body.ovfull .ovclips,
+body.ovfull .ovtop { max-width:980px; margin-left:auto; margin-right:auto; }
+body.ovfull .ovtop { position:sticky; top:0; z-index:2; background:var(--bg); padding-bottom:6px; }
+.ovback { display:none; flex:0 0 auto; padding:6px 10px; font-size:13px; line-height:1; border-radius:9px;
+  background:var(--panel2); color:var(--text); border:1px solid var(--line2); cursor:pointer; }
+body.ovfull .ovback { display:inline-flex; align-items:center; gap:2px; }
 /* 分类页没有可播事件时, 把播放器整块收起来, 不留黑框 */
 body.ovnone .ovplay { display:none !important; }
 /* 总览播放区吸顶: 上面视频+控件+方位条固定不动, 只有下面的列表滚动 */
@@ -1266,11 +1280,15 @@ body.ovmode.allmode #filters { display:none; }
 .pscroll { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px 14px 14px; display:flex; flex-direction:column; gap:12px; }
 .pscroll > * { flex:0 0 auto; }
 .vwrap { position:relative; border-radius:14px; overflow:hidden; max-width:980px; width:100%; margin:0 auto; background:var(--stage); }
-/* 详情页只用来看信息/导出/分享: 不再放视频播放器 (画面在列表上方的六路播放区看) */
+/* 详情页只用来看信息/导出/分享: 视频播放走全屏六路控件 (ovfull), 这里不再放播放器 */
 #player .vwrap, #player .cambar, #player .pbar, #player .pwrap { display:none; }
 /* 行车遥测面板 (视频上方, Tesla App 样式, 不遮挡画面) */
 .tpanel { display:none; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 18px 10px; max-width:980px; width:100%; margin:0 auto; }
 .tpanel.show { display:block; }
+/* 换段加载新遥测期间: 面板灰显、数值已重置, 不残留上一分钟的车速/时间 */
+.tpanel.stale { opacity:.45; }
+/* 二级播放页: 行车数据面板挂在六路标题下方, 与视频同宽居中 */
+#ovplay .tpanel { margin:0 auto 8px; }
 .tpanel.folded .tp-rows { display:none; }
 /* 无遥测事件(哨兵/停车): 顶部只保留 时间 + 城市·位置 一行, 不留空白块 */
 .tpanel.plain { padding:12px 18px; }
@@ -1510,6 +1528,19 @@ select.ninput { cursor:pointer; }
 .dpbtns .mini.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
 /* 自建日期选择器 */
 .dpopbox.dbox { width:min(360px,94vw); }
+/* 分享选段弹窗: 分钟芯片 + 画面选择 */
+.shsegs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 12px; }
+.shsegs label { display:inline-flex; align-items:center; gap:5px; padding:7px 10px; border-radius:9px;
+  background:var(--panel2); border:1px solid var(--line2); font-size:12.5px; cursor:pointer;
+  font-variant-numeric:tabular-nums; }
+.shsegs label input { accent-color:var(--blue); margin:0; }
+.shrow { display:flex; align-items:flex-start; gap:8px; margin:0 0 14px; }
+.shl { flex:0 0 auto; font-size:12px; color:var(--muted); line-height:30px; }
+.shcams { display:flex; flex-wrap:wrap; gap:6px; }
+.shcams button { padding:6px 10px; font-size:12px; border-radius:9px; background:var(--panel2);
+  border:1px solid var(--line2); color:var(--muted); cursor:pointer; font-family:inherit; }
+.shcams button.on { background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
+#sh-prog { margin:12px 0 0; font-size:12px; color:var(--muted); }
 .dnav { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:8px 0 10px; }
 .dnav .mini { min-width:56px; padding:6px 10px; border-radius:8px; background:var(--panel2);
   border:1px solid var(--line2); color:var(--text); font-size:12.5px; font-family:inherit; cursor:pointer; text-align:center; }
@@ -1861,6 +1892,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 </nav>
 <div class="ovplay" id="ovplay">
   <div class="ovtop">
+    <button class="ovback" id="ovback" onclick="closeOvFull()">‹ 返回</button>
     <span class="ovk" id="ovcat">哨兵总览</span>
     <span class="ovt" id="ovt">最新记录</span>
     <span class="ovb" id="ovb"></span>
@@ -1945,6 +1977,10 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <div class="expp" id="expp">
   <div class="expt">选择要导出的画面<button class="x" onclick="closeExport()">✕</button></div>
   <div id="expchks"></div>
+  <div class="expitem" style="border-top:1px solid var(--line2);margin-top:6px;flex-direction:column;align-items:stretch;gap:6px">
+    <span style="color:#c6cdd4;cursor:default">片段（勾选要导出/合成的分钟）</span>
+    <div id="expsegs" class="shsegs" style="margin:2px 0 0"></div>
+  </div>
   <label class="expitem" id="expwm-row" style="border-top:1px solid var(--line2);margin-top:6px;align-items:flex-start">
     <input type="checkbox" id="expwm" style="margin-top:2px">
     <span style="line-height:1.45">叠加行车信息水印<small style="display:block;color:#7d8894;font-size:11px;margin-top:2px">半透明单行: 时间/位置/车速/挡位/油门/刹车, 基本不挡画面</small></span>
@@ -2419,6 +2455,22 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <button class="mini" onclick="dpopShare()">分享链接</button>
       <button class="mini" onclick="closeDetailPop()">关闭</button>
     </div>
+  </div>
+</div>
+
+<!-- 分享: 勾选要合成的分钟 + 选画面, 合成后复制下载链接 -->
+<div class="dpopmask" id="shpop">
+  <div class="dpopbox" style="width:min(560px,94vw)">
+    <div class="dph"><b id="sh-title">分享 · 选择片段</b><button class="x" onclick="closeSharePop()">✕</button></div>
+    <div class="dpi" id="sh-sub">—</div>
+    <div id="sh-segs" class="shsegs"></div>
+    <div class="shrow"><span class="shl">画面</span><div id="sh-cams" class="shcams"></div></div>
+    <div class="dpbtns">
+      <button class="mini primary" id="sh-go" onclick="doShareBuild()">合成并复制链接</button>
+      <button class="mini" onclick="copyEventLink()">只复制记录链接</button>
+      <button class="mini" onclick="closeSharePop()">关闭</button>
+    </div>
+    <div class="dpi" id="sh-prog" style="display:none"></div>
   </div>
 </div>
 
@@ -3163,6 +3215,7 @@ function renderTabs() {
     b.dataset.cat = c;
     b.innerHTML = `<span class="tl">${t(label)}</span><span class="tn">${displayCount(c)}</span>`;
     b.onclick = () => {
+      closeOvFull();   // 播放二级页开着时切分类: 先退回列表, 不要继续播上一条
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
       currentCat = c; reasonFilter = 'all'; dateFilter = 'all'; closeLive();
@@ -3224,6 +3277,10 @@ function autoOpenOverview() {
 /* ---------- 哨兵总览: 顶部内嵌「六路合成」播放控件 ---------- */
 let ovEv = null, ovJob = null, ovPoll = null, ovTimer = null, ovRateN = 1,
     ovCamSel = 'all', ovClipIx = 0, ovBrightOn = false, ovRateVal = 1, ovQ = '360p';
+let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
+let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
+let ovPendingSeek = null;      // 跨段拖动后要落到段内的时间点
+let ovSeekTimer = null;        // 拖动切段防抖
 try { const q0 = String(localStorage.getItem('ovq') || ''); if (['360p','480p','720p','1080p'].indexOf(q0) >= 0) ovQ = q0; } catch (e) {}
 const ovCovers = {};       // 'cat/name' -> 合成帧封面
 const ovJobs = {};         // 'cat/name' -> 合成任务 id (本页内复用; 服务端按事件缓存产物)
@@ -3275,11 +3332,39 @@ function ovStickTop() {
   op.style.top = Math.round(hd.getBoundingClientRect().height) + 'px';
 }
 window.addEventListener('resize', ovStickTop);
+/* 分类页点开记录: 把列表上方那套六路控件整屏弹出当二级播放页, 返回回到列表 */
+let ovFullScroll = 0;
+function ovOpenFull(ev) {
+  if (!ev) return;
+  if (!ev._cat) ev._cat = currentCat;
+  ovMoveTelemetry();
+  if (!document.body.classList.contains('ovfull')) {
+    ovFullScroll = window.scrollY || 0;
+    document.body.classList.add('ovfull');
+    window.scrollTo(0, 0);
+  }
+  ovOpen(ev);
+}
+/* 行车数据面板固定挂在六路控件标题下方 (视频上方), 居中 */
+function ovMoveTelemetry() {
+  const tp = document.getElementById('tpanel'), host = document.getElementById('ovplay');
+  const top = host && host.querySelector('.ovtop');
+  if (tp && top && tp.parentElement !== host) top.insertAdjacentElement('afterend', tp);
+}
+function closeOvFull() {
+  if (!document.body.classList.contains('ovfull')) return;
+  document.body.classList.remove('ovfull');
+  ovStopAll();
+  ovEv = null;
+  window.scrollTo(0, ovFullScroll || 0);
+}
 function ovOpen(ev) {
   if (!ev) return;
   ovStickTop();
   ovEv = ev;
   ovCamSel = 'all';
+  ovTL = { n: 0, dur: 0 };
+  ovPendingSeek = null;
   const vt = document.getElementById('ovt');
   if (vt) {
     const _h = amapHref(ev.meta || {});
@@ -3294,6 +3379,14 @@ function ovOpen(ev) {
   const qb = document.getElementById('ovq');
   if (qb) { qb.textContent = ovQ; qb.classList.toggle('hi', ovQ !== '360p'); }
   ovBuildGrid(ev, 0);
+  /* 二级播放页: 视频上方的行车数据面板, 取本段主路片段的 SEI (无遥测只显示时间/地点) */
+  if (document.body.classList.contains('ovfull')) {
+    ovLoadTel();
+  } else {
+    /* 总览页吸顶预览不带行车数据面板 */
+    const tp = document.getElementById('tpanel');
+    if (tp) tp.classList.remove('show', 'plain');
+  }
 }
 /* 取该事件第一组片段的 6 路: 总览只播第一分钟, 六格各开一个播放器同时播 */
 function ovPickVids(ev, ix) {
@@ -3317,18 +3410,26 @@ function ovClipKey(k) {
   return m ? m[2] + ':' + m[3] : String(k || '').slice(-5);
 }
 function ovRenderClips(ev, ix) {
+  /* 分钟片段按钮不再显示: 播完当前段自动接下一段 */
   const el = document.getElementById('ovclips');
   if (!el) return;
-  const groups = groupVideos((ev && ev.videos) || []);
-  if (groups.length < 2) { el.innerHTML = ''; el.classList.add('hide'); return; }
-  el.classList.remove('hide');
-  el.innerHTML = groups.map((g, i) =>
-    `<button class="${i === ix ? 'on' : ''}" onclick="ovClip(${i})">${ovClipKey(g.key)}</button>`).join('');
+  el.innerHTML = '';
+  el.classList.add('hide');
 }
 function ovClip(i) {
   ovClipIx = i || 0;
   if (!ovEv) return;
   ovBuildGrid(ovEv, ovClipIx);
+  ovLoadTel();
+}
+/* 二级播放页的行车数据: 跟随当前分钟段的 SEI */
+function ovLoadTel() {
+  if (!document.body.classList.contains('ovfull') || !ovEv) return;
+  try {
+    const gv = ovPickVids(ovEv, ovClipIx) || [];
+    const tv = gv.find(v => v.cam === 'front') || gv[0];
+    loadTelemetry(tv ? tv.url : null, ovEv.meta || {});
+  } catch (e) { /* 遥测拿不到不影响播放 */ }
 }
 /* ---------- 总览工具: 前后 2 秒 / 提亮 / 截屏 / 倍速 / 方位切换 ---------- */
 function ovSkip(d) {
@@ -3535,6 +3636,10 @@ function ovSetQuality(q) {
   if (!vs.length) return;
   const at = vs[0].currentTime || 0, playing = !vs[0].paused;
   ovBadge(q + ' 切换中…');
+  /* 某一路一直不 loadedmetadata(转码没生成/网络卡)时不能永远挂在"切换中" */
+  const watchdog = setTimeout(() => {
+    if (left > 0) ovBadge(q + ' 部分画面未就绪, 可再点一次', true);
+  }, 12000);
   let left = vs.length;
   vs.forEach(v => {
     /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
@@ -3546,7 +3651,7 @@ function ovSetQuality(q) {
       try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
       try { v.playbackRate = ovRateVal; } catch (e) {}
       if (playing) v.play().catch(() => {});
-      if (--left <= 0) ovBadge(vs.length + ' 路同步', true);
+      if (--left <= 0) { clearTimeout(watchdog); ovBadge(vs.length + ' 路同步', true); }
     });
   });
   try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3596,7 +3701,10 @@ function ovBuildGrid(ev, ix) {
     }
   });
   ovBadge(vids.length ? (vids.length + ' 路同步') : '', !!vids.length);
+  /* 时间轴: 段数用于把进度条拉成整条视频的总长 */
+  ovTL.n = groupVideos((ev && ev.videos) || []).length || 1;
   ovRenderClips(ev, ix || 0);
+  ovClock(0, 0);            /* 一进播放页就按"段数×时长"把进度条拉到整条总长 */
   ovRenderCams(ev);
   if (vids.length) {
     ovMask(false);          /* 不再压"加载中"遮罩, 直接起播 */
@@ -3624,6 +3732,21 @@ function ovSyncOn() {
     const vs = ovVids();
     if (!vs.length) return;
     const main = vs[0];
+    /* 跨段拖动: 新段加载好后落到段内时间点 */
+    if (ovPendingSeek != null && main && main.duration) {
+      const p = ovPendingSeek; ovPendingSeek = null;
+      vs.forEach(v => { try { v.currentTime = p; } catch (e) {} });
+    }
+    /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮 */
+    if (!ovAutoLock && main && main.duration > 0 &&
+        (main.ended || (main.duration > PREV_SEC + 2 && main.currentTime >= main.duration - 0.25))) {
+      const groups = groupVideos((ovEv && ovEv.videos) || []);
+      if (ovClipIx + 1 < groups.length) {
+        ovAutoLock = true;
+        ovClip(ovClipIx + 1);
+        setTimeout(() => { ovAutoLock = false; }, 2500);
+      }
+    }
     vs.forEach((v, i) => {
       if (i === 0 || !v.duration || v.seeking) return;
       if (Math.abs((v.currentTime || 0) - (main.currentTime || 0)) > 0.45) {
@@ -3687,9 +3810,24 @@ function ovSyncBtn() {
 }
 function ovSeek(val) {
   const vs = ovVids(), main = vs[0];
-  if (!main || !main.duration) return;
-  const t = Math.max(0, Math.min(main.duration - 0.05, main.duration * (+val / 1000)));
-  vs.forEach(v => { try { v.currentTime = t; } catch (e) {} });
+  if (!main) return;
+  /* 进度条是整条视频的总长: 拖到别的分钟就切段再落到段内位置 */
+  const segDur = ovTL.dur || ((main.duration && main.duration > PREV_SEC + 2) ? main.duration : 60);
+  const n = ovTL.n || 1, total = segDur * n;
+  const gt = total * (+val / 1000);
+  const idx = Math.max(0, Math.min(n - 1, Math.floor(gt / segDur)));
+  const local = Math.max(0, Math.min(segDur - 0.1, gt - idx * segDur));
+  if (idx !== ovClipIx) {
+    ovPendingSeek = local; updateHud(local);
+    clearTimeout(ovSeekTimer);                 // 拖动中别反复重建六路, 停手 120ms 再切段
+    ovSeekTimer = setTimeout(() => { if (ovPendingSeek != null) ovClip(idx); }, 120);
+    return;
+  }
+  /* 又拖回当前段: 撤销还在排队的那次跨段切换, 否则 120ms 后会被甩到别的分钟 */
+  ovPendingSeek = null;
+  clearTimeout(ovSeekTimer);
+  vs.forEach(v => { try { v.currentTime = local; } catch (e) {} });
+  updateHud(local);
 }
 function ovRate() {
   const rates = [0.5, 1, 2];
@@ -3699,6 +3837,18 @@ function ovFull() {
   const st = document.getElementById('ovstage');
   if (st && st.requestFullscreen) st.requestFullscreen().catch(() => {});
 }
+/* 整条时间轴: 进度条/时钟按"段数 × 单段时长"算, 拖到别的分钟就切段 */
+function ovClock(ct, dur) {
+  if (dur && dur > PREV_SEC + 2 && dur > (ovTL.dur || 0)) ovTL.dur = dur;
+  const n = ovTL.n || 1;
+  /* 还没拿到任何一段时长时按 60 秒/段估算, 免得一进页面显示成 00:59 */
+  const segDur = ovTL.dur || (dur && dur > PREV_SEC + 2 ? dur : 60);
+  const total = segDur * n;
+  const gt = Math.min(total, (ovClipIx || 0) * segDur + (ct || 0));
+  const s = document.getElementById('ovseek'), c = document.getElementById('ovcur');
+  if (total && s) s.value = Math.round(gt / total * 1000);
+  if (c) c.textContent = ovFmt(gt) + ' / ' + ovFmt(total);
+}
 function ovBind() {
   const g = document.getElementById('ovgrid');
   if (!g || g._ovBound) return;
@@ -3707,12 +3857,22 @@ function ovBind() {
   g.addEventListener('timeupdate', function (e) {
     const main = ovVids()[0];
     if (e.target !== main) return;
-    const v = e.target, s = document.getElementById('ovseek'), c = document.getElementById('ovcur');
-    if (v.duration && s) s.value = Math.round(v.currentTime / v.duration * 1000);
-    if (c) c.textContent = ovFmt(v.currentTime) + ' / ' + ovFmt(v.duration || 0);
+    const v = e.target;
+    /* 播放条走整条视频的总时间轴: 第 N 段之前的时间 + 段内时间 */
+    ovClock(v.currentTime || 0, v.duration || 0);
+    updateHud(v.currentTime);   // 视频上方的车速/挡位/油门/刹车跟随播放进度
   }, true);
   g.addEventListener('play', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
   g.addEventListener('pause', function (e) { if (e.target === ovVids()[0]) ovSyncBtn(); }, true);
+  /* 1080p 档现在是 HEVC(hvc1): 老设备/没装解码器的浏览器会直接报不支持 -> 自动降 720p(h264) */
+  g.addEventListener('error', function (e) {
+    const v = e.target;
+    if (!v || v.tagName !== 'VIDEO') return;
+    if (ovQ === '1080p' && (v.src || '').indexOf('q=1080p') >= 0) {
+      ovBadge('1080p 不被支持, 已降到 720p', true);
+      ovSetQuality('720p');
+    }
+  }, true);
   g.addEventListener('waiting', function (e) { if (e.target === ovVids()[0]) ovBadge('缓冲中'); }, true);
   g.addEventListener('playing', function (e) { if (e.target === ovVids()[0]) ovBadge(ovVids().length + ' 路同步', true); }, true);
 }
@@ -3744,7 +3904,22 @@ function openDeepLink() {
     [...tabs.children].forEach(b => b.classList.remove('active'));
     const tb = [...tabs.children].find(b => b.dataset.cat === c);
     if (tb) tb.classList.add('active');
-    currentCat = c; reasonFilter = 'all'; render(c); openDetailPop(ev);
+    currentCat = c; reasonFilter = 'all'; render(c);
+    /* 分享链接落地: 总览页定位到卡片并开播; 分类页直接进二级播放页, 不弹详情小窗 */
+    setTimeout(() => {
+      if (c === ALL_CAT) {
+        const want = m.includes('/') ? m.split('/').slice(1).join('/') : m;
+        const cd = [...document.querySelectorAll('#grid .card')].find(x => x.dataset.name === want || x.dataset.name === ev.name);
+        if (cd) {
+          cd.scrollIntoView({ block: 'center' });
+          cd.classList.add('flash');
+          setTimeout(() => cd.classList.remove('flash'), 1800);
+        }
+        ovOpen(ev);
+      } else {
+        ovOpenFull(ev);
+      }
+    }, 0);
     const cam = new URLSearchParams(location.search).get('cam');
     if (cam) setCam(cam);
     if (q.get('exp') === '1') setTimeout(openExport, 600);
@@ -3797,7 +3972,98 @@ function openDetailPop(ev) {
 }
 function closeDetailPop() { document.getElementById('dpop').classList.remove('open'); }
 function dpopExport() { const e = dpEv; closeDetailPop(); if (e) exportFromList(e); }
-function dpopShare() { if (dpEv) shareEventFor(dpEv); }
+function dpopShare() { const e = dpEv; closeDetailPop(); if (e) openSharePop(e); }
+/* ---------- 分享: 勾选要合成的分钟, 合成成一条视频再复制链接 ---------- */
+let shEv = null, shCam = 'front';
+function openSharePop(ev) {
+  if (!ev) { toast('❌ 没有可分享的记录'); return; }
+  if (!ev._cat) ev._cat = currentCat;
+  shEv = ev;
+  const groups = groupVideos(ev.videos || []);
+  const md = ev.meta || {};
+  document.getElementById('sh-title').textContent = '分享 · ' + (evTime(ev) || ovTarget(ev).name);
+  document.getElementById('sh-sub').textContent = groups.length > 1
+    ? ('共 ' + groups.length + ' 段 · 勾选要合成的分钟, 生成一条完整视频的链接')
+    : ('共 1 段 · 直接合成这条记录, 生成可分享的下载链接');
+  const seg = document.getElementById('sh-segs');
+  seg.innerHTML = groups.map((g, i) =>
+    '<label><input type="checkbox" value="' + i + '" checked>' + ovClipKey(g.key) +
+    ' <span style="color:var(--muted2);font-size:11px">' + g.vids.length + ' 路</span></label>').join('')
+    || '<div style="color:var(--muted)">这条记录没有片段</div>';
+  const vid0 = (groups.length ? groups[0].vids : (ev.videos || []))[0] || {};
+  shCam = (md.camera !== undefined && isSentryEv(md) && CAM_IDX[+md.camera]) ? CAM_IDX[+md.camera]
+        : ((vid0.cam) || 'front');
+  const cams = camSort(groups.length ? groups[0].vids : (ev.videos || []));
+  document.getElementById('sh-cams').innerHTML = cams.map(v =>
+    '<button type="button" data-cam="' + (v.cam || '') + '" onclick="shPickCam(this.dataset.cam)">' +
+    camLabel(v.cam) + '</button>').join('');
+  shPickCam(shCam);
+  const pr = document.getElementById('sh-prog');
+  pr.style.display = 'none'; pr.textContent = '';
+  document.getElementById('sh-go').disabled = false;
+  document.getElementById('shpop').classList.add('open');
+}
+function closeSharePop() { document.getElementById('shpop').classList.remove('open'); }
+function shPickCam(c) {
+  shCam = c || 'front';
+  document.querySelectorAll('#sh-cams button').forEach(b => b.classList.toggle('on', b.dataset.cam === shCam));
+}
+function copyText(txt, msg) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(() => toast('✅ ' + (msg || '已复制')))
+      .catch(() => window.prompt('复制这条链接', txt));
+  } else window.prompt('复制这条链接', txt);
+}
+function copyEventLink() { if (shEv) shareEventFor(shEv); }
+function doShareBuild() {
+  const ev = shEv;
+  if (!ev) return;
+  const groups = groupVideos(ev.videos || []);
+  const sel = [...document.querySelectorAll('#sh-segs input:checked')].map(c => +c.value);
+  if (!sel.length) { toast('❌ 至少勾选一分钟'); return; }
+  const files = [];
+  sel.forEach(i => {
+    const g = groups[i] || { vids: [] };
+    g.vids.forEach(v => {
+      if ((v.cam || '') !== shCam) return;
+      const f = v.f || String(v.url || '').split('/').pop();
+      if (f) files.push(f);
+    });
+  });
+  if (!files.length) { toast('❌ 勾选的片段里没有这个画面'); return; }
+  const tg = ovTarget(ev);
+  const btn = document.getElementById('sh-go'), pr = document.getElementById('sh-prog');
+  btn.disabled = true;
+  pr.style.display = ''; pr.textContent = '提交合成…';
+  fetch('/api/share/build', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cat: tg.cat, name: tg.name, cam: shCam, files: files })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { btn.disabled = false; pr.textContent = '❌ ' + (d.error || '提交失败'); return; }
+    pollShareBuild(d.id);
+  }).catch(e => { btn.disabled = false; pr.textContent = '❌ ' + e; });
+}
+function pollShareBuild(id) {
+  fetch('/api/stitch/status?id=' + encodeURIComponent(id), { cache: 'no-store' })
+    .then(r => r.json()).then(d => {
+      const pr = document.getElementById('sh-prog');
+      if (d.state === 'error') {
+        pr.textContent = '❌ ' + (d.err || '合成失败');
+        document.getElementById('sh-go').disabled = false;
+        return;
+      }
+      if (d.state === 'done') {
+        pr.textContent = '✅ 合成完成';
+        const u = location.origin + '/api/library/dl?f=' + encodeURIComponent(d.f || '');
+        copyText(u, '合成好的视频链接已复制, 发给对方直接打开/下载');
+        document.getElementById('sh-go').disabled = false;
+        setTimeout(closeSharePop, 900);
+        return;
+      }
+      pr.textContent = '合成中… ' + (d.pct || 0) + '%';
+      setTimeout(() => pollShareBuild(id), 1200);
+    }).catch(() => setTimeout(() => pollShareBuild(id), 1500));
+}
 function sigOf(d) {  return Object.keys(d).map(c => c + ':' + d[c].map(e => e.name + '/' + e.videos.length).join(',')).join('|');
 }
 
@@ -4092,10 +4358,12 @@ function dheadLabel(d) {
   catch (e) { return d.slice(5); }
 }
 function render(cat) {
-  /* 所有分类页都带顶部六路播放器 (和总览同一套), 点卡片就在上面播 */
+  /* 只有「哨兵总览」保留吸顶六路播控; 手动保存/哨兵告警/行车记录 不再常驻播放器,
+     点开列表里的卡片才进二级播放页 */
   const isAll = cat === ALL_CAT;
-  document.body.classList.add('ovmode');
+  document.body.classList.toggle('ovmode', isAll);
   document.body.classList.toggle('allmode', isAll);
+  if (!isAll && !document.body.classList.contains('ovfull')) { ovStopAll(); ovEv = null; }
   const g = document.getElementById('grid'), e = document.getElementById('empty');
   g.innerHTML = '';
   renderFilters(cat);
@@ -4119,6 +4387,7 @@ function render(cat) {
       prevDay = day;
     }
     const card = document.createElement('div'); card.className = 'card';
+    card.dataset.name = ovTarget(ev).name;
     const isTrip = !!ev._trip;
     /* 哨兵总览: 大六路封面 + 时间/下载 + 文件名, 点开就在上面六路一起播 */
     if (cat === ALL_CAT) {
@@ -4170,7 +4439,7 @@ function render(cat) {
     const metaEl = card.querySelector('.meta');
     if (metaEl) {
       const acts = document.createElement('div'); acts.className = 'acts';
-      [['分享', () => shareEventFor(ev)],
+      [['分享', () => openSharePop(ev)],
        ['导出', () => exportFromList(ev)],
        ['详情', () => openDetailPop(ev)]].forEach(([txt, fn]) => {
         const b = document.createElement('button');
@@ -4180,16 +4449,18 @@ function render(cat) {
       });
       metaEl.appendChild(acts);
     }
-    card.onclick = () => ovOpen(ev);
+    card.onclick = () => (cat === ALL_CAT ? ovOpen(ev) : ovOpenFull(ev));
     g.appendChild(card);
   }
-  /* 播放器默认放本分类最新一条; 点了别的卡片就换到那条 (同步刷新时仍同一条就不重开, 避免画面重置) */
+  /* 总览页: 播放器默认放最新一条; 分类页不再自动开播, 等用户点卡片 */
   if (evs.length) {
     document.body.classList.remove('ovnone');
-    const same = ovEv && evs.some(x => ovTarget(x).name === ovTarget(ovEv).name);
-    if (!same) {
-      const f = evs[0];
-      setTimeout(() => { if (document.body.classList.contains('ovmode')) ovOpen(f); }, 0);
+    if (isAll) {
+      const same = ovEv && evs.some(x => ovTarget(x).name === ovTarget(ovEv).name);
+      if (!same) {
+        const f = evs[0];
+        setTimeout(() => { if (document.body.classList.contains('ovmode')) ovOpen(f); }, 0);
+      }
     }
   } else {
     /* 空分类: 把播放器收起, 别留一个带旧标题的黑框 */
@@ -4770,11 +5041,24 @@ function renderClip() {
 
 /* ---------- 行车遥测面板 (SEI, 视频上方) ---------- */
 let telT0 = null, TEL_META = {};
+let telReq = 0, TEL_URL = '';      // 请求序号 + 当前已加载的片段, 防止返回几次后数据被旧请求清掉
 function loadTelemetry(url, meta) {
-  TEL = null;
+  const token = ++telReq;
   TEL_META = meta || {};
   const p = document.getElementById('tpanel'), card = document.getElementById('infocard');
-  p.classList.remove('show', 'plain');
+  /* 换段立即失效上一段遥测: 数值重置 + 灰显, 等新段数据回来再点亮。
+     旧做法"先保留旧数据等新的"会在无 SEI 段残留上一分钟的车速/时间戳。 */
+  if (url !== TEL_URL) {
+    TEL = null; TEL_URL = url;
+    if (p.classList.contains('show')) {
+      p.classList.add('stale');
+      const q = id => document.getElementById(id);
+      q('tp-spd').textContent = '—'; q('tp-gear').textContent = '—'; q('tp-thr-n').textContent = '—';
+      q('tp-brk').classList.remove('on');
+      q('tp-bl').classList.remove('on'); q('tp-br').classList.remove('on');
+    }
+  }
+  if (!TEL && !p.classList.contains('stale')) p.classList.remove('show', 'plain');
   if (card) card.classList.remove('plain');
   p.classList.add('folded');   // 详细数据默认折叠
   document.getElementById('tp-fold').textContent = '展开详细数据 ⌄';
@@ -4790,34 +5074,54 @@ function loadTelemetry(url, meta) {
     camTag.innerHTML = '';
   }
   telT0 = null;
-  if (!url) return;
+  if (!url) { TEL = null; TEL_URL = ''; p.classList.remove('show', 'plain', 'stale'); return; }
   const m = url.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/);
   if (m) telT0 = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
   // 顶部时间: 优先 event.json 的 timestamp, 否则退回片段文件名里的时间
   const ts = String(TEL_META.timestamp || '').replace('T', ' ').replace(/\.\d+/, '').replace(/Z$/, '').slice(0, 19);
   document.getElementById('tp-date').textContent = ts || (telT0 ? fmtTelDate(telT0) : '—');
   const fp = url.replace('/media/', '/archive/');
-  fetch('/api/telemetry?path=' + encodeURIComponent(fp))
-    .then(r => r.json())
-    .then(d => {
-      if (!d.ok || !d.frames || !d.frames.length) { showPlainPanel(); return; }
-      TEL = d;
-      p.classList.add('show');
-      renderHud(d.frames[0]);
-      // 事件信息已搬到上方遥测面板, 下方卡片去掉重复项
-      ['time', 'city', 'street', 'coord', 'camera'].forEach(k => {
-        const el = document.querySelector('#ic-rows > div[data-k="' + k + '"]');
-        if (el) el.remove();
+  const okTel = d => !!(d && d.ok && d.frames && d.frames.length);
+  const apply = d => {
+    if (token !== telReq) return;      // 已有更新的请求: 旧结果直接丢弃, 别覆盖新段数据
+    if (!okTel(d)) { if (!TEL) showPlainPanel(); return; }
+    TEL = d;
+    p.classList.add('show');
+    p.classList.remove('stale');
+    renderHud(d.frames[0]);
+    const rows = document.getElementById('ic-rows');
+    if (!rows) return;
+    ['time', 'city', 'street', 'coord', 'camera'].forEach(k => {
+      const el = rows.querySelector('div[data-k="' + k + '"]');
+      if (el) el.remove();
+    });
+    rows.insertAdjacentHTML('beforeend',
+      '<div><span class="ick">刹车占比</span>' + d.brake_ratio + '%</div>' +
+      '<div><span class="ick">遥测</span>SEI 元数据 · ' + d.count + ' 帧 @ ' + d.fps + 'fps</div>');
+  };
+  /* 六路播放会占满同域连接, 遥测请求偶尔超时: 重试两次, 不要直接降级成"只有时间地点" */
+  const attempt = left => {
+    fetch('/api/telemetry?path=' + encodeURIComponent(fp), { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => {
+        if (token !== telReq) return;
+        if (okTel(d)) { apply(d); return; }
+        if (left > 0) { setTimeout(() => attempt(left - 1), 1200); return; }
+        apply(d);
+      })
+      .catch(() => {
+        if (token !== telReq) return;
+        if (left > 0) { setTimeout(() => attempt(left - 1), 1200); return; }
+        if (!TEL) showPlainPanel();
       });
-      document.getElementById('ic-rows').insertAdjacentHTML('beforeend',
-        '<div><span class="ick">刹车占比</span>' + d.brake_ratio + '%</div>' +
-        '<div><span class="ick">遥测</span>SEI 元数据 · ' + d.count + ' 帧 @ ' + d.fps + 'fps</div>');
-    }).catch(() => showPlainPanel());
+  };
+  attempt(2);
 }
 /* 哨兵/停车片段没有 SEI 遥测: 顶部仍然显示 时间 + 城市·位置, 只是不带车速/挡位 */
 function showPlainPanel() {
   const p = document.getElementById('tpanel'), card = document.getElementById('infocard');
   p.classList.add('show', 'plain');
+  p.classList.remove('stale');
   if (card) card.classList.add('plain');
   ['time', 'city', 'street', 'camera'].forEach(k => {
     const el = document.querySelector('#ic-rows > div[data-k="' + k + '"]');
@@ -5249,6 +5553,13 @@ function openExport() {
     lb.appendChild(document.createTextNode(camLabel(v.cam) + ' (' + v.cam + ')'));
     box.appendChild(lb);
   });
+  const segBox = document.getElementById('expsegs');
+  const gs = groupVideos(cur.videos || []);
+  const segIx = document.body.classList.contains('ovfull') ? ovClipIx : curClipIx;
+  segBox.innerHTML = gs.map((g, i) =>
+    '<label><input type="checkbox" value="' + i + '"' + (i === segIx ? ' checked' : '') + '>' +
+    ovClipKey(g.key) + '</label>').join('') ||
+    '<div style="color:var(--muted);font-size:12px">这条记录没有片段</div>';
   // 水印勾选: 默认勾上。没有遥测的片段(停车哨兵)也允许加, 只是水印里只有时间+地点
   const hasTel = !!(TEL && TEL.frames && TEL.frames.length);
   const wm = document.getElementById('expwm'), wmRow = document.getElementById('expwm-row');
@@ -5353,10 +5664,26 @@ function startServerExport(sel, wm, push) {
   const cat = parts[0] || '', name = parts[1] || '';
   if (!name) { toast('取不到当前事件信息, 请刷新重试'); return; }
   /* 只导出用户当前正在看的这一分钟, 把真实文件名告诉设备端 */
-  const files = curVids()
-    .filter(v => sel.indexOf(v.cam) >= 0)
-    .map(v => v.f || v.url.split('/').pop())
-    .filter(Boolean);
+  /* 选中的片段 (默认当前一分钟): 逐段取所选画面的文件, 服务端按时间顺序拼成一条 */
+  const groups = groupVideos((cur && cur.videos) || []);
+  const segSel = [...document.querySelectorAll('#expsegs input:checked')].map(c => +c.value);
+  const want = segSel.length ? segSel
+            : [document.body.classList.contains('ovfull') ? ovClipIx : curClipIx];
+  /* 选了多分钟只能配一个画面(多段按时间拼成一条); 要多画面就只导一段 */
+  let camsUse = sel.slice();
+  if (want.length > 1 && sel.length > 1) {
+    camsUse = [sel[0]];
+    toast('多分钟合成只支持一个画面, 已用「' + camLabel(sel[0]) + '」');
+  }
+  const files = [];
+  want.forEach(i => {
+    const g = groups[i] || { vids: [] };
+    (g.vids || []).forEach(v => {
+      if (camsUse.indexOf(v.cam) < 0) return;
+      const f = v.f || String(v.url || '').split('/').pop();
+      if (f) files.push(f);
+    });
+  });
   const st = document.getElementById('stitch');
   const fill = document.getElementById('stfill'), pct = document.getElementById('stpct'),
         hint = document.getElementById('sthint');
@@ -5368,7 +5695,7 @@ function startServerExport(sel, wm, push) {
   st.classList.add('open');
   fetch('/api/export/burn', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cat: cat, name: name, cams: sel, wm: !!wm, files: files,
+    body: JSON.stringify({ cat: cat, name: name, cams: camsUse, wm: !!wm, files: files,
                            push: push ? 1 : 0,
                            q: ({ 'orig': 'orig', '1080p': '1080p', '720p': '720p', '480p': '480p', '360p': '360p' })[expQ] || '720p' })
   }).then(r => r.json()).then(d => {
@@ -5611,7 +5938,8 @@ function pollLibJob(id) {
 function fmtSize(n) {
   n = Number(n) || 0;
   if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
-  return Math.max(1, Math.round(n / 1024)) + 'KB';
+  if (n >= 1024) return Math.max(1, Math.round(n / 1024)) + 'KB';
+  return Math.max(0, Math.round(n)) + 'B';
 }
 function libTtlSel(days) {
   const sel = document.getElementById('libttl');
@@ -6865,11 +7193,6 @@ let area = 'usb';  // 'usb' = 车机U盘镜像, 'archive' = 归档区
 let fmSel = new Set();      // 已勾选的完整路径
 let fmPending = null;       // 等待填目标目录的移动/复制任务
 let usbAttached = false;    // 车机U盘是否处于网页管理(已挂载)状态
-function fmtSize(n) {
-  if (n < 1024) return n + ' B';
-  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
-  return (n / 1048576).toFixed(1) + ' MB';
-}
 function fmUpdate() {
   const cnt = document.getElementById('fm-count');
   if (!cnt) return;
@@ -10137,6 +10460,27 @@ FFMPEG_BIN = os.environ.get("TSF_FFMPEG") or "ffmpeg"
 FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or "ffprobe"
 STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
 STITCH_JOBS = {}
+_STITCH_SEEN = {}
+
+
+def stitch_jobs_gc():
+    """已完成/失败的合成记录只保留 2 小时, 防 STITCH_JOBS 只增不减(慢性内存泄漏)。
+    以首次看到完成态的时间起算, 不动 running 中的任务。"""
+    now = time.time()
+    with STITCH_LOCK:
+        for jid in list(STITCH_JOBS):
+            if STITCH_JOBS[jid].get("state") == "running":
+                _STITCH_SEEN.pop(jid, None)
+                continue
+            t0 = _STITCH_SEEN.get(jid)
+            if t0 is None:
+                _STITCH_SEEN[jid] = now
+            elif now - t0 > 7200:
+                STITCH_JOBS.pop(jid, None)
+                _STITCH_SEEN.pop(jid, None)
+        for jid in list(_STITCH_SEEN):
+            if jid not in STITCH_JOBS:
+                _STITCH_SEEN.pop(jid, None)
 # 作品库: 合成/导出成品原来留在 stitch-tmp, 1~2 小时就被清掉, 用户只能当场下载。
 # 现在成品移到外接盘 exports/, 网页「作品」里随时下载、补推飞书; 保留天数可在网页里改(1~180 天),
 # 容量上限 20GB 是硬顶, 先按天数淘汰再按容量淘汰。
@@ -10217,6 +10561,89 @@ def prewarm_resume_min():
 def play_hold_active():
     """播放中或停止播放不足所设分钟数 → True, 后台任务应让路。"""
     return (time.time() - PLAY_HOLD["ts"]) < prewarm_resume_min() * 60
+
+
+_SYNC_BUSY_CACHE = {"ts": 0.0, "v": False}
+
+
+def usb_sync_busy():
+    """live-sync 正在搬新录像(持 USB 共享锁) → True, 后台预热/缩略图让路。
+    2026-11-25 实测: 新事件落盘 + live-sync 逐路拷贝 + 预缓冲硬转三峰叠加,
+    CMA 被占到 0、load 冲 4.8, 播放排队 60-90s。探测方式: 对同一把锁试独占,
+    拿不到就说明 live-sync(LOCK_SH)或网页 U 盘管理(LOCK_EX)正在干活。1s 缓存防抖。"""
+    now = time.time()
+    if now - _SYNC_BUSY_CACHE["ts"] < 1.0:
+        return _SYNC_BUSY_CACHE["v"]
+    busy = False
+    try:
+        fd = os.open(os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock"),
+                     os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            busy = True
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+    _SYNC_BUSY_CACHE["ts"] = now
+    _SYNC_BUSY_CACHE["v"] = busy
+    return busy
+
+
+# 车机写入探测: 镜像唯一写入者是车机(盒子全程 pread 只读), mtime 前进 = 车机正在写。
+_CAR_WRITE = {"mtime": 0, "changed": -100.0, "ts": 0.0, "v": False}
+CAR_TRAN_SEM = threading.BoundedSemaphore(2)   # 车机写入期间转码并发上限, 给 OTG 留一核
+
+
+def car_writing():
+    """车机 10s 内写过 U 盘 → True。写入期间: 转码并发 3→2 且钉在 0-2 核,
+    第 4 核留给 OTG/gadget 内核线程与 live-sync; 车机不写则全额 4 核。1s 探测缓存。"""
+    now = time.time()
+    if now - _CAR_WRITE["ts"] < 1.0:
+        return _CAR_WRITE["v"]
+    try:
+        mt = os.stat(IMG).st_mtime_ns
+        if _CAR_WRITE["mtime"] and mt != _CAR_WRITE["mtime"]:
+            _CAR_WRITE["changed"] = now
+        _CAR_WRITE["mtime"] = mt
+    except OSError:
+        pass
+    v = (now - _CAR_WRITE["changed"]) < 10.0
+    _CAR_WRITE["ts"] = now
+    _CAR_WRITE["v"] = v
+    return v
+
+
+def car_cpu_prefix():
+    """车机写入时把 ffmpeg 钉在 0-2 核(留一核给 OTG), 空闲时返回空=全额 4 核。"""
+    return ["taskset", "-c", "0-2"] if car_writing() else []
+
+
+# 启动爬坡: 重启/清缓存后预热补欠账别一上来就满并发(实测 load 冲 9.8),
+# 前 60s 后台只跑 1 路, 60-120s 放 2 路, 之后全额。前台点播不受限。
+_BOOT_TS = time.time()
+_RAMP = {"n": 0}
+_RAMP_LOCK = threading.Lock()
+
+
+def _ramp_limit():
+    el = time.time() - _BOOT_TS
+    return 1 if el < 60 else (2 if el < 120 else 99)
+
+
+def _ramp_try():
+    with _RAMP_LOCK:
+        if _RAMP["n"] < _ramp_limit():
+            _RAMP["n"] += 1
+            return True
+    return False
+
+
+def _ramp_release():
+    with _RAMP_LOCK:
+        _RAMP["n"] = max(0, _RAMP["n"] - 1)
 PLAYBACK_TTL = 30
 THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/thumbs"
 THUMB_SEM = threading.BoundedSemaphore(3)
@@ -10328,7 +10755,7 @@ def thumb_file(fp, ss_t=1.0, kind="list"):
                         cmd = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
                                "-ss", ss, "-i", fp, "-frames:v", "1",
                                "-vf", "scale=%d:-2" % THUMB_W, "-q:v", "7", tmp]
-                    subprocess.run(cmd, capture_output=True, timeout=30)
+                    subprocess.run(car_cpu_prefix() + cmd, capture_output=True, timeout=30)
                     if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                         os.replace(tmp, out)
                         _thumb_write_meta(out, fp, kind, ss_t)
@@ -10494,7 +10921,8 @@ RES_FPS = {"360p": 24, "480p": 24, "720p": 24, "1080p": 24}
 # 会被判定不可硬解而退回软解); 版本号一变启动时就清空旧缓存按新规格重建。
 # v7: RGA 加 force_divisible_by=16, 720p 从 960x622 修正为 960x624; 清 v6 的非对齐产物。
 # v8: RGA/setsar 重置 SAR=1(旧产物 SAR 2353:2345/20996:21105, 浏览器显示成 963x624/1440x933)。
-RES_ENC_VER = "8"
+# v9: 码控分档(360p/480p CBR, 720p+ VBR+QP 限幅) + 1080p 试 HEVC(hvc1) -> 旧档必须重建。
+RES_ENC_VER = "9"
 RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
@@ -10507,7 +10935,12 @@ VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-t
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
 # 并发上限保持 3 (不是越高越好): RK3568 只有一路硬编实例, 实测单路 720p 7.5s,
 # 4 路同时跑每路都拖到 48s、总吞吐反而下降, 排队(3 槽)比全放开更快; 内存也只在排队时可控。
-Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "2")))  # 实测: 并发3路 RGA缩放+编码会 mpp buffer NULL 失败, 2路稳定; 1个预览/预热 + 1个用户请求
+# 并发槽位: 2026-11-25 在盒子上实测 (58s 原片 @720p 硬转):
+#   1 路 27.9s / 2 路并行 38.2s / 3 路并行 38.6s / 4 路 48.2s / 6 路 49.8s (20s 片) / 8 路 58s (20s 片)
+#   单次跑 3~8 路都没有再出现 mpp_buffer NULL, 说明以前"3 路必炸"是内存瞬时碎片造成的偶发失败,
+#   不是并发数本身的硬上限。3 路是吞吐/时延的拐点(再往上每路都会被拖慢), 所以默认 3 槽。
+#   仍有偶发分配失败 -> get_variant 里做了"硬转失败先重试一次, 再回退软转"。
+Q_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TR_CODES", "3")))
 USER_TRANS = [0]      # 正在排队/占用转码槽的用户请求数; 后台预热看到 >0 就让位
 RES_MAX = 4 * 1024 * 1024 * 1024  # 清晰度缓存上限 4GB(外接盘 445G 可用, 1080p 档体积翻倍)
 
@@ -11843,7 +12276,7 @@ def _make_push_video(fp, off, quality="480p", dur=30):
                     os.unlink(tmp)
                 except OSError:
                     pass
-                r = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
+                r = subprocess.run(car_cpu_prefix() + cmd, capture_output=True, timeout=300, env=env)
                 if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     break
     except subprocess.TimeoutExpired:
@@ -11903,7 +12336,7 @@ def _transcode_push_upload(src, quality="480p"):
                     os.unlink(tmp)
                 except OSError:
                     pass
-                r = subprocess.run(cmd, capture_output=True, timeout=900)
+                r = subprocess.run(car_cpu_prefix() + cmd, capture_output=True, timeout=900)
                 if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     break
     except subprocess.TimeoutExpired:
@@ -12200,6 +12633,47 @@ def notify_push(cat, name, test=False):
     return True, "已推送到飞书群" + warn
 
 
+_WATCH_ALERT_LAST = {"ts": 0.0, "msg": ""}
+
+
+def watch_alert_push(msg):
+    """巡检 ALERT 推飞书(复用推送配置); 相同告警 10 分钟内去重。
+    由 tsf-watch 经回环 /api/watch/alert 调用。"""
+    msg = (msg or "").strip()[:500]
+    if not msg:
+        return False, "empty"
+    now = time.time()
+    if msg == _WATCH_ALERT_LAST["msg"] and now - _WATCH_ALERT_LAST["ts"] < 600:
+        return True, "dedup"
+    conf = notify_conf()
+    if not conf.get("enabled"):
+        return False, "推送未启用"
+    text = "⚠️ TeslaBox 巡检告警\n" + msg + "\n" + time.strftime("%Y-%m-%d %H:%M:%S")
+    hook = str(conf.get("webhook") or "").strip()
+    use_dm = _dm_ready(conf) and (conf.get("mode") != "group" or not hook)
+    try:
+        if use_dm:
+            rid, rtype = _dm_target(conf)
+            url = FEISHU_API + "/im/v1/messages?receive_id_type=" + urllib.parse.quote(rtype)
+            j = _post_json(url, {"receive_id": rid, "msg_type": "text",
+                                 "content": json.dumps({"text": text}, ensure_ascii=False)},
+                           timeout=20, headers={"Authorization": "Bearer " + _feishu_token(conf)})
+            if j.get("code") != 0:
+                raise RuntimeError("%s (code=%s)" % (j.get("msg") or "发送失败", j.get("code")))
+        elif hook:
+            j = _post_json(hook, {"msg_type": "text", "content": {"text": text}})
+            code = j.get("code", j.get("StatusCode", -1))
+            if code not in (0, None):
+                raise RuntimeError("%s (code=%s)" % (j.get("msg") or j.get("StatusMessage") or "发送失败", code))
+        else:
+            return False, "未配置推送通道"
+    except Exception as ex:
+        return False, str(ex)[:140]
+    _WATCH_ALERT_LAST["ts"] = now
+    _WATCH_ALERT_LAST["msg"] = msg
+    return True, "已推送"
+
+
 def _ev_ts(name):
     """从事件目录名 YYYY-MM-DD_HH-MM-SS 解析事件真实发生时间; 失败返回 0"""
     try:
@@ -12285,8 +12759,8 @@ def notify_loop():
             continue
         try:
             notify_scan()
-        except Exception:
-            pass
+        except Exception as ex:
+            print("[NOTIFY] 扫描异常: %s" % str(ex)[:200], flush=True)
         time.sleep(30)
 
 
@@ -12432,22 +12906,77 @@ def _kill_transcode(p):
 
 
 def _run_transcode_cmd(cmd, cancel=None, timeout=900, env=None):
-    """运行转码子进程; cancel 置位或超时立即杀掉整个进程组, 不留后台 FFmpeg。"""
+    """车机写入第一优先: 写入期间并发压到 2 并钉 0-2 核, 留一核给 OTG; 空闲全额。"""
+    car = car_writing()
+    if car:
+        deadline = time.time() + 600
+        while not CAR_TRAN_SEM.acquire(timeout=1):
+            if (cancel is not None and cancel.is_set()) or time.time() > deadline:
+                return None
+        cmd = ["taskset", "-c", "0-2"] + list(cmd)
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        return _run_transcode_inner(cmd, cancel, timeout, env)
+    finally:
+        if car:
+            CAR_TRAN_SEM.release()
+
+
+def _run_transcode_inner(cmd, cancel=None, timeout=900, env=None):
+    """运行转码子进程; cancel 置位或超时立即杀掉整个进程组, 不留后台 FFmpeg。
+    失败时把 stderr 尾巴打进日志: 以前 stderr 直接 DEVNULL, mpp_buffer NULL / RGA 报错
+    在服务日志里完全看不到, 只能靠猜。"""
+    errpath = "/tmp/tsf-tr-%d-%d.log" % (os.getpid(), abs(hash(tuple(str(c) for c in cmd))) % 100000)
+    try:
+        fh = open(errpath, "w", encoding="utf-8")
+    except OSError:
+        fh = None
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                             stderr=(fh if fh else subprocess.DEVNULL),
                              start_new_session=True, env=env)
     except Exception:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
         return None
-    deadline = time.time() + timeout
-    while p.poll() is None:
-        if cancel is not None and cancel.is_set():
-            _kill_transcode(p)
+    rc = 0
+    try:
+        deadline = time.time() + timeout
+        while p.poll() is None:
+            if cancel is not None and cancel.is_set():
+                _kill_transcode(p)
+                rc = None
+                break
+            if time.time() > deadline:
+                _kill_transcode(p)
+                rc = None
+                break
+            time.sleep(0.2)
+        if rc is None:
             return None
-        if time.time() > deadline:
-            _kill_transcode(p)
-            return None
-        time.sleep(0.2)
-    return p.returncode
+        rc = p.returncode
+        if rc != 0 and fh is not None:
+            try:
+                fh.flush()
+                with open(errpath, encoding="utf-8", errors="ignore") as rf:
+                    tail = [x for x in rf.read().strip().splitlines() if x.strip()][-3:]
+                if tail:
+                    print("[TR] rc=%s %s" % (rc, " | ".join(tail)[:300]), flush=True)
+            except OSError:
+                pass
+        return rc
+    finally:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+        try:
+            os.unlink(errpath)
+        except OSError:
+            pass
 
 
 def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
@@ -12514,20 +13043,36 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
         use_vpu = (os.environ.get("TSF_VPU_TRANSCODE_ON", "0") == "1"
                    and os.access(VPU_TRANSCODE, os.X_OK)
                    and os.path.exists("/dev/mpp_service"))
+        # 高画质档: 1080p 试 HEVC (同画质体积省 ~23%, 实测编码还快 2s); 其他档保持 h264 兼容
+        enc_kind = ("hevc" if (qv == "1080p" and os.environ.get("TSF_HEVC", "1") != "0") else "h264")
         vpu_cmd = ["sh", "-c",
                    'echo 300 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$0" "$@"',
                    VPU_TRANSCODE, fp, tmp, str(w), str(h), str(fps), str(kbps),
-                   str(kbps * 3 // 2), str(kbps * 3), str(seconds or 0)]
+                   str(kbps * 3 // 2), str(kbps * 3), str(seconds or 0), enc_kind]
         try:
             rc = None
             if use_vpu:
-                rc = _run_transcode_cmd(vpu_cmd, cancel,
-                                        env=dict(os.environ, FFMPEG=FFMPEG_BIN, FFPROBE=FFPROBE_BIN,
-                                                 TSF_VPU_ENC_THREADS=enc_threads))
+                vpu_env = dict(os.environ, FFMPEG=FFMPEG_BIN, FFPROBE=FFPROBE_BIN,
+                               TSF_VPU_ENC_THREADS=enc_threads)
+                rc = _run_transcode_cmd(vpu_cmd, cancel, env=vpu_env)
                 if rc is None:
                     return fp
+                if rc != 0 and rc != 2:
+                    # 硬转偶发失败基本是内核 mpp_buffer 分配不到连续页(CMA 只剩 16M, 碎片多):
+                    # 等 2s 让页回收器/压缩整理一轮再重试一次, 成功就不用掉到软解(软解慢 5~8 倍)
+                    print("[VPU] %s 硬转失败 rc=%s, 2s 后重试一次" % (qv, rc), flush=True)
+                    time.sleep(2.0)
+                    if cancel is not None and cancel.is_set():
+                        return fp
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    rc = _run_transcode_cmd(vpu_cmd, cancel, env=vpu_env)
+                    if rc is None:
+                        return fp
                 if rc != 0:
-                    print("[VPU] 360p 硬解转码失败, 回退软件", flush=True)
+                    print("[VPU] %s 硬转失败, 回退软件" % qv, flush=True)
                     rc = _run_transcode_cmd(soft_cmd, cancel)
             else:
                 rc = _run_transcode_cmd(soft_cmd, cancel)
@@ -12547,8 +13092,8 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
                 else:
                     res_cleanup()
                 return out
-        except Exception:
-            pass
+        except Exception as ex:
+            print("[TR] get_variant %s %s 异常: %s" % (qv, os.path.basename(fp), str(ex)[:160]), flush=True)
         finally:
             try:
                 os.unlink(tmp)
@@ -12617,6 +13162,25 @@ def playback_sweep_loop():
                         _drop_owner(key, sid)
 
 
+def _quick_first_play(src):
+    """首播无任何缓存: 同步等最多 12s 建一个 360p 15s 短档(硬转通常 2-4s)顶上,
+    不再把 ~240MB 原片发给远程(必卡)。超时/失败才回退原画, 短档后台继续建, 下次秒开。"""
+    box = {}
+
+    def _mk():
+        try:
+            box["p"] = get_variant(src, "360p", seconds=15)
+        except Exception:
+            pass
+    t = threading.Thread(target=_mk, daemon=True)
+    t.start()
+    t.join(12)
+    qp = box.get("p")
+    if qp and qp != src and os.path.isfile(qp):
+        return qp, "360p_p15"
+    return src, "orig"
+
+
 def spawn_variant(fp, qv, owner=None, seconds=0, wait_for=None, urgent=False):
     """后台生成缓存; 同一 (文件,档位,秒数) 只起一个作业。owner 为播放器会话。
     wait_for=(fp,qv,seconds) 时先等那个作业结束再开跑 —— 预览和完整档抢 4 核会互相拖慢,
@@ -12678,10 +13242,17 @@ def spawn_variant(fp, qv, owner=None, seconds=0, wait_for=None, urgent=False):
                     break
             if not got:
                 return
+            ramp_held = False
+            if not urgent and not _ramp_try():
+                Q_SEM.release()      # 启动爬坡期后台名额满, 作业撤掉等下轮再排
+                return
+            ramp_held = not urgent
             try:
                 get_variant(fp, qv, slot=False, cancel=cancel, seconds=seconds)
             finally:
                 Q_SEM.release()
+                if ramp_held:
+                    _ramp_release()
         finally:
             with _VARIANT_JOBS_LOCK:
                 _VARIANT_JOBS.pop(key, None)
@@ -12733,6 +13304,32 @@ _PREWARM_PICK_LOCK = threading.Lock()
 # 其次手动保存, 最后行车记录。360p 预缓冲优先于 480p/720p 硬解补档。
 CAT_PRIO = {"SentryClips": 0, "SavedClips": 1, "RecentClips": 2}
 LIVE_HOT = {}                           # fp -> 最近一次实时浏览请求时间; 120s 无请求自动过期
+PREWARM_HOT_FILE = "/tmp/tsf-prewarm-hot"   # live-sync 搬完的新文件队列, 落地即优先预热
+
+
+def _consume_hot_queue():
+    """读走 live-sync 的新事件热点队列(rename 消费, 并发追加不丢)。
+    队列里的文件已由 live-sync 两轮签名确认写完, 预热时跳过 120s 新鲜期等待。
+    时间戳预支 480s: 让 120s TTL 实际保活 600s, 播放/同步让路期间也不掉队。"""
+    tmp = PREWARM_HOT_FILE + ".consume"
+    try:
+        os.replace(PREWARM_HOT_FILE, tmp)
+    except OSError:
+        return
+    try:
+        with open(tmp, encoding="utf-8") as f:
+            now = time.time()
+            for line in f:
+                fp = line.strip()
+                if fp and os.path.isfile(fp):
+                    LIVE_HOT[fp] = now + 480
+    except OSError:
+        pass
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 PREVIEW_SECONDS = 30     # 预解码默认 30 秒, 设置里可改 5-120
 PREWARM_SEC = 30         # 后台预解码沿用同一目标长度, 旧 10/15 秒档仍兜底可播
 
@@ -12744,6 +13341,7 @@ def _preview_pick(qs=None, skip=None):
     qs = PREWARM_QS if qs is None else qs
     skip = PREWARM["skip"] if skip is None else skip
     now = time.time()
+    _consume_hot_queue()
     for k, t in list(LIVE_HOT.items()):
         if now - t > 120:
             LIVE_HOT.pop(k, None)
@@ -12775,8 +13373,8 @@ def _preview_pick(qs=None, skip=None):
                         mt = os.path.getmtime(fp)
                     except OSError:
                         continue
-                    if time.time() - mt < 120:
-                        continue
+                    if time.time() - mt < 120 and fp not in LIVE_HOT:
+                        continue   # 新文件等落定; live-sync 热点队列已确认写完, 不等
                     if _variant_ready(fp, qv, preview_seconds()):
                         continue
                     rank = 0 if fp in LIVE_HOT else CAT_PRIO.get(cat, 3)
@@ -12798,6 +13396,7 @@ def prewarm_loop():
             thumb_migrate_legacy()
             preview_cleanup()          # 清理不受预缓冲开关影响, 额度满了/源片删了照样要降
             thumb_cleanup()
+            stitch_jobs_gc()
             if not PREWARM["on"]:
                 time.sleep(600)
                 continue
@@ -12805,7 +13404,8 @@ def prewarm_loop():
                 playing = bool(PLAYBACK_SESSIONS)
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
-            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy or play_hold_active():
+            if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
+                    or play_hold_active() or usb_sync_busy()):
                 time.sleep(15)
                 continue
             with _PREWARM_PICK_LOCK:
@@ -12824,6 +13424,13 @@ def prewarm_loop():
                     PREWARM_PENDING.discard(fp)
                 PREWARM["busy"] = False
                 time.sleep(15)
+                continue
+            if not _ramp_try():
+                Q_SEM.release()
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+                PREWARM["busy"] = False
+                time.sleep(10)
                 continue
             # 播放一开始就掐掉这条后台预缓冲转码, 把 CPU 全部让给正在看的视频
             job_cancel = threading.Event()
@@ -12852,11 +13459,13 @@ def prewarm_loop():
             finally:
                 job_cancel.set()
                 Q_SEM.release()
+                _ramp_release()
                 with _PREWARM_PICK_LOCK:
                     PREWARM_PENDING.discard(fp)
                 PREWARM["busy"] = False
             time.sleep(0.5)
-        except Exception:
+        except Exception as ex:
+            print("[PREWARM] 循环异常: %s" % str(ex)[:200], flush=True)
             PREWARM["busy"] = False
             time.sleep(60)
 
@@ -12892,7 +13501,8 @@ def night_hw_loop():
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
-                    or play_hold_active() or PREWARM_PENDING or PREWARM.get("busy")):
+                    or play_hold_active() or PREWARM_PENDING or PREWARM.get("busy")
+                    or usb_sync_busy()):
                 time.sleep(30)
                 continue
             with _PREWARM_PICK_LOCK:
@@ -12913,6 +13523,12 @@ def night_hw_loop():
                 with _PREWARM_PICK_LOCK:
                     PREWARM_PENDING.discard(fp)
                 time.sleep(30)
+                continue
+            if not _ramp_try():
+                Q_SEM.release()
+                with _PREWARM_PICK_LOCK:
+                    PREWARM_PENDING.discard(fp)
+                time.sleep(15)
                 continue
             NIGHT_HW["busy"] = True
             job_cancel = threading.Event()
@@ -12945,10 +13561,12 @@ def night_hw_loop():
                 job_cancel.set()
                 NIGHT_HW["busy"] = False
                 Q_SEM.release()
+                _ramp_release()
                 with _PREWARM_PICK_LOCK:
                     PREWARM_PENDING.discard(fp)
             time.sleep(1)
-        except Exception:
+        except Exception as ex:
+            print("[NIGHTHW] 循环异常: %s" % str(ex)[:200], flush=True)
             time.sleep(120)
 
 
@@ -13298,7 +13916,8 @@ def thumb_prewarm_loop():
                 continue
             with PLAYBACK_LOCK:
                 playing = bool(PLAYBACK_SESSIONS)
-            if playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or _VARIANT_JOBS or play_hold_active():
+            if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or _VARIANT_JOBS
+                    or play_hold_active() or usb_sync_busy()):
                 time.sleep(5)   # 播放中/刚播放完 10 分钟内暂停抽帧, 播放一停就尽快恢复
                 continue
             fp = _thumb_pick()
@@ -13307,7 +13926,8 @@ def thumb_prewarm_loop():
                 continue
             thumb_file(fp, 1.0)
             time.sleep(3)   # 放慢抽帧, 把 CPU 让给 10 秒预缓冲
-        except Exception:
+        except Exception as ex:
+            print("[THUMB] 循环异常: %s" % str(ex)[:200], flush=True)
             time.sleep(60)
 
 
@@ -13402,7 +14022,7 @@ def _stitch_worker(job_id, paths, out_path, total):
             "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
             "-progress", "pipe:1", "-nostats", out_path]
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(car_cpu_prefix() + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         # 万一仍然吃爆内存, 让内核优先杀 ffmpeg, 保住 init/viewer 不被 OOM 带走
         try:
             with open("/proc/%d/oom_score_adj" % proc.pid, "w") as f:
@@ -13488,7 +14108,7 @@ def ov_thumb(cat, name):
     cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-frames:v", "1",
             "-q:v", "4", out]
     try:
-        subprocess.run(cmd, timeout=45, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(car_cpu_prefix() + cmd, timeout=45, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         return None
     return out if os.path.isfile(out) and os.path.getsize(out) > 0 else None
@@ -13763,7 +14383,7 @@ def _lib_push_bg(fn):
 
 def _ffrun(cmd, timeout=900):
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = subprocess.Popen(car_cpu_prefix() + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as ex:
         return -1, str(ex)
     try:
@@ -13784,8 +14404,34 @@ def _ffrun(cmd, timeout=900):
 
 def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
     n = len(paths)
+    errfh = None
     tmpdir = os.path.join(STITCH_DIR, "ex-" + job_id.replace("/", "_"))
     os.makedirs(tmpdir, exist_ok=True)
+    # 同一摄像头选了多分钟: 先按时间顺序拼成一条, 再按单路走后面的缩放/编码
+    # (否则会被当成"多路画面"排成格子, 导出来是并排小窗)
+    if n > 1 and len({cam_of(os.path.basename(p)) for p in paths}) == 1:
+        lst = os.path.join(tmpdir, "concat.txt")
+        try:
+            with open(lst, "w", encoding="utf-8") as fh:
+                for p in paths:
+                    fh.write("file '%s'\n" % p.replace("'", "'\\''"))
+            joined = os.path.join(tmpdir, "joined.mp4")
+            code, _ = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                              "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
+                              "-movflags", "+faststart", joined], timeout=1800)
+            if code != 0 or not os.path.isfile(joined) or os.path.getsize(joined) < 1024:
+                code, _ = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                                  "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                                  "-f", "concat", "-safe", "0", "-i", lst,
+                                  "-vf", "scale_rkrga=w=-2:h=720:format=nv12:reset_sar=1,fps=24",
+                                  "-an", "-c:v", "h264_rkmpp", "-b:v", "1500k",
+                                  "-maxrate", "2250k", "-bufsize", "4500k", "-g", "48",
+                                  "-movflags", "+faststart", joined], timeout=1800)
+            if code == 0 and os.path.isfile(joined) and os.path.getsize(joined) > 1024:
+                paths = [joined]
+                n = 1
+        except Exception:
+            pass
 
     def setpct(v):
         with STITCH_LOCK:
@@ -13794,6 +14440,7 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 job["pct"] = max(0, min(99, int(v)))
 
     def fail(msg):
+        print("[EXP] %s 失败: %s" % (job_id, (msg or "ffmpeg 失败")[:200]), flush=True)
         with STITCH_LOCK:
             job = STITCH_JOBS.get(job_id)
             if job:
@@ -13837,16 +14484,17 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 cell[2] = (CW * 2, CH)
                 pos[2] = (0, CH)
 
-        # 第一步: 逐路降采样 (顺序执行, 峰值只有 1 路解码)
-        # 解码走 rkmpp 硬解(1080p 软解才是 CPU 主开销); 缩放/裁剪/fps 仍是软件滤镜,
-        # 但源已降到帧内存, 640x360 的缩放开销很小; 编码用 h264_rkmpp 硬编。
-        # 2026-11-25 实测: 6 路 2896x1876 源降采样串行 43.8s vs 3 路并行 2 批 55s,
-        # 并行反而更慢(MPP 解码/编码实例串行排队, 并行只增加争用), 保持顺序执行。
+        # 第一步: 逐路降采样到格子尺寸 (中间片只给后面的 xstack 用)
+        # 解码走 rkmpp 硬解(4K 软解才是 CPU 主开销); 缩放用 RGA, 编码用 h264_rkmpp 硬编。
+        # 2026-11-25 实测 (58s 2896x1876 原片 -> 556x360 中间片, 6 路):
+        #   串行 6 路 167s / 2 路并行 38s*3 批=115s / 3 路并行 38.6s*2 批=77s / 4 路并行 48s*2 批=96s
+        #   3 路是拐点 (MPP 解码实例再多就互相排队), 所以按"一批最多 3 路"分批跑, 比串行快一倍多。
         small = []
         if n > 1:
-            for i, fp in enumerate(paths):
-                sp = os.path.join(tmpdir, "c%d.mp4" % i)
-                cw, ch = cell[i] if i < len(cell) else (CW, CH)
+            def _ds_one(idx):
+                fp = paths[idx]
+                sp = os.path.join(tmpdir, "c%d.mp4" % idx)
+                cw, ch = cell[idx] if idx < len(cell) else (CW, CH)
                 # 格子按源宽高比算出, 绝大多数情况比例一致 -> 直接 RGA 硬件缩放(2896x1876
                 # 软缩放一路要 20s, RGA 只要 2~3s); 只有 3 路时"第三路铺满整行"这种非等比格子
                 # 才回退软件 increase+crop(裁边不变形)。
@@ -13862,15 +14510,56 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 code, err = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
                                     "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
                                     "-i", fp, "-vf", vf, "-an",
-                                    "-c:v", "h264_rkmpp", "-b:v", "%dk" % max(600, cw * ch // 300),
-                                    "-g", str(max(12, fps)), "-y", sp], timeout=600)
-                if code != 0 or not os.path.isfile(sp):
-                    fail(err or ("第 %d 路降采样失败" % (i + 1)))
-                    return
-                small.append(sp)
-                setpct((i + 1) / float(n) * 70)
+                                    "-c:v", "h264_rkmpp", "-rc_mode", "0",
+                                    "-qp_init", "16", "-qp_min", "14", "-qp_max", "20",
+                                    "-b:v", "4000k",
+                                    "-g", str(max(12, fps)), "-y", sp], timeout=900)
+                return idx, code, err
+
+            done_n = 0
+            ds_batch = 3
+            for bstart in range(0, n, ds_batch):
+                bidx = list(range(bstart, min(n, bstart + ds_batch)))
+                res = {}
+
+                def _runner(k, ii):
+                    res[k] = _ds_one(ii)
+
+                ths = []
+                for k, ii in enumerate(bidx):
+                    th = threading.Thread(target=_runner, args=(k, ii), daemon=True)
+                    th.start()
+                    ths.append(th)
+                for th in ths:
+                    th.join()
+                for k, ii in sorted(res.items()):
+                    idx, code, err = res[k]
+                    sp = os.path.join(tmpdir, "c%d.mp4" % idx)
+                    if code != 0 or not os.path.isfile(sp):
+                        fail(err or ("第 %d 路降采样失败" % (idx + 1)))
+                        return
+                for k in bidx:
+                    done_n += 1
+                setpct(min(70, done_n / float(n) * 70))
+            small = [os.path.join(tmpdir, "c%d.mp4" % i) for i in range(n)]
+            if any(not os.path.isfile(p) for p in small):
+                fail("降采样产物缺失")
+                return
         else:
-            small = paths
+            # 单路也先用 RGA 降到目标高度: 直接拿 2896x1876 原片进合成滤镜会把 CPU 跑满
+            # (实测 58s 片子 480p 导出要 174s, 先硬件降采样后 ~20s)
+            sp = os.path.join(tmpdir, "c0.mp4")
+            code, err = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error",
+                                "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                                "-i", paths[0],
+                                "-vf", "scale_rkrga=w=%d:h=%d,hwdownload,format=nv12,fps=%d,format=nv12"
+                                       % (OW, OH, fps),
+                                "-an", "-c:v", "h264_rkmpp", "-rc_mode", "0",
+                                "-qp_init", "16", "-qp_min", "14", "-qp_max", "20",
+                                "-b:v", "4000k",
+                                "-g", str(max(12, fps)), "-y", sp], timeout=900)
+            small = [sp] if (code == 0 and os.path.isfile(sp)) else paths
+            setpct(70)
 
         ass = ""
         if wm:
@@ -13919,7 +14608,11 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
             fcnf = _wm_fontconf()
             if fcnf:
                 env["FONTCONFIG_FILE"] = fcnf
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        # stderr 落文件而不是 PIPE: 一边只读 stdout(-progress) 一边不读 stderr 时,
+        # 滤镜告警一多就把 stderr 管道写满 -> ffmpeg 卡住, 直到 deadline 被误杀
+        errfp = os.path.join(tmpdir, "ff.err")
+        errfh = open(errfp, "w", encoding="utf-8")
+        p = subprocess.Popen(car_cpu_prefix() + cmd, stdout=subprocess.PIPE, stderr=errfh, env=env)
         try:
             with open("/proc/%d/oom_score_adj" % p.pid, "w") as f:
                 f.write("800")
@@ -13940,7 +14633,13 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 except OSError:
                     pass
                 break
-        err = p.stderr.read().decode("utf-8", "ignore")
+        err = ""
+        try:
+            errfh.close()
+            with open(errfp, encoding="utf-8", errors="ignore") as fh:
+                err = fh.read()[-2000:]
+        except OSError:
+            pass
         code = p.wait()
         if code == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
             with STITCH_LOCK:
@@ -13967,6 +14666,11 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
     except Exception as ex:
         fail(str(ex))
     finally:
+        if errfh is not None:
+            try:
+                errfh.close()
+            except Exception:
+                pass
         try:
             for f in os.listdir(tmpdir):
                 os.unlink(os.path.join(tmpdir, f))
@@ -14027,7 +14731,11 @@ def start_export(cat, name, cams, wm=True, q="720p", files=None, push=False):
             pass
     job_id = "%s-ex%d" % (name.replace(":", "-"), int(now * 1000) % 1000000)
     out_path = os.path.join(STITCH_DIR, job_id + ".mp4")
-    total = probe_duration(paths[0]) or 60
+    # 进度分母: 多段拼一起时按总时长算, 否则进度条一下子冲到 99%
+    total = 0.0
+    for p in paths:
+        total += probe_duration(p) or 60
+    total = total or 60
     with STITCH_LOCK:
         STITCH_JOBS[job_id] = {"state": "running", "pct": 0, "path": None, "size": 0,
                                "name": "%s_%d路.mp4" % (name, len(files)),
@@ -14036,6 +14744,121 @@ def start_export(cat, name, cams, wm=True, q="720p", files=None, push=False):
     threading.Thread(target=_export_worker,
                      args=(job_id, paths, out_path, total, bool(wm), q), daemon=True).start()
     return job_id, None
+
+
+def start_share_build(cat, name, cam, files):
+    """分享用: 把勾选的多分钟片段 (同一摄像头) 按时间顺序拼成一条完整视频,
+    成品进「我的作品」, 返回的库文件名可直接生成 /api/library/dl?f= 分享链接。"""
+    if not os.path.isfile(FFMPEG_BIN):
+        return None, "设备上没有 ffmpeg, 无法合成"
+    evdir = safe_archive_dir(os.path.join(ARCHIVE, cat, name))
+    if not evdir or not os.path.isdir(evdir):
+        return None, "事件不存在"
+    picked = []
+    for f in (files or []):
+        b = safe_name(str(f))
+        if not b or not b.lower().endswith(".mp4"):
+            continue
+        if not os.path.isfile(os.path.join(evdir, b)):
+            continue
+        if cam and cam_of(b) != cam:
+            continue
+        if b not in picked:
+            picked.append(b)
+    if not picked:
+        return None, "没有可合成的片段"
+    picked = sorted(picked)          # 文件名前缀就是时间戳, 字典序 = 时间顺序
+    with STITCH_LOCK:
+        if any(j.get("state") == "running" for j in STITCH_JOBS.values()):
+            return None, "已有导出/合成任务在进行, 请等它完成"
+    os.makedirs(STITCH_DIR, exist_ok=True)
+    now = time.time()
+    for old in os.listdir(STITCH_DIR):
+        p = os.path.join(STITCH_DIR, old)
+        try:
+            if os.path.isfile(p) and now - os.path.getmtime(p) > 3600:
+                os.unlink(p)
+        except OSError:
+            pass
+    job_id = "%s-sh%d" % (name.replace(":", "-"), int(now * 1000) % 1000000)
+    out_path = os.path.join(STITCH_DIR, job_id + ".mp4")
+    dur = 0.0
+    for f in picked:
+        dur += probe_duration(os.path.join(evdir, f)) or 0
+    with STITCH_LOCK:
+        STITCH_JOBS[job_id] = {"state": "running", "pct": 0, "path": None, "size": 0,
+                               "name": "%s_%s.mp4" % (name, cam or "share"),
+                               "cams": [cam] if cam else [], "cat": cat,
+                               "src_name": name, "push": False}
+    threading.Thread(target=_share_worker,
+                     args=(job_id, evdir, picked, out_path, dur, cat, name, cam), daemon=True).start()
+    return job_id, None
+
+
+def _share_worker(job_id, evdir, files, out_path, dur, cat, name, cam):
+    def setpct(v):
+        with STITCH_LOCK:
+            job = STITCH_JOBS.get(job_id)
+            if job:
+                job["pct"] = max(0, min(99, int(v)))
+
+    def fail(msg):
+        print("[SHARE] %s 失败: %s" % (job_id, (msg or "合成失败")[:200]), flush=True)
+        with STITCH_LOCK:
+            job = STITCH_JOBS.get(job_id)
+            if job:
+                job["state"] = "error"
+                job["err"] = (msg or "合成失败")[:300]
+
+    try:
+        lst = os.path.join(STITCH_DIR, "sh-" + job_id + ".txt")
+        with open(lst, "w", encoding="utf-8") as fh:
+            for fn in files:
+                fh.write("file '%s'\n" % os.path.join(evdir, fn).replace("'", "'\\''"))
+        setpct(5)
+        # 同源同参数: 先无损拼接, 几段片子通常 1~2 秒
+        code, err = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                            "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
+                            "-movflags", "+faststart", out_path], timeout=1800)
+        ok = (code == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 1024)
+        # 无损拼接省事但体积大(一分钟原片 50~60MB), 分享到聊天太占流量: 超 25MB 就压到 720p
+        if ok and os.path.getsize(out_path) > 25 * 1024 * 1024:
+            ok = False
+        if not ok:
+            setpct(25)
+            # 参数不一致(改过滤码率/分辨率)时 copy 拼不起来: 退回 720p 重编码
+            # (必须走 MPP 硬解 + RGA 缩放, 软解 2896x1876 四核要跑好几分钟)
+            code, err = _ffrun([FFMPEG_BIN, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                                "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                                "-f", "concat", "-safe", "0", "-i", lst,
+                                "-vf", "scale_rkrga=w=-2:h=720:format=nv12:reset_sar=1,fps=24",
+                                "-an", "-c:v", "h264_rkmpp", "-b:v", "1500k",
+                                "-maxrate", "2250k", "-bufsize", "4500k", "-g", "48",
+                                "-movflags", "+faststart", out_path], timeout=1800)
+            ok = (code == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 1024)
+        if not ok:
+            fail(err or "拼接失败")
+            return
+        try:
+            os.unlink(lst)
+        except OSError:
+            pass
+        setpct(90)
+        fname = lib_add(out_path, "share", [cam] if cam else [], cat, name, dur)
+        fp = os.path.join(LIB_DIR, fname) if fname else out_path
+        with STITCH_LOCK:
+            job = STITCH_JOBS.get(job_id)
+            if job:
+                job["state"] = "done"
+                job["pct"] = 100
+                job["f"] = fname
+                job["path"] = fp
+                try:
+                    job["size"] = os.path.getsize(fp)
+                except OSError:
+                    job["size"] = 0
+    except Exception as e:
+        fail(str(e))
 
 
 # ---------- 行车遥测: 解码视频 SEI 里的 SeiMetadata protobuf ----------
@@ -14817,7 +15640,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"state": "error", "err": "任务不存在或已过期"}, 404)
                 return
             self._json({"state": job["state"], "pct": job.get("pct", 0),
-                        "err": job.get("err", ""), "size": job.get("size", 0)})
+                        "err": job.get("err", ""), "size": job.get("size", 0),
+                        "f": job.get("f", "") or job.get("lib", "")})
         elif path == "/api/stitch/stream":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             jid = q.get("id", [""])[0]
@@ -14837,7 +15661,7 @@ class Handler(BaseHTTPRequestHandler):
             tj = fp + ".thumb.jpg"
             if not os.path.isfile(tj) or os.path.getsize(tj) == 0:
                 try:
-                    subprocess.run([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
+                    subprocess.run(car_cpu_prefix() + [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-y",
                                     "-ss", "1", "-i", fp, "-frames:v", "1", "-vf", "scale=480:-2", tj],
                                    timeout=25)
                 except Exception:
@@ -14978,18 +15802,43 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 sz = os.path.getsize(p)
-                self.send_response(200)
+                start, end = 0, sz - 1
+                partial = False
+                rng = self.headers.get("Range")
+                if rng:
+                    mm = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+                    if mm:
+                        a, b = mm.group(1), mm.group(2)
+                        if a == "" and b != "":
+                            start = max(0, sz - int(b))
+                        elif a != "":
+                            start = int(a)
+                            end = int(b) if b else sz - 1
+                        end = min(end, sz - 1)
+                        if start > end or start >= sz:
+                            self.send_response(416)
+                            self.send_header("Content-Range", "bytes */%d" % sz)
+                            self.end_headers()
+                            return
+                        partial = True
+                self.send_response(206 if partial else 200)
                 self.send_header("Content-Type", "video/mp4")
-                self.send_header("Content-Length", str(sz))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(end - start + 1))
+                if partial:
+                    self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, sz))
                 self.send_header("Content-Disposition",
                                  'attachment; filename="%s"' % urllib.parse.quote(fn))
                 self.end_headers()
                 with open(p, "rb") as f:
-                    while True:
-                        chunk = f.read(262144)
+                    f.seek(start)
+                    left = end - start + 1
+                    while left > 0:
+                        chunk = f.read(min(262144, left))
                         if not chunk:
                             break
                         self.wfile.write(chunk)
+                        left -= len(chunk)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         elif path == "/api/library/thumb":
@@ -15384,7 +16233,7 @@ class Handler(BaseHTTPRequestHandler):
                                         variant_note = "alt:%s" % fq
                                         break
                             if not variant_note:
-                                variant_note = "orig"
+                                fp, variant_note = _quick_first_play(src)
                             if qv == "1080p":
                                 # 1080p 不做预缓冲(2026-11-25 用户要求): 直接排完整档,
                                 # 前端先用低档播, 完整档转好后按真实尺寸热切
@@ -15435,7 +16284,7 @@ class Handler(BaseHTTPRequestHandler):
                                     variant_note = "%s_p%d" % (fq, sec)
                                     break
                         if not variant_note:
-                            variant_note = "orig"
+                            fp, variant_note = _quick_first_play(src)
                         spawn_variant(src, qv, owner=sid or None, urgent=True)
             preview_hot_mark(fp)
             size = os.path.getsize(fp)
@@ -15576,10 +16425,23 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/login" and AUTH_ON:
             self._do_login()
             return
+        if p == "/api/watch/alert":
+            # 巡检告警入口: 只认回环地址(tsf-watch 本机调用), 不走 Basic 认证
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self._send(403, b"local only")
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                msg = self.rfile.read(min(n, 4096)).decode("utf-8", "ignore") if n else ""
+            except Exception:
+                msg = ""
+            ok, info = watch_alert_push(msg)
+            self._json({"ok": ok, "info": info})
+            return
         if not self._gate():
             return
         if not storage_ready() and p in {
-                "/api/fm", "/api/kick", "/api/export/burn", "/api/stitch",
+                "/api/fm", "/api/kick", "/api/export/burn", "/api/stitch", "/api/share/build",
                 "/api/upload/skin", "/api/upload/audio", "/api/upload/usb", "/api/upload/file",
                 "/api/skin/activate", "/api/audio/setlockchime", "/api/usb/attach", "/api/usb/detach"}:
             self._json({"ok": False, "msg": "外接存储未挂载，当前仅可使用存储管理功能"}, 503)
@@ -16012,6 +16874,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "id": jid})
             return
+        if path == "/api/share/build":
+            body = self._read_json()
+            if body == "TOOBIG":
+                self._json({"ok": False, "error": "请求体过大 (上限 1MB)"}, 413)
+                return
+            if not isinstance(body, dict):
+                self._json({"ok": False, "error": "参数错误"}, 400)
+                return
+            jid, err = start_share_build(body.get("cat") or "", body.get("name") or "",
+                                         body.get("cam") or "", body.get("files") or [])
+            if not jid:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            self._json({"ok": True, "id": jid})
+            return
         if path == "/api/stitch":
             body = self._read_json()
             if body == "TOOBIG":
@@ -16409,10 +17286,15 @@ if __name__ == "__main__":
         print("为避免无认证暴露, 服务不启动。修复 %s 后重启 (或重跑 install.sh 重新生成密码)。" % AUTH_FILE)
         sys.exit(2)
     ensure_dirs()
-    try:
-        cache_version_gc()      # 编码版本变了就清旧缓存(key 已失效, 留着白占盘)
-    except Exception:
-        pass
+    # 编码版本变了要清几 GB 旧缓存: 放到绑定端口之后再延迟跑, 别让磁盘删除把启动卡住
+    # (清的同时用户可能正在播放旧预缓冲, 延迟 40s 让首屏请求先跑完)
+    def _gc_later():
+        time.sleep(40)
+        try:
+            cache_version_gc()
+        except Exception as ex:
+            print("[GC] 缓存版本清理异常: %s" % str(ex)[:200], flush=True)
+    threading.Thread(target=_gc_later, daemon=True).start()
     # 降低自身被 OOM 杀掉的概率 (合成任务会自己调高优先级先死)
     try:
         with open("/proc/self/oom_score_adj", "w") as f:

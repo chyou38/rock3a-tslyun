@@ -144,7 +144,12 @@ class ExFat:
         self.path = path
         self.fd = os.open(path, os.O_RDONLY)
         self.fd_ino = os.fstat(self.fd).st_ino
+        self.base = 0
         vbr = os.pread(self.fd, 512, 0)
+        if vbr[3:11] != b"EXFAT   ":
+            lba = struct.unpack_from("<I", vbr, 446 + 8)[0]
+            self.base = lba * 512
+            vbr = os.pread(self.fd, 512, self.base)
         if len(vbr) < 512 or vbr[3:11] != b"EXFAT   ":
             raise ValueError("不是 exFAT 卷: %s" % path)
         self.part_offset = struct.unpack_from("<Q", vbr, 64)[0]
@@ -166,7 +171,7 @@ class ExFat:
 
     # ---------- 底层读取 ----------
     def pread(self, n, off):
-        out = os.pread(self.fd, n, off)
+        out = os.pread(self.fd, n, off + self.base)
         return out
 
     def cluster_off(self, cluster):
@@ -310,15 +315,61 @@ def same_file(path, size):
         return False
 
 
+_CW_MT = 0
+_CW_TS = -100.0
+
+
+def _car_writing():
+    """镜像唯一写入者是车机(本服务全程 pread 只读), mtime 10s 内动过 = 车机正在写。"""
+    global _CW_MT, _CW_TS
+    now = time.time()
+    try:
+        mt = os.stat(IMG).st_mtime_ns
+        if _CW_MT and mt != _CW_MT:
+            _CW_TS = now
+        _CW_MT = mt
+    except OSError:
+        pass
+    return now - _CW_TS < 10.0
+
+
+HOT_FILE = "/tmp/tsf-prewarm-hot"
+
+
+def _mark_hot(dest):
+    """通知 viewer 优先预热刚搬完的文件(落地即预热); 队列超 200KB 截断防失控。"""
+    try:
+        with open(HOT_FILE, "a", encoding="utf-8") as f:
+            f.write(dest + "\n")
+        if os.path.getsize(HOT_FILE) > 200000:
+            with open(HOT_FILE, encoding="utf-8") as f:
+                lines = f.readlines()[-200:]
+            with open(HOT_FILE, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+    except OSError:
+        pass
+
+
 def copy_entry(exfat, entry, dest_path):
-    """把镜像里的文件写到归档区, 返回写入字节数"""
+    """把镜像里的文件写到归档区, 返回写入字节数。
+    车机写入期间读盘限速 ~4MB/s, 把带宽让给车机; 车机不写则全速。"""
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
     written = 0
+    pace_t = time.time()
+    pace_bytes = 0
     with open(tmp, "wb") as f:
         for chunk in exfat.read_file(entry):
             f.write(chunk)
             written += len(chunk)
+            pace_bytes += len(chunk)
+            if pace_bytes >= 1048576:
+                if _car_writing():
+                    dt = time.time() - pace_t
+                    if dt < 0.25:
+                        time.sleep(0.25 - dt)
+                pace_t = time.time()
+                pace_bytes = 0
         f.flush()
         os.fsync(f.fileno())
     if written != entry.size:
@@ -460,6 +511,7 @@ def do_sync(exfat, state, quiet=False):
             n = copy_entry(exfat, e, dest)
             copied += 1
             bytes_ += n
+            _mark_hot(dest)
             log("已同步 %s (%d KB)" % (key, n // 1024))
         except Exception as ex:
             log("同步失败 %s: %s" % (key, ex))

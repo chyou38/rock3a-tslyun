@@ -1,0 +1,13 @@
+[Unit]
+Description=TeslaBox stability watch (10s heartbeat + ALERT log)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/bin/sh /opt/tesla-sentry/tsf-watch.sh _run
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

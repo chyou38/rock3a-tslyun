@@ -37,8 +37,8 @@ ensure_gadget() {
     mkdir -p "$G/strings/0x409" "$G/configs/$CONF_NAME/strings/0x409" || return 1
     SERIAL="${TSF_USB_SERIAL:-$(cut -c1-16 /etc/machine-id 2>/dev/null)}"
     [ -n "$SERIAL" ] || SERIAL="TSF3A0001"
-    printf '%s' "${TSF_USB_VID:-0x1d6b}" > "$G/idVendor"
-    printf '%s' "${TSF_USB_PID:-0x0104}" > "$G/idProduct"
+    printf '%s' "${TSF_USB_VID:-0x0525}" > "$G/idVendor"
+    printf '%s' "${TSF_USB_PID:-0xa4a5}" > "$G/idProduct"
     printf '%s' "0x0200" > "$G/bcdUSB"
     printf '%s' "0x0100" > "$G/bcdDevice"
     printf '%s' "$SERIAL" > "$G/strings/0x409/serialnumber"
@@ -86,6 +86,25 @@ do_on() {
         [ "$(cat "$GADGET/UDC" 2>/dev/null)" = "$UDC" ] || { bind; sleep 1; }
         echo "ALREADY-ON"; exit 0
     fi
+
+    # 功能已存在、只是 LUN 被主机 eject(介质为空)或指向别的文件:
+    # 热换介质, 绝不 unbind 整个 gadget —— unbind 会把 ncm 网卡和 ACM 串口一起摘掉,
+    # 主机侧看到的是"整台设备重新插拔", 就是 dmesg 里成对出现的 device reset。
+    if [ -e "$FUNC_DIR" ]; then
+        cur="$(cat "$FUNC_DIR/lun.0/file" 2>/dev/null)"
+        log "=== ON(hot): lun '${cur:-empty}' -> $IMG (no rebind) ==="
+        if [ -n "$cur" ] && [ "$cur" != "$IMG" ]; then
+            echo 1 > "$FUNC_DIR/lun.0/forced_eject" 2>/dev/null || true
+        fi
+        if echo "$IMG" > "$FUNC_DIR/lun.0/file" 2>/dev/null; then
+            st=$(state)
+            log "state after hot switch: $st"
+            echo "TESLA-GADGET-ON-HOT (state=$st)"
+            exit 0
+        fi
+        log "hot switch rejected (host locked medium?), fallback to rebind"
+    fi
+
     log "=== ON: exporting $IMG ==="
     unbind; sleep 1
 
@@ -115,11 +134,13 @@ do_on() {
 }
 
 do_off() {
-    log "=== OFF: removing mass_storage ==="
-    unbind; sleep 1
+    log "=== OFF: removing mass_storage (hot) ==="
+    if [ ! -e "$FUNC_DIR" ]; then echo "ALREADY-OFF"; exit 0; fi
+    # 热摘: 先清 LUN 让主机看到介质移除, 再删链接/目录; 不再 unbind 整个 gadget,
+    # 否则网卡和串口会跟着断一次。
+    echo "" > "$FUNC_DIR/lun.0/file" 2>/dev/null || true
     rm -f "$LINK" 2>/dev/null
-    rmdir "$FUNC_DIR" 2>/dev/null
-    bind; sleep 2
+    rmdir "$FUNC_DIR" 2>/dev/null || true
     log "state: $(state)"
     echo "TESLA-GADGET-OFF (state=$(state))"
 }

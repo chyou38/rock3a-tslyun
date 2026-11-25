@@ -43,6 +43,14 @@ grep -q " $MNT " /proc/mounts && exit 0
 # LUN 已绑定 → 无需处理
 [ -n "$(cat "$LUN" 2>/dev/null)" ] && exit 0
 
-echo "[$(date +%Y-%m-%d\ %H:%M:%S)] selfheal: LUN empty (host ejected?), re-exporting" >> "$LOG"
+STAMP="[$(date '+%Y-%m-%d %H:%M:%S')]"
+echo "$STAMP selfheal: LUN empty (host ejected?), hot re-exporting" >> "$LOG"
+# 先热恢复: 只写 LUN, 不 unbind 整个 gadget。unbind 会把 ncm 网卡/ACM 串口一起摘掉,
+# 主机侧看到"整台设备重新插拔", 就是 dmesg 里成对的 device reset。
+if echo "$IMG" > "$LUN" 2>/dev/null; then
+    echo "$STAMP selfheal: hot re-export ok" >> "$LOG"
+    exit 0
+fi
+echo "$STAMP selfheal: hot write failed (host locked medium?), fallback to full on" >> "$LOG"
 # 后台任务必须关掉 fd 9, 否则会继承锁直到它退出
 setsid sh "$GADGET_SH" on </dev/null >>"$LOG" 2>&1 9>&- &
