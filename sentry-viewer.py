@@ -2960,10 +2960,12 @@ function compositeQ(n) {
   if (!q || q === 'orig' || q === '1080p') q = '720p';
   return q;
 }
+function compositeBase(vids) {
+  return '/api/composite/stream?' + vids.map(v => 'p=' + encodeURIComponent(v.url)).join('&');
+}
 function compositeUrl(vids, n) {
   const q = compositeQ(n);
-  return '/api/composite/stream?' + vids.map(v => 'p=' + encodeURIComponent(v.url)).join('&') +
-    '&q=' + encodeURIComponent(q);
+  return compositeBase(vids) + '&q=' + encodeURIComponent(q);
 }
 const Q_MODE_DEFAULT = {auto: (isLanNet ? 'orig' : '360p')};
 let curQ = localStorage.getItem(Q_STORE_KEY) || (qMode === 'auto' ? Q_MODE_DEFAULT.auto : qMode);
@@ -3582,6 +3584,10 @@ function ovCams(ev) {
   ((ev && ev.videos) || []).forEach(v => { if (v.cam && out.indexOf(v.cam) < 0) out.push(v.cam); });
   return out.slice(0, 6);
 }
+function ovModeBadge() {
+  const vs = ovVids();
+  return (vs.length && vs[0]._composite) ? '服务端合成 · 1 条流' : (vs.length + ' 路同步');
+}
 function ovBadge(txt, ok) {
   const b = document.getElementById('ovb');
   if (!b) return;
@@ -3643,6 +3649,13 @@ function ovReloadCurrent() {
 /* 8 秒主路 currentTime 不动: 先逐级降档 1080→720→480→360; 360 仍卡就重载当前段。
    手动锁定档位也会降, 因为这里只处理"已经播不动"的故障, 不是按网络猜档。 */
 function ovNoProgressRecover() {
+  const curVs = ovVids();
+  if (curVs[0] && curVs[0]._composite) {
+    compositeFallback = true;
+    try { toast('服务端合成 8 秒无画面, 已退回六路原生'); } catch (e) {}
+    ovBuildGrid(ovEv, ovClipIx);
+    return;
+  }
   const next = ovNextLowerQ(ovQ);
   if (next) {
     ovBadge(ovQLabel(ovQ) + ' 8秒无进度, 自动降 ' + ovQLabel(next), true);
@@ -3804,7 +3817,7 @@ function ovClip(i) {
    切段时直接命中缓存秒开, 不再等首播兜底那 2-3s。当前段已在播(服务端只发缓存、CPU 空闲),
    正好用来建下一段; urgent 作业仍受 Q_SEM 与车机写入闸约束, 不抢车机。 */
 function ovLookahead(main) {
-  if (!ovEv || !playbackSid || !main || main.paused) return;
+  if (!ovEv || !playbackSid || !main || main.paused || main._composite) return;
   const n = ovTL.n || 1;
   if (ovClipIx >= n - 1) return;                 // 已是最后一段, 无下一段
   const dur = main.duration || 0;
@@ -4056,10 +4069,10 @@ function ovSetQuality(q, opts) {
       try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
       try { v.playbackRate = ovRateVal; } catch (e) {}
       if (playing) v.play().catch(() => {});
-      if (--left <= 0) { clearTimeout(watchdog); ovBadge(vs.length + ' 路同步', true); }
+      if (--left <= 0) { clearTimeout(watchdog); ovBadge(ovModeBadge(), true); }
     });
   });
-  try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  try { if (!vs.some(v => v._composite)) fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths: vs.map(v => v._base), q: q }) }).catch(() => {}); } catch (e) {}
 }
 function ovCycleQ() {
@@ -4071,7 +4084,13 @@ function ovBuildGrid(ev, ix) {
   if (!g) return;
   ovClipIx = ix || 0;
   ovResetNoProg(); ovLastDowngradeAt = 0; ovNoProgReloads = 0;
-  const vids = ovPickVids(ev, ix);
+  const nativeVids = ovPickVids(ev, ix);
+  const compOn = wantComposite(nativeVids.length);
+  let vids = nativeVids;
+  if (compOn) {
+    /* 合成播放器在总览里也只占一个 vcell: 服务端拼好整条, 前端只解码一条流 */
+    vids = [{ cam: 'all', url: compositeBase(nativeVids), _composite: true, _nativeN: nativeVids.length }];
+  }
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
@@ -4096,37 +4115,61 @@ function ovBuildGrid(ev, ix) {
     const vid = c.querySelector('video'), lb = c.querySelector('.ovcam');
     if (i < vids.length) {
       const v = vids[i];
+      const isComp = !!v._composite;
       c.style.display = '';
-      if (lb) lb.textContent = camLabel(v.cam || '');
+      if (lb) lb.textContent = isComp ? '合成' : camLabel(v.cam || '');
+      const cov = c.querySelector('.ovcover');
+      if (cov) cov.style.display = isComp ? 'none' : '';
       /* 占位底图: 该路自己的缩略图 (/thumb/ 与 /media/ 同路径), 高斯模糊后作为占位画面 */
-      const cbg = c.querySelector('.ovcoverbg');
-      const turl = v.url.replace('/media/', '/thumb/');
-      if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
-      vid._base = v.url; vid._qswapped = false;
-      const src = v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC;
+      if (!isComp) {
+        const cbg = c.querySelector('.ovcoverbg');
+        const turl = v.url.replace('/media/', '/thumb/');
+        if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
+      }
+      vid._base = v.url; vid._qswapped = false; vid._composite = isComp;
+      const src = isComp ? (v.url + '&q=' + ovQ)
+        : (v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC);
       if (vid.getAttribute('src') !== src) {
         try { vid.pause(); } catch (e) {}
         vid.src = src;
+        if (isComp) {
+          const cg = ovGen;
+          setTimeout(() => {
+            if (cg !== ovGen || !vid.isConnected || !vid._composite) return;
+            if (vid.readyState < 1 && !compositeFallback) {
+              compositeFallback = true;
+              try { toast('服务端合成 8 秒没有画面, 已退回六路原生'); } catch (e) {}
+              ovBuildGrid(ovEv, ovClipIx);
+            }
+          }, 8000);
+        }
       } else {
         try { vid.currentTime = 0; } catch (e) {}
       }
     } else {
       c.style.display = 'none';
       try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {}
-      vid._base = ''; vid._qswapped = false;
+      vid._base = ''; vid._qswapped = false; vid._composite = false;
     }
   });
-  ovBadge(vids.length ? (vids.length + ' 路同步') : '', !!vids.length);
+  ovBadge(vids.length ? (compOn ? '服务端合成 · 1 条流' : (vids.length + ' 路同步')) : '', !!vids.length);
   /* 时间轴: 段数用于把进度条拉成整条视频的总长 */
   ovTL.n = groupVideos((ev && ev.videos) || []).length || 1;
   ovRenderClips(ev, ix || 0);
+  const oseek = document.getElementById('ovseek');
+  if (oseek) {
+    oseek.disabled = compOn;   /* 合成实时流第一版不支持任意拖动 */
+    oseek.title = compOn ? '服务端合成: 第一版只支持连续播放' : '';
+  }
   ovClock(0, 0);            /* 一进播放页就按"段数×时长"把进度条拉到整条总长 */
   ovRenderCams(ev);
   if (vids.length) {
     ovMask(false);          /* 不再压"加载中"遮罩; 占位层负责加载/缓冲画面 */
     if (OPEN_AUTOPLAY || ovWantPlay) ovPlayAll();   /* 关掉自动播放时停在模糊占位; 但已经在播的切段要接着播 */
-    try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: vids.map(v => v.url), q: ovQ }) }).catch(() => {}); } catch (e) {}
+    if (!compOn) {
+      try { fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: vids.map(v => v.url), q: ovQ }) }).catch(() => {}); } catch (e) {}
+    }
   } else {
     ovMask(true, '没有可播放的画面', '这条事件没有视频文件');
   }
@@ -4209,7 +4252,7 @@ function ovSyncOn() {
       }
     }
     /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮 */
-    if (!ovAutoLock && main && main.duration > 0 &&
+    if (!main._composite && !ovAutoLock && main && main.duration > 0 &&
         (main.ended || (main.duration > PREV_SEC + 2 && main.currentTime >= main.duration - 0.25))) {
       const groups = groupVideos((ovEv && ovEv.videos) || []);
       if (ovClipIx + 1 < groups.length) {
@@ -4248,7 +4291,7 @@ function ovSyncOn() {
     }
     /* 预缓冲只覆盖 PREV_SEC 秒: 到点给每路换成 360p 完整档, 接着当前位置继续播;
        完整档还没转好(duration 仍是 20 秒)就隔 2.5 秒再试, 最多 8 次 */
-    if (!main._qswapped && main.currentTime > Math.max(8, PREV_SEC - 5)) {
+    if (!main._composite && !main._qswapped && main.currentTime > Math.max(8, PREV_SEC - 5)) {
       main._qswapped = true;
       ovSwapFull(0);
     }
@@ -4440,7 +4483,7 @@ function ovBind() {
     }
   }, true);
   g.addEventListener('waiting', function (e) { if (e.target === ovVids()[0]) ovBadge('缓冲中'); }, true);
-  g.addEventListener('playing', function (e) { if (e.target === ovVids()[0]) ovBadge(ovVids().length + ' 路同步', true); }, true);
+  g.addEventListener('playing', function (e) { if (e.target === ovVids()[0]) ovBadge(ovModeBadge(), true); }, true);
 }
 
 /* 支持 ?ev=SentryClips/2026-11-04_12-30-00 直接打开某个事件 */
