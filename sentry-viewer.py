@@ -4465,9 +4465,8 @@ function ovFsLock(on, portrait) {
         pl.style.setProperty('height', '100vw', 'important');
         pl.style.setProperty('transform', 'translate(-50%,-50%) rotate(90deg)', 'important');
       } else {
+        /* 只设 inset:0; 千万别再把 top/left 覆盖成 auto, 否则 inset 被拆成 right/bottom → 塌到右下角 */
         pl.style.setProperty('inset', '0px', 'important');
-        pl.style.setProperty('top', 'auto', 'important');
-        pl.style.setProperty('left', 'auto', 'important');
         pl.style.setProperty('width', 'auto', 'important');
         pl.style.setProperty('height', 'auto', 'important');
         pl.style.setProperty('transform', 'none', 'important');
