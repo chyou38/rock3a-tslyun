@@ -951,12 +951,19 @@ def main():
     # 定时归档调度: 每 5s 醒一次, 到点(间隔可在网页自定义, 默认10分钟)或收到
     # 「立即归档」触发文件才搬; 车机正在写盘 / 网页管理U盘 / 持锁冲突一律顺延。
     last_run = 0.0
+    try:
+        with open(ARCHIVE_SCHED_FILE, encoding="utf-8") as f:
+            last_run = float(json.load(f).get("last") or 0)
+        if last_run > time.time():
+            last_run = 0.0
+    except Exception:
+        last_run = 0.0
     last_car_log = 0.0
     lock_miss = 0
     # 哨兵/手动保存优先通道: 独立线程每 1 秒轻扫一次, 不读视频内容;
     # 一旦 SentryClips/SavedClips 出现变化就置位, 主线程立刻小步搬运。
     threading.Thread(target=probe_loop, daemon=True).start()
-    write_sched(0, False, msg="等待首轮归档")
+    write_sched(last_run, False, msg=("等待下一轮归档" if last_run else "等待首轮归档"))
     prog_mark = {"t": 0.0}
 
     def on_progress(done, total, done_bytes, total_bytes, force=False):
