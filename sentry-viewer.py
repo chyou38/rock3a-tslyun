@@ -1363,7 +1363,8 @@ body.ovmode.allmode #filters { display:none; }
 #ovplay .tpanel { margin:0 auto 6px; padding:7px 16px 5px; }
 .tpanel.folded .tp-rows { display:none; }
 /* 无遥测事件(哨兵/停车): 顶部只保留 时间 + 城市·位置 一行, 不留空白块 */
-.tpanel.plain { padding:12px 18px; }
+/* 没有遥测数据时不显示面板(纯地点条也不显示) */
+.tpanel.plain { display:none !important; }
 .tpanel.plain .tp-mid,
 .tpanel.plain .tp-fold,
 .tpanel.plain .tp-rows,
@@ -5897,8 +5898,8 @@ function loadTelemetry(url, meta) {
 /* 哨兵/停车片段没有 SEI 遥测: 顶部仍然显示 时间 + 城市·位置, 只是不带车速/挡位 */
 function showPlainPanel() {
   const p = document.getElementById('tpanel'), card = document.getElementById('infocard');
-  p.classList.add('show', 'plain');
-  p.classList.remove('stale');
+  p.classList.add('plain');            /* 只切样式, 不展开: 无 SEI 时整个面板不显示 */
+  p.classList.remove('show', 'stale');
   /* 连地点/坐标都没有(或地点文字是空的)就别留一个空面板: 否则播放区上面会多出一条白框 */
   const _pl2 = document.querySelector('#tpanel .tp-place');
   const _txt = _pl2 ? (_pl2.innerText || '').replace(/\s+/g, '') : '';
