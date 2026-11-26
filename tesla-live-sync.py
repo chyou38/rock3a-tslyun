@@ -30,6 +30,7 @@ import os
 import re
 import struct
 import sys
+import threading
 import time
 
 # 配置兜底: procd 不把 init.d 的 export 传给服务进程, 这里自己读 conf
@@ -710,11 +711,79 @@ def _cat_changed(sig, old, cat):
     return False
 
 
-def publish_write_cat(sig, old):
-    """把"哪一类正在写"落到文件, 页面据此区分行车记录(行车中)与哨兵/手动保存。"""
-    flags = {"recent": _cat_changed(sig, old, "RecentClips"),
+_DRIVE_HINT = {"key": None, "val": None}
+_REC_CACHE = {"ts": 0.0, "entry": None}
+
+
+def _newest_recent_front(exfat, refresh=20.0):
+    """RecentClips 一小时缓冲有几百个文件, 每秒全列一次太贵(~300ms)。
+    这里按 20 秒缓存最新前视文件; 新文件最晚 20 秒被发现, 对判定足够。"""
+    global _REC_CACHE
+    now = time.time()
+    if _REC_CACHE["entry"] is not None and now - _REC_CACHE["ts"] < refresh:
+        return _REC_CACHE["entry"]
+    root = exfat.list_dir(exfat.root_cluster)
+    cam = exfat.find(root, "TeslaCam")
+    if not cam or not cam.is_dir:
+        return _REC_CACHE["entry"]
+    cat_list = exfat.list_dir(cam.cluster, cam.size)
+    rec = exfat.find(cat_list, "RecentClips")
+    if not rec or not rec.is_dir:
+        return _REC_CACHE["entry"]
+    files = []
+    for e in exfat.list_dir(rec.cluster, rec.size):
+        if not e.is_dir and (e.name or "").lower().endswith("-front.mp4") and e.size > 0:
+            files.append(e)
+    if files:
+        files.sort(key=lambda e: e.name)
+        _REC_CACHE = {"ts": now, "entry": files[-1]}
+    return _REC_CACHE["entry"]
+
+
+def probe_driving(exfat):
+    """判断车机最新行车记录前视片段里有没有 SEI 遥测: 有=真在行车, 没有=停车哨兵在录像。
+    Tesla 停车状态下哨兵仍在循环写 RecentClips, 但停车片段不含车辆遥测 SEI;
+    只看 "RecentClips 在写" 会把停车哨兵误判成行车, 所以要再看这一位。
+    只读每类最新前视片段的头 3MB, 按文件名+大小缓存, 每分钟最多读一次。"""
+    global _DRIVE_HINT
+    try:
+        newest = _newest_recent_front(exfat)
+        if newest is None:
+            return None
+        key = newest.name
+        if _DRIVE_HINT.get("key") == key and _DRIVE_HINT.get("val") is not None:
+            return _DRIVE_HINT["val"]
+        if newest.size < 1048576:
+            # 文件刚建还没写够: 同一文件沿用上轮结论, 新文件沿用上一段的结论
+            # (停车哨兵录像一分钟换一个文件, 不能在这个缝里误判成行车而锁盘)
+            prev = _DRIVE_HINT.get("val")
+            if _DRIVE_HINT.get("key") != key:
+                _DRIVE_HINT = {"key": key, "val": prev}
+            return prev
+        buf = b""
+        try:
+            for chunk in exfat.read_file(newest):
+                buf += chunk
+                if len(buf) >= 3 * 1048576:
+                    break
+        except Exception:
+            return None
+        # 行车片段的每个视频帧都带 SEI: NAL 头 06 05 32 42 42 42 69
+        val = buf.count(b"\x42\x42\x42\x69") >= 3
+        _DRIVE_HINT = {"key": key, "val": val}
+        return val
+    except Exception as e:
+        log("行车判定失败: %s" % e)
+        return None
+
+
+def publish_write_cat(sig, old, driving=None, recent=False):
+    """把"哪一类正在写"落到文件, 页面据此区分行车记录(行车中)与哨兵/手动保存。
+    recent 由镜像 mtime 判定(车机一写盘就变), 不再依赖列 RecentClips 目录。"""
+    flags = {"recent": bool(recent),
              "sentry": _cat_changed(sig, old, "SentryClips"),
              "saved": _cat_changed(sig, old, "SavedClips"),
+             "driving": driving,
              "ts": time.time()}
     try:
         tmp = WRITE_CAT_FILE + ".tmp"
@@ -723,6 +792,42 @@ def publish_write_cat(sig, old):
         os.replace(tmp, WRITE_CAT_FILE)
     except OSError:
         pass
+
+
+# 探测独立成线程: 定时归档一次要搬几百 MB、还会因车机写盘暂停几十秒,
+# 放在主循环里会把 write-cat 卡成旧的, 页面就会误报"车机正在写入/上锁"。
+# 线程用自己的只读句柄, 每秒固定更新状态, 不受搬运阻塞。
+PROBE_URGENT = threading.Event()
+
+
+def probe_loop():
+    x = None
+    last_sig = None
+    while True:
+        try:
+            st = os.stat(IMG)
+            if x is None or st.st_ino != x.fd_ino:
+                if x is not None:
+                    try:
+                        x.close()
+                    except Exception:
+                        pass
+                x = ExFat(IMG)
+            sig = probe_sig(x)
+            recent = (time.time() - st.st_mtime) < 12
+            if last_sig is None:
+                publish_write_cat(sig, None, None, False)   # 基线, 不补推历史
+                last_sig = sig
+            else:
+                drv = probe_driving(x) if recent else None
+                publish_write_cat(sig, last_sig, drv, recent)
+                if (_cat_changed(sig, last_sig, "SentryClips")
+                        or _cat_changed(sig, last_sig, "SavedClips")):
+                    PROBE_URGENT.set()
+                last_sig = sig
+        except Exception as e:
+            log("状态探测失败: %s" % e)
+        time.sleep(1)
 
 
 def car_busy():
@@ -812,52 +917,31 @@ def main():
     last_run = 0.0
     last_car_log = 0.0
     lock_miss = 0
-    # 哨兵/手动保存优先通道: 每 1 秒轻扫一次最近几个事件目录(不读内容),
-    # 一旦 SentryClips/SavedClips 出现变化就立刻小步归档, 不等停车、不等定时归档。
-    probe_sec = float(os.environ.get("TSF_SENTRY_PROBE", "1"))
-    last_probe = 0.0
-    last_sig = None
-    urgent = False
+    # 哨兵/手动保存优先通道: 独立线程每 1 秒轻扫一次, 不读视频内容;
+    # 一旦 SentryClips/SavedClips 出现变化就置位, 主线程立刻小步搬运。
+    threading.Thread(target=probe_loop, daemon=True).start()
     write_sched(0, False, msg="等待首轮归档")
     while True:
         time.sleep(1)
         now = time.time()
-        if now - last_probe >= probe_sec:
-            last_probe = now
-            try:
-                stp = os.stat(IMG)
-                if stp.st_ino != exfat.fd_ino:
-                    exfat.close()
-                    exfat = ExFat(IMG)
-                sig = probe_sig(exfat)
-                if last_sig is None:
-                    publish_write_cat(sig, None)   # 启动第一轮只记基线, 不补推历史
-                    last_sig = sig
-                else:
-                    publish_write_cat(sig, last_sig)
-                    if sig != last_sig:
-                        urgent = True
-                    last_sig = sig
-            except Exception as e:
-                log("哨兵探测失败: %s" % e)
-        if urgent:
+        if PROBE_URGENT.is_set():
+            PROBE_URGENT.clear()
             lk = usb_shared_lock()
             if lk is None:
                 continue                    # U 盘正被占用, 下一轮再试
             try:
                 n, b = do_sync(exfat, state, cats=("SentryClips", "SavedClips"),
                                hold=False, newest_events=2)
-                urgent = False
                 if n:
                     log("哨兵优先同步: %d 个片段, %.1f MB" % (n, b / 1048576))
                     write_sched(last_run, False, copied=n,
                                 msg="哨兵优先同步 %d 个片段" % n)
                 else:
                     # 第一轮只记 pending(等连续两轮签名一致), 若本轮没搬成,
-                    # 保持 urgent, 下一轮立刻再确认一次, 别等到定时归档。
+                    # 下一轮立刻再确认一次, 别等到定时归档。
                     pend = state.get("__pending__", {})
                     if any(k.startswith(("SentryClips/", "SavedClips/")) for k in pend):
-                        urgent = True
+                        PROBE_URGENT.set()
             except Exception as e:
                 log("哨兵优先同步失败: %s" % e)
             finally:

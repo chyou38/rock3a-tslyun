@@ -9121,7 +9121,7 @@ async function saveDriveLock() {
     loadDriveLock();
   } catch (e) { toast('❌ 保存失败'); }
 }
-setInterval(loadDriveLock, 5000);
+setInterval(loadDriveLock, 1000);
 function goDir(d) {
   if (area === 'usb') {
     d = (d || '').trim().replace(/^\/+|\/+$/g, '');
@@ -12280,14 +12280,19 @@ def car_writing():
 
 
 def sentry_writing_only():
-    """车机在写, 但写的是哨兵告警/手动保存(而不是行车记录) -> True。
-    哨兵事件发生在停车状态, 不该被当成"行车中"锁住虚拟U盘; 行车记录在涨才算行车中。"""
+    """车机在写, 但写的不是行车记录 -> True。
+    两种情形: ① 正在写哨兵告警/手动保存目录; ② RecentClips 在涨, 但最新前视片段
+    没有 SEI 遥测 —— 说明是停车状态哨兵在循环录像, 不是人在开车。
+    哨兵事件/停车录像不该被当成"行车中"锁住虚拟U盘。"""
     try:
         with open(WRITE_CAT_FILE, encoding="utf-8") as f:
             j = json.load(f)
         if time.time() - float(j.get("ts") or 0) > 30:
             return False
-        return bool(j.get("sentry") or j.get("saved")) and not bool(j.get("recent"))
+        if bool(j.get("sentry") or j.get("saved")):
+            return True
+        # driving=False 是同步侧用 SEI 遥测判定出的"停车哨兵录像"; None 表示未判定/不确定
+        return bool(j.get("recent")) and j.get("driving") is False
     except (OSError, ValueError):
         return False
 
@@ -12308,7 +12313,7 @@ def drive_lock_on():
 
 
 def drive_watch_loop():
-    """行车锁看门狗: 每 3s 跟踪车机写入状态供页面显示; 若行车锁开启且车机正在写入时
+    """行车锁看门狗: 每 1s 跟踪车机写入状态供页面显示; 若行车锁开启且车机正在写入时
     镜像仍被本地挂载(异常态), 主动归还车机导出, 车机写入永远第一优先。"""
     while True:
         try:
@@ -12327,7 +12332,7 @@ def drive_watch_loop():
                 usb_detach_safe()
         except Exception as e:
             print("drive-watch error:", e)
-        time.sleep(3)
+        time.sleep(1)
 
 
 # 启动爬坡: 重启/清缓存后预热补欠账别一上来就满并发(实测 load 冲 9.8),
