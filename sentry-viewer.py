@@ -2076,7 +2076,6 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <span class="t" id="ovcur">00:00</span>
     <button class="spd" id="ovspd" onclick="ovRate()" title="点击切换 1x / 2x / 0.5x">1x</button>
     <button class="qbtn" onclick="ovFull()">全屏</button>
-    <button class="qbtn" id="ovrot" onclick="ovRot()" title="内置浏览器不支持全屏时, 用它把画面摆成横屏">横屏</button>
   </div>
   <div class="ovtools">
     <button onclick="ovSkip(-2)">◀ -2s</button>
