@@ -1249,6 +1249,14 @@ body.ovmode .ovplay.fs-on .ovstage, body.ovfull .ovplay.fs-on .ovstage,
 body.fs-black, body.fs-black::before { background:#000 !important; }
 /* 纯 CSS 兜底(JS 未执行时也压黑整页, 免得顶部露出浅色条) */
 html:has(.ovplay.fs-on), body:has(.ovplay.fs-on) { background:#000 !important; }
+/* 全屏顶部硬遮罩: 实测用户全屏截图顶部总有一条浅色矩形(约 1263×17, 与画面左边缘对齐),
+   该元素来源未能 100% 定位(已排除 ovtop/tpanel/ovbar/滚动条), 用一条纯黑遮罩条钉死盖掉 */
+#ovfsmask { display:none; }
+.ovplay.fs-on #ovfsmask { display:block; position:absolute; left:0; right:0; top:0; height:26px;
+  background:#000 !important; z-index:60; pointer-events:none; }
+.ovplay.fs-on .tpanel { top:26px !important; }
+/* 全屏时把页面其它顶层块整体隐藏, 杜绝任何页面元素(header/列表/浮层)漏进画面 */
+body.fs-solo > *:not(#ovplay):not(script):not(style) { display:none !important; }
 /* 详细数据(加速度等)不再在行车数据行里展示, 节点保留给渲染逻辑写入 */
 #tp-rows[hidden], #tp-fold[hidden] { display:none !important; }
 /* 横屏锁失败(如 iOS)时, 竖屏全屏把整个播放器旋转 90° 模拟横屏 */
@@ -2056,6 +2064,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <nav class="tabs" id="tabs"></nav><button id="libbtn" title="我的作品" onclick="openLib()"><svg class="ic"><use href="#i-folder"/></svg></button><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
 <!-- 存储与系统状态卡已移入 个性化→设置→更新上方 (常驻展开) -->
 <div class="ovplay" id="ovplay">
+  <div id="ovfsmask" aria-hidden="true"></div>
   <div class="ovtop">
     <button class="ovback" id="ovback" onclick="closeOvFull()">‹ 返回</button>
     <span class="ovk" id="ovcat">哨兵总览</span>
@@ -4493,7 +4502,7 @@ function ovFsLock(on, portrait) {
       st.style.setProperty('border', '0', 'important');
       st.style.setProperty('border-radius', '0px', 'important');
     }
-    document.body.classList.add('fs-black');
+    document.body.classList.add('fs-black', 'fs-solo');
     document.documentElement.style.setProperty('background', '#000', 'important');
     document.body.style.setProperty('background', '#000', 'important');
     try { window.scrollTo(0, 0); } catch (e) {}
@@ -4506,7 +4515,7 @@ function ovFsLock(on, portrait) {
   } else {
     ovFsCycle(pl, OV_FS_PL, false);
     ovFsCycle(st, OV_FS_ST, false);
-    document.body.classList.remove('fs-black');
+    document.body.classList.remove('fs-black', 'fs-solo');
     document.documentElement.style.removeProperty('background');
     document.body.style.removeProperty('background');
     const g = pl && pl.querySelector('.ovgrid');
