@@ -1368,6 +1368,7 @@ body.ovmode.allmode #filters { display:none; }
 .tpanel.plain .tp-fold,
 .tpanel.plain .tp-rows,
 .tpanel.plain .tp-tr { display:none; }
+body.ovfull #tpanel { display:none !important; }   /* 二级播放页不再显示遥测/地点横条, 信息都在视频详情里 */
 .infocard.plain .ic-time { display:none; }
 .infocard.plain .ic-badge { margin-left:0; }
 .tp-top { display:flex; justify-content:space-between; align-items:center; }
