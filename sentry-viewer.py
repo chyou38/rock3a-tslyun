@@ -1639,10 +1639,12 @@ select.ninput { cursor:pointer; }
 .fm-bar button.fm-go:hover { color:#fff; }
 .fm-bar .fm-dest-input { flex:1; min-width:130px; background:var(--bg); border:1px solid var(--line2); border-radius:8px; color:var(--text); padding:7px 9px; font-size:12px; outline:none; }
 .fm-count { font-size:12px; color:var(--muted); }
-.fm-purge { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
-.fm-purge button { background:transparent; border:1px solid var(--accent); color:var(--accent); border-radius:8px; padding:8px 12px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+.fm-purge { display:flex; flex-direction:column; align-items:stretch; gap:6px; margin:0 0 12px; }
+.fm-purge button { display:flex; align-items:center; justify-content:center; gap:7px; width:100%;
+  background:transparent; border:1px solid var(--accent); color:var(--accent); border-radius:8px;
+  padding:9px 12px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
 .fm-purge button:hover { background:var(--accent); color:#fff; }
-.fm-purge .hint { flex:1; min-width:170px; margin:0; }
+.fm-purge .hint { flex:none; min-width:0; margin:0; line-height:1.5; }
 .item .tag { font-size:10.5px; color:#4cc38a; }
 .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; padding:9px 20px; border-radius:20px; font-size:13px; z-index:300; display:none; }
 .expp { display:none; position:fixed; right:14px; bottom:70px; width:min(320px,92vw); background:var(--panel); border:1px solid var(--line2); border-radius:14px; padding:14px; z-index:150; box-shadow:0 10px 30px #00000060; }
@@ -1784,7 +1786,10 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
 /* 设备与存储: 与四套界面风格共用颜色、边框和控件语义 */
 .storage-card { background:var(--panel2); border:1px solid var(--line); border-radius:12px;
   padding:12px; margin-bottom:10px; color:var(--text); }
-.storage-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.storage-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;
+  flex-wrap:wrap; row-gap:6px; }
+.storage-head > b { white-space:nowrap; }
+.storage-head > .storage-meta { margin-left:auto; white-space:nowrap; }
 .storage-btn { background:var(--panel); border:1px solid var(--line2); color:var(--text);
   border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer; }
 .storage-btn:hover { border-color:var(--accent); color:var(--accent); }
@@ -1816,6 +1821,30 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
   padding:7px 14px; font-size:12px; cursor:pointer; margin-top:8px; }
 .storage-format:disabled, .storage-init:disabled { opacity:.45; cursor:not-allowed; }
 .storage-actions { display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+/* 车机U盘: 状态条与状态胶囊 (主题色: 暗底 + 左侧色条) */
+.usbstrip { display:flex; align-items:center; gap:9px; flex-wrap:wrap; background:var(--panel2);
+  border:1px solid var(--line); border-left:3px solid var(--muted2); border-radius:10px;
+  padding:9px 12px; margin:0 0 10px; }
+.usbstrip.off { border-left-color:var(--amber); }
+.usbstrip.on { border-left-color:#4cc38a; }
+.usbstrip .ust-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--amber); }
+.usbstrip.on .ust-dot { background:#4cc38a; }
+.usbstrip .ust-body { flex:1; min-width:150px; }
+.usbstrip .ust-t { font-size:12.5px; font-weight:600; color:var(--text); line-height:1.35; }
+.usbstrip .ust-s { font-size:11.5px; color:var(--muted2); line-height:1.4; margin-top:2px; }
+.usbstrip .ust-btn { flex:0 0 auto; border-radius:8px; padding:6px 13px; font-size:12px; cursor:pointer;
+  white-space:nowrap; background:var(--accent); border:1px solid var(--accent); color:#fff; }
+.usbstrip .ust-btn:hover { filter:brightness(1.1); }
+.usbstrip.on .ust-btn { background:transparent; border-color:var(--line2); color:var(--text); }
+.usbstrip.on .ust-btn:hover { border-color:var(--accent); color:var(--accent); }
+.ust-pill { font-size:11.5px; padding:2px 9px; border-radius:999px; white-space:nowrap;
+  background:var(--panel); border:1px solid var(--line2); color:var(--muted2); }
+.ust-pill.ok { color:#4cc38a; border-color:#2f5a44; background:#14301f66; }
+.ust-pill.lock { color:var(--amber); border-color:#5a4420; background:#3a2a1266; }
+.ust-pill.off { color:var(--muted2); }
+.dlk { display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:9px;
+  font-size:12.5px; color:var(--text); }
+.dlk input { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; margin:0; }
 #storage-body[hidden] { display:none; }
 html[data-style="apple"] .storage-card { border-radius:16px; border-color:transparent; box-shadow:0 4px 18px #0000000a; }
 html[data-style="apple"] .storage-select,
@@ -2360,7 +2389,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div id="tab-wraps" style="display:none">
     <div class="stabsec sep">涂装 / 牌照</div>
     <div class="hint">图片写入车机U盘 Wraps/ 目录，在车机端选择启用；连接时短暂断开车机读取，用完点「恢复车机导出」。</div>
-    <div id="wraps-status" style="margin-bottom:10px"></div>
+    <div id="wraps-status"></div>
     <label class="upbtn" id="wraps-upbtn">＋ 上传图片到 Wraps/ (png/jpg/webp, ≤100MB)<input type="file" id="wraps-file" accept=".png,.jpg,.jpeg,.webp" hidden multiple></label>
     <div id="wraps-grid" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px"></div>
   </div>
@@ -2369,22 +2398,17 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <button id="area-usb" class="stab active" style="flex:1" onclick="switchArea('usb')"><svg class="ic"><use href="#i-usb"/></svg>车机U盘</button>
       <button id="area-archive" class="stab" style="flex:1" onclick="switchArea('archive')"><svg class="ic"><use href="#i-archive"/></svg>归档区</button>
     </div>
-    <div id="usb-status" style="display:none;margin-bottom:10px"></div>
-    <div id="usb-hint" class="hint">浏览和管理车机U盘 (特斯拉写入的镜像)。连接后会临时断开车机读取几秒，5 分钟无操作自动恢复。</div>
+    <div id="usb-status" style="display:none"></div>
     <div id="drivelock-panel" class="pwwrap" style="margin-bottom:10px">
-      <div class="arc-clean-head"><b>行车锁</b><span class="hint" id="drivelock-state">…</span></div>
-      <div class="arc-clean-row">
-        <label class="hint" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0">
-          <input id="drivelock-on" type="checkbox" onchange="saveDriveLock()"> 行车中锁定虚拟U盘
-        </label>
-      </div>
+      <div class="arc-clean-head"><b>行车锁</b><span class="ust-pill" id="drivelock-state">…</span></div>
+      <label class="dlk"><input id="drivelock-on" type="checkbox" onchange="saveDriveLock()"><span>行车中锁定虚拟U盘</span></label>
       <div class="hint">车机写入时禁读虚拟U盘，停车自动解锁；归档区回放不受影响。</div>
     </div>
     <div id="storage-panel" class="storage-card">
       <div class="storage-head">
-        <b style="font-size:13px">设备与存储 · 虚拟U盘</b>
+        <b style="font-size:13px">设备与存储</b>
+        <span id="storage-summary" class="storage-meta"></span>
         <div class="storage-actions">
-          <span id="storage-summary" class="storage-meta"></span>
           <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="false">管理</button>
           <button class="storage-btn" onclick="refreshStorage()">刷新</button>
         </div>
@@ -8627,15 +8651,11 @@ async function purgeTeslaCam() {
 /* ---------- 涂装 (Wraps) ---------- */
 let wrapAttached = false;   // 与文件管理共用同一个 U 盘管理状态
 function wrapStatusHtml(attached) {
-  if (!attached) {
-    return '<div style="background:#3a2a12;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#f0b429;line-height:1.6">' +
-      '⚠ U盘当前未连接管理 (车机正常读写中)<br>' +
-      '<button onclick="wrapAttach()" style="background:#e8443f;border:none;color:#fff;border-radius:8px;padding:7px 16px;font-size:12.5px;cursor:pointer;margin-top:6px"><svg class="ic"><use href="#i-link"/></svg>连接车机U盘 (临时断开车机读取)</button></div>';
-  }
-  return '<div style="background:#1a3325;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#4cc38a;line-height:1.6">' +
-    '🟢 已连接 — 上传的图片会直接写入车机U盘 Wraps/ 目录<br>' +
-    '<span style="color:#7d8894;font-size:11.5px">断开满 5 分钟无操作会自动恢复车机导出</span><br>' +
-    '<button onclick="wrapDetach()" style="background:#242c35;border:none;color:#e8eaed;border-radius:8px;padding:7px 16px;font-size:12.5px;cursor:pointer;margin-top:6px">✅ 恢复车机导出</button></div>';
+  if (!attached) return '';
+  return '<div class="usbstrip on" style="margin-bottom:10px"><span class="ust-dot"></span><div class="ust-body">' +
+    '<div class="ust-t">已连接 · 图片写入车机U盘 Wraps/</div>' +
+    '<div class="ust-s">断开满 5 分钟自动恢复车机导出</div></div>' +
+    '<button class="ust-btn" onclick="wrapDetach()">恢复车机导出</button></div>';
 }
 async function wrapAttach() {
   toast('⏳ 正在连接 (车机读取将断开几秒)...');
@@ -8659,9 +8679,7 @@ async function refreshWraps() {
   st.innerHTML = wrapStatusHtml(wrapAttached);
   grid.innerHTML = '';
   if (!j.ok) {
-    grid.innerHTML = wrapAttached
-      ? '<div class="hint">Wraps 目录不存在, 上传图片会自动创建</div>'
-      : '<div class="hint">U盘未连接管理 (车机正常读写中), 点上方「连接车机U盘」后可查看 / 上传图片</div>';
+    if (wrapAttached) grid.innerHTML = '<div class="hint">Wraps 目录不存在, 上传图片会自动创建</div>';
     return;
   }
   const files = j.files || [];
@@ -8692,7 +8710,12 @@ async function refreshWraps() {
 }
 document.getElementById('wraps-file').onchange = async function () {
   if (!this.files || !this.files.length) return;
-  if (!wrapAttached) { toast('请先点「连接车机U盘」, 连上后再上传'); this.value = ''; return; }
+  if (!wrapAttached) {   /* 未连接时点上传即自动连接一次, 不再常驻警告块 */
+    toast('⏳ 正在连接车机U盘…');
+    const a = await (await fetch('/api/usb/attach', {method: 'POST'})).json().catch(() => ({}));
+    if (!a.ok) { toast('❌ ' + (a.msg || '连接失败')); this.value = ''; await refreshWraps(); return; }
+    wrapAttached = true;
+  }
   for (const f of this.files) {
     const fd = new FormData(); fd.append('file', f); fd.append('path', 'Wraps');
     try {
@@ -8911,7 +8934,7 @@ function switchArea(a) {
   area = a;
   document.getElementById('area-usb').classList.toggle('active', a === 'usb');
   document.getElementById('area-archive').classList.toggle('active', a === 'archive');
-  document.getElementById('usb-hint').style.display = a === 'usb' ? '' : 'none';
+  /* 车机U盘说明已并入顶部状态条 */
   const sp = document.getElementById('storage-panel');
   if (sp) sp.style.display = a === 'usb' ? '' : 'none';   /* 虚拟U盘设置只在「车机U盘」子页显示 */
   const dl = document.getElementById('drivelock-panel');
@@ -8928,14 +8951,15 @@ function switchArea(a) {
 }
 function usbStatusHtml(attached, msg) {
   if (!attached) {
-    return '<div style="background:#3a2a12;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#f0b429;line-height:1.6">' +
-      '⚠ U盘当前未连接管理 (车机正常读写中)<br>' +
-      '<button onclick="usbAttach()" style="background:#e8443f;border:none;color:#fff;border-radius:8px;padding:7px 16px;font-size:12.5px;cursor:pointer;margin-top:6px"><svg class="ic"><use href="#i-link"/></svg>连接车机U盘 (临时断开车机读取)</button></div>';
+    return '<div class="usbstrip off"><span class="ust-dot"></span><div class="ust-body">' +
+      '<div class="ust-t">未连接管理 · 车机正在正常读写</div>' +
+      '<div class="ust-s">连接会临时断开车机读取几秒，5 分钟无操作自动恢复</div></div>' +
+      '<button class="ust-btn" onclick="usbAttach()">连接</button></div>';
   }
-  return '<div style="background:#1a3325;border-radius:10px;padding:10px 12px;font-size:12.5px;color:#4cc38a;line-height:1.6">' +
-    '🟢 已连接 — U盘已从车机临时断开, 你在网页上的改动会直接写入车机U盘<br>' +
-    '<span style="color:#7d8894;font-size:11.5px">断开满 5 分钟无操作会自动恢复车机导出</span><br>' +
-    '<button onclick="usbDetach()" style="background:#242c35;border:none;color:#e8eaed;border-radius:8px;padding:7px 16px;font-size:12.5px;cursor:pointer;margin-top:6px">✅ 恢复车机导出</button></div>';
+  return '<div class="usbstrip on"><span class="ust-dot"></span><div class="ust-body">' +
+    '<div class="ust-t">已连接 · 车机U盘可读写</div>' +
+    '<div class="ust-s">改动直接写入车机U盘；断开满 5 分钟自动恢复车机导出</div></div>' +
+    '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
   if (DRIVE_LOCK_STATE.locked) { toast('🔒 行车锁：车机正在写入U盘，停车后自动解锁；归档区可正常回放'); return; }
@@ -8962,9 +8986,9 @@ async function loadDriveLock() {
     if (cb) cb.checked = !!j.on;
     const st = document.getElementById('drivelock-state');
     if (st) {
-      if (!j.on) st.textContent = '已关闭';
-      else if (j.locked) st.textContent = '🔒 行车中 · 虚拟U盘已锁定（停车后自动解锁）';
-      else st.textContent = '🟢 已开启 · 车机空闲，可正常读取';
+      if (!j.on) { st.className = 'ust-pill off'; st.textContent = '已关闭'; }
+      else if (j.locked) { st.className = 'ust-pill lock'; st.textContent = '行车中 · 已锁定'; }
+      else { st.className = 'ust-pill ok'; st.textContent = '已开启 · 车机空闲'; }
     }
   } catch (e) {}
 }
