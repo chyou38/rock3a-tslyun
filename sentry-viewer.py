@@ -17101,6 +17101,17 @@ def _comp_cache_key(paths, qv):
 
 def _comp_cache_cleanup():
     try:
+        # 异常中断留下的 .part 超过 2 分钟一律清掉, 免得占着缓存额度
+        now = time.time()
+        for fn in os.listdir(COMP_CACHE_DIR):
+            if not fn.endswith(".part"):
+                continue
+            fp = os.path.join(COMP_CACHE_DIR, fn)
+            try:
+                if now - os.path.getmtime(fp) > 120:
+                    os.unlink(fp)
+            except OSError:
+                pass
         items = []
         for fn in os.listdir(COMP_CACHE_DIR):
             fp = os.path.join(COMP_CACHE_DIR, fn)
@@ -17461,6 +17472,66 @@ class Handler(BaseHTTPRequestHandler):
             return
         hdr_only(405)
 
+    def _serve_growing(self, part, final):
+        """跟发正在写入的合成文件: 多个客户端共用一条编码流, 不额外起 ffmpeg。"""
+        deadline = time.time() + 25
+        while not (os.path.isfile(part) and os.path.getsize(part) > 0):
+            if os.path.isfile(final):
+                break
+            if time.time() > deadline:
+                return False
+            time.sleep(0.1)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+        except OSError:
+            return True
+        pos = 0
+        idle = time.time()
+        try:
+            while True:
+                if os.path.isfile(part):
+                    size = os.path.getsize(part)
+                    if size > pos:
+                        with open(part, "rb") as fh:
+                            fh.seek(pos)
+                            left = size - pos
+                            while left > 0:
+                                b = fh.read(min(65536, left))
+                                if not b:
+                                    break
+                                self.wfile.write(b)
+                                self.wfile.flush()
+                                pos += len(b)
+                                left -= len(b)
+                        idle = time.time()
+                        continue
+                elif os.path.isfile(final):
+                    # 生产者写完已改名: 补齐尾部再结束
+                    try:
+                        size = os.path.getsize(final)
+                        if size > pos:
+                            with open(final, "rb") as fh:
+                                fh.seek(pos)
+                                b = fh.read()
+                                self.wfile.write(b)
+                                self.wfile.flush()
+                    except OSError:
+                        pass
+                    break
+                else:
+                    break
+                if time.time() - idle > 45:
+                    break
+                time.sleep(0.08)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        return True
+
     def _composite_stream(self):
         """一条 HTTP 响应里持续吐 fMP4; 浏览器用单个 <video> 播, 服务端只跑一个合成进程。"""
         qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -17494,43 +17565,57 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 serve_file(self, cfile, inline=True)
                 return
-        cpart = ""
+        cpart = (cfile + "." + str(os.getpid()) + ".part") if cfile else ""
 
         def _cache_open():
-            nonlocal cpart
-            if not cfile:
+            if not cpart:
                 return None
-            cpart = cfile + "." + str(os.getpid()) + ".part"
             try:
                 return open(cpart, "wb")
             except OSError:
-                cpart = ""
                 return None
+
+        # 同一段 + 同一画质已经有合成在跑: 直接跟着这条流发
+        # (手机+电脑同时看同一段, 不再起第二个编码器, 也不额外吃性能)
+        tail_part = ""
         with COMPOSITE_LOCK:
-            old = COMPOSITE_STATE.get("proc")
-            if old and old.poll() is None:
-                # 单用户场景: 切画质/换片段会新建请求, 旧连接先让位;
-                # 只允许一个硬件合成进程同时跑, 不并行抢编码器。
-                try:
-                    old.terminate()
-                    old.wait(timeout=2)
-                except Exception:
+            busy = COMPOSITE_STATE.get("proc")
+            if (cacheable and cfile and COMPOSITE_STATE.get("key") == cfile
+                    and busy and busy.poll() is None and COMPOSITE_STATE.get("part")):
+                tail_part = COMPOSITE_STATE["part"]
+                proc, logpath = None, ""
+            else:
+                old = busy
+                if old and old.poll() is None:
+                    # 切画质/换片段会新建请求, 旧连接先让位;
+                    # 只允许一个硬件合成进程同时跑, 不并行抢编码器。
                     try:
-                        old.kill()
+                        old.terminate()
+                        old.wait(timeout=2)
                     except Exception:
-                        pass
-            logf = tempfile.NamedTemporaryFile(prefix="tsf-comp-", suffix=".log", delete=False)
-            logpath = logf.name
-            try:
-                proc = subprocess.Popen(
-                    car_cpu_prefix() + _composite_cmd(paths, qv),
-                    stdout=subprocess.PIPE, stderr=logf, bufsize=0)
-            except Exception as ex:
-                logf.close()
-                self._json({"error": "ffmpeg 启动失败: %s" % ex}, 503)
+                        try:
+                            old.kill()
+                        except Exception:
+                            pass
+                logf = tempfile.NamedTemporaryFile(prefix="tsf-comp-", suffix=".log", delete=False)
+                logpath = logf.name
+                try:
+                    proc = subprocess.Popen(
+                        car_cpu_prefix() + _composite_cmd(paths, qv),
+                        stdout=subprocess.PIPE, stderr=logf, bufsize=0)
+                except Exception as ex:
+                    logf.close()
+                    self._json({"error": "ffmpeg 启动失败: %s" % ex}, 503)
+                    return
+                COMPOSITE_STATE["proc"] = proc
+                COMPOSITE_STATE["started"] = time.time()
+                COMPOSITE_STATE["key"] = cfile
+                COMPOSITE_STATE["part"] = cpart
+        if tail_part:
+            if self._serve_growing(tail_part, cfile):
                 return
-            COMPOSITE_STATE["proc"] = proc
-            COMPOSITE_STATE["started"] = time.time()
+            self._json({"error": "合成流未就绪"}, 503)
+            return
         cache_done = False
         cfp = None
         try:
