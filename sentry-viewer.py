@@ -1794,6 +1794,7 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
   border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer; }
 .storage-btn:hover { border-color:var(--accent); color:var(--accent); }
 .storage-disk { border-top:1px solid var(--line); padding-top:8px; margin-top:8px; font-size:12px; }
+.usb-ico { display:inline-block; vertical-align:-4px; margin-right:3px; color:var(--text); }
 .storage-part { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:6px 0; font-size:12px; }
 .storage-part-name { min-width:170px; color:var(--text); }
 .storage-current { color:var(--blue); font-weight:600; }
@@ -8769,6 +8770,11 @@ function storageFindDisk(dev) {
   return null;
 }
 function storageSerial(d) { return d ? (d.serial || d.disk.split('/').pop()) : ''; }
+/* U盘图标: 上部接口 + 圆角盘体 + 指示灯条 */
+const USB_ICON = '<svg class="usb-ico" viewBox="0 0 14 20" width="13" height="18" aria-hidden="true">' +
+  '<rect x="4.6" y="0.6" width="4.8" height="5" rx="1" fill="currentColor" opacity=".55"></rect>' +
+  '<rect x="1.4" y="5.2" width="11.2" height="13.6" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.5"></rect>' +
+  '<rect x="4.4" y="9.4" width="5.2" height="2" rx="1" fill="currentColor" opacity=".5"></rect></svg>';
 let storageFirst = true;
 let storageReq = 0;
 let storageBusy = false;
@@ -8816,12 +8822,13 @@ async function refreshStorage() {
     'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b> · 卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
   let h = '';
   for (const d of j.disks || []) {
-    h += '<div class="storage-disk">💾 ' + escH(d.brand || 'USB硬盘') + ' ' + escH(d.size) +
-      (d.link ? ' · ' + escH(d.link) : '') + ' · 序列号: <b>' + escH(storageSerial(d)) + '</b></div>';
+    h += '<div class="storage-disk">' + USB_ICON + ' ' + escH(d.brand || 'USB硬盘') + ' · ' + escH(d.size) +
+      ' · 序列号: <b>' + escH(storageSerial(d)) + '</b></div>';
     for (const p of d.parts) {
       const cur = p.dev === j.source;
+      const many = (d.parts || []).length > 1;
       h += '<div class="storage-part">' +
-        '<span class="storage-part-name">' + escH(p.size) + (p.fstype ? ' · ' + escH(p.fstype) : '') + '</span>' +
+        (many ? '<span class="storage-part-name">' + escH(p.size) + '</span>' : '') +
         (cur ? '<span class="storage-current">当前使用</span>' :
           '<button class="storage-use" onclick="storageUse(\'' + p.dev + '\')">使用此盘</button>' +
           '<button class="storage-format" onclick="storageFormat(\'' + p.dev + '\')"' + (linked ? ' disabled' : '') + '>格式化</button>') + '</div>';
