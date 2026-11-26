@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.5"
+APP_VERSION = "3.0.6"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -11860,11 +11860,11 @@ def _exfat_used(path):
 
 
 
-def archive_size():
+def archive_size(force=False):
     """归档区实际占用。os.walk 在文件多的时候要几十~几百毫秒, 而存储卡每 10 秒轮询一次,
-    所以做 60 秒缓存, 别让面板把设备拖慢。"""
+    所以做缓存; 只有清理线程需要最新值时才 force 重扫, 网页请求永远拿缓存。"""
     now = time.time()
-    if _ARC_SIZE_CACHE["t"] and now - _ARC_SIZE_CACHE["t"] < 60:
+    if not force and _ARC_SIZE_CACHE["t"] and now - _ARC_SIZE_CACHE["t"] < 120:
         return _ARC_SIZE_CACHE["v"]
     sz = _dir_size(ARCHIVE) if os.path.isdir(ARCHIVE) else 0
     _ARC_SIZE_CACHE.update(t=now, v=sz)
@@ -11909,13 +11909,8 @@ def _trans_sample():
 HW_STATUS = {"ok": None, "detail": "尚未检测", "ts": 0.0}
 
 
-def hw_probe():
-    """硬解硬编链路自检: 内核 MPP 节点 + ffmpeg 的 rkmpp 编码器 + RGA 缩放滤镜。
-    结果缓存 10 分钟。缺任何一项就标记"降级"并写明缺什么 —— 内核/固件升级后如果 rkmpp
-    悄悄没了, 转码会静默退回 libx264 变慢 5 倍, 没有这个自检根本发现不了。"""
-    now = time.time()
-    if HW_STATUS["ts"] and now - HW_STATUS["ts"] < 600:
-        return HW_STATUS
+def _hw_probe_now():
+    """真正跑 ffmpeg 探测 (慢, 只允许后台线程调用, 不能堵网页请求)"""
     ok, miss = True, []
     if not os.path.exists("/dev/mpp_service"):
         ok = False
@@ -11931,8 +11926,30 @@ def hw_probe():
         except Exception:
             ok = False
             miss.append(label + " (探测失败)")
-    HW_STATUS.update(ok=ok, detail="; ".join(miss) or "rkmpp 硬解 + RGA 缩放 + 硬编可用", ts=now)
+    HW_STATUS.update(ok=ok, detail="; ".join(miss) or "rkmpp 硬解 + RGA 缩放 + 硬编可用", ts=time.time())
     return HW_STATUS
+
+
+def hw_probe():
+    """网页只读缓存, 绝不在这里跑 ffmpeg: 冷启动时两次 ffmpeg 探测在负载下要 20 秒,
+    会把 /api/live 和 /api/prewarm_stats 一起卡住, 页面全部停在「读取中」。"""
+    now = time.time()
+    if HW_STATUS["ts"] and now - HW_STATUS["ts"] < 600:
+        return HW_STATUS
+    if HW_STATUS["ok"] is None:
+        return {"ok": True, "detail": "硬解探测中", "ts": 0.0}
+    return HW_STATUS
+
+
+def hw_warm_loop():
+    """后台预热/刷新硬解自检结果, 网页只拿缓存"""
+    while True:
+        try:
+            if (not HW_STATUS["ts"]) or time.time() - HW_STATUS["ts"] > 600:
+                _hw_probe_now()
+        except Exception as e:
+            HW_STATUS.update(ok=False, detail="探测失败: %s" % str(e)[:80], ts=time.time())
+        time.sleep(30)
 
 
 def sys_status():
@@ -12609,11 +12626,9 @@ def thumb_migrate_legacy():
             _THUMB_MIGRATED["done"] = True
 
 
-def _thumb_stats():
-    """列表封面覆盖数按「源片」算, 不按 jpg 个数算; 触发封面不计入列表进度。"""
-    now = time.time()
-    if _THUMB_STATS_CACHE["v"] is not None and now - _THUMB_STATS_CACHE["t"] < 30:
-        return _THUMB_STATS_CACHE["v"]
+def _thumb_stats_build():
+    """列表封面覆盖数按「源片」算, 不按 jpg 个数算; 触发封面不计入列表进度。
+    只读侧车 + 路径前缀, 不再对每张缩略图 stat 外接盘源片。"""
     covers = set()
     files = 0
     total = 0
@@ -12631,13 +12646,38 @@ def _thumb_stats():
             if not meta:
                 continue
             src = meta.get("src") or ""
-            if src and meta.get("kind") != "trigger" and os.path.isfile(src):
-                covers.add(src)
+            if src and meta.get("kind") != "trigger":
+                # 外接盘上的源片直接认路径, 不 stat: USB 忙时 1800 次 isfile 能拖 40 秒。
+                if src.startswith("/mnt/") or src in _archive_src_set():
+                    covers.add(src)
+                elif os.path.isfile(src):
+                    covers.add(src)
     except OSError:
         pass
     d = {"done": len(covers), "files": files, "bytes": total}
-    _THUMB_STATS_CACHE.update(t=now, v=d)
-    return d
+    _THUMB_STATS_CACHE.update(t=time.time(), v=d)
+    _THUMB_STATS_CACHE["busy"] = False
+
+
+def _thumb_stats_job():
+    try:
+        _thumb_stats_build()
+    except Exception:
+        pass
+    finally:
+        _THUMB_STATS_CACHE["busy"] = False
+
+
+def _thumb_stats():
+    now = time.time()
+    v = _THUMB_STATS_CACHE["v"]
+    if v is not None and now - _THUMB_STATS_CACHE["t"] < 120:
+        return v
+    # 过期/首次: 后台重扫, 请求直接返回上一次结果, 不把网页卡在 USB 扫描上
+    if not _THUMB_STATS_CACHE.get("busy"):
+        _THUMB_STATS_CACHE["busy"] = True
+        threading.Thread(target=_thumb_stats_job, daemon=True).start()
+    return v or {"done": 0, "files": 0, "bytes": 0, "warming": True}
 # ---------- 在线清晰度: 按需转码 + eMMC 缓存 (设备端单任务串行, 防止重转码打崩内核) ----------
 # 源可為 1280x960(4:3) 或新硬體 2896x1876/1448x938(≈1.54:1)。固定目標碼率: 公網上行慢, CRF 碼率不可控會傳不完。
 # 縮放必须 force_divisible_by=2: 非 4:3 源按比例縮到 640 寬時高為 415(奇數), libx264 yuv420p 會直接報錯,
@@ -15550,7 +15590,7 @@ def archive_cleanup_watermark():
     th = archive_low_water_pct()
     if th <= 0:
         return {"deleted": 0, "freed": 0, "free_pct": None, "msg": "水位清理已关闭"}
-    _ARC_SIZE_CACHE["t"] = 0
+    archive_size(force=True)   # 清理线程自己重扫一次, 把新值写进缓存; 网页请求别被清零反复全盘扫
     try:
         free_pct, _used, total = archive_water_level()
     except Exception:
@@ -15601,13 +15641,11 @@ _PREVIEW_CACHE_LIMIT = 30 * 1024 * 1024 * 1024     # 预缓冲视频额度 30G; 
 _CACHE_USED = {"t": 0, "v": 0}
 
 
-_PREVIEW_STATS_CACHE = {"ts": 0, "d": None}
+_PREVIEW_STATS_CACHE = {"ts": 0, "d": None, "busy": False}
 
 
-def _preview_stats():
-    """按档位统计预缓冲: 文件数 + 当前预解码时长的覆盖源片数; 15 秒缓存。"""
-    if _PREVIEW_STATS_CACHE["d"] is not None and time.time() - _PREVIEW_STATS_CACHE["ts"] < 15:
-        return _PREVIEW_STATS_CACHE["d"]
+def _preview_stats_build():
+    """按档位统计预缓冲: 文件数 + 当前预解码时长的覆盖源片数。"""
     qs = ("360p", "480p", "720p")
     target_sec = preview_seconds()
     files = {q: 0 for q in qs}
@@ -15634,19 +15672,11 @@ def _preview_stats():
                 src = sf.read().strip()
         except OSError:
             src = ""
-        if qv not in qs and src:
-            # 老文件没有 .meta: 按缓存 key 反查它属于哪一档
-            for cand in qs:
-                for sec in (0, 10, 15, 20, 30, 45, 60, 90, 120):
-                    for leg in (False, True):
-                        kp = _variant_path(src, cand, sec, legacy=leg)
-                        if kp and os.path.basename(kp) == f:
-                            qv = cand
-                            break
-                    if qv:
-                        break
-                if qv:
-                    break
+        if qv not in qs:
+            # 老缓存没有 .meta 时不再按 54 种 key 反查: 每次反查都要 stat 一次源片,
+            # 源片在外接盘, 1700 个旧缓存能产生 9 万次 USB stat, 一次统计卡 20 秒以上。
+            # 这些旧档本来就会被清理/重建, 直接不计入当前档覆盖。
+            continue
         if qv in qs:
             files[qv] += 1
             if src:
@@ -15666,12 +15696,38 @@ def _preview_stats():
          "src": src_total, "sec": target_sec}
     _PREVIEW_STATS_CACHE["ts"] = time.time()
     _PREVIEW_STATS_CACHE["d"] = d
+    _PREVIEW_STATS_CACHE["busy"] = False
     return d
+
+
+def _preview_stats_job():
+    try:
+        _preview_stats_build()
+    except Exception:
+        pass
+    finally:
+        _PREVIEW_STATS_CACHE["busy"] = False
+
+
+def _preview_stats():
+    d = _PREVIEW_STATS_CACHE["d"]
+    if d is not None and time.time() - _PREVIEW_STATS_CACHE["ts"] < 60:
+        return d
+    # 过期/首次: 后台重扫, 网页先拿上一次结果, 不再同步遍历 1700 个缓存文件
+    if not _PREVIEW_STATS_CACHE.get("busy"):
+        _PREVIEW_STATS_CACHE["busy"] = True
+        threading.Thread(target=_preview_stats_job, daemon=True).start()
+    if d is not None:
+        return d
+    qs = ("360p", "480p", "720p")
+    return {"files": {q: 0 for q in qs}, "files_cur": {q: 0 for q in qs},
+            "cover": {q: 0 for q in qs}, "cover_any": {q: 0 for q in qs},
+            "src": _archive_src_cached(), "sec": preview_seconds()}
 
 
 def _prebuf_used():
     """预缓冲视频在系统盘上的实际占用; 30 秒缓存, 别每 5 秒遍历一遍。"""
-    if time.time() - _CACHE_USED["t"] > 30:
+    if time.time() - _CACHE_USED["t"] > 60:
         total = 0
         for d in (PREVIEW_DIR,):
             try:
@@ -15688,9 +15744,19 @@ def _prebuf_used():
     return _CACHE_USED["v"]
 
 
-def _archive_src_count():
-    """归档里 mp4 源文件数 (事件目录/文件两层), 给前端进度条当分母。"""
-    n = 0
+def stats_warm_once():
+    """服务启动后把归档页统计预热一遍, 避免用户第一次打开时几个扫描叠加卡「读取中」"""
+    time.sleep(2)
+    for fn in (_preview_stats, _thumb_stats, _archive_src_cached, _prebuf_used):
+        try:
+            fn()
+        except Exception:
+            pass
+
+
+def _archive_src_scan():
+    """归档里 mp4 源文件数与路径集合 (事件目录两层)。计数与缩略图判断共用一次扫描。"""
+    paths = set()
     for cat in CATS:
         base = os.path.join(ARCHIVE, cat)
         try:
@@ -15705,25 +15771,48 @@ def _archive_src_count():
                 fs = os.listdir(d)
             except OSError:
                 continue
-            n += sum(1 for f in fs if f.lower().endswith(".mp4"))
-    return n
+            for f in fs:
+                if f.lower().endswith(".mp4"):
+                    paths.add(os.path.join(d, f))
+    return len(paths), paths
 
 
-_ARCH_SRC_CACHE = {"t": 0, "n": 0}
+_ARCH_SRC_CACHE = {"t": 0, "n": 0, "set": frozenset(), "busy": False}
 _ARCH_INFO_CACHE = {"t": 0, "used": 0, "files": 0}
 
 
-def _archive_src_cached():
-    if time.time() - _ARCH_SRC_CACHE["t"] > 60:
-        _ARCH_SRC_CACHE["n"] = _archive_src_count()
+def _archive_src_refresh():
+    try:
+        n, paths = _archive_src_scan()
+        _ARCH_SRC_CACHE.update(n=n, **{"set": paths})
         _ARCH_SRC_CACHE["t"] = time.time()
+    except Exception:
+        pass
+    finally:
+        _ARCH_SRC_CACHE["busy"] = False
+
+
+def _archive_src_cached():
+    """归档目录扫描放后台: USB 忙时一次 listdir 可能要几十秒, 不能堵网页请求。
+    返回上一次缓存, 首次还没扫完就返回 0, 后台补上后下一轮轮询即正确。"""
+    if time.time() - _ARCH_SRC_CACHE["t"] > 300:
+        if not _ARCH_SRC_CACHE["busy"]:
+            _ARCH_SRC_CACHE["busy"] = True
+            threading.Thread(target=_archive_src_refresh, daemon=True).start()
     return _ARCH_SRC_CACHE["n"]
+
+
+def _archive_src_set():
+    if time.time() - _ARCH_SRC_CACHE["t"] > 300 and not _ARCH_SRC_CACHE["busy"]:
+        _ARCH_SRC_CACHE["busy"] = True
+        threading.Thread(target=_archive_src_refresh, daemon=True).start()
+    return _ARCH_SRC_CACHE.get("set", frozenset())
 
 
 def _archive_info_cached():
     """归档视频数与占用, 60 秒缓存 (archive_size 会遍历目录, 不能每 5 秒算一次)。"""
-    if time.time() - _ARCH_INFO_CACHE["t"] > 60:
-        _ARCH_INFO_CACHE["files"] = _archive_src_count()
+    if time.time() - _ARCH_INFO_CACHE["t"] > 300:
+        _ARCH_INFO_CACHE["files"] = _archive_src_cached()
         try:
             _ARCH_INFO_CACHE["used"] = archive_size()
         except Exception:
@@ -19777,5 +19866,7 @@ if __name__ == "__main__":
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     threading.Thread(target=drive_watch_loop, daemon=True).start()   # 行车锁看门狗
     threading.Thread(target=trans_priority_loop, daemon=True).start()  # 归档期间挂起转码
+    threading.Thread(target=hw_warm_loop, daemon=True).start()        # 硬解探测后台跑, 不堵接口
+    threading.Thread(target=stats_warm_once, daemon=True).start()     # 归档页统计预热
     srv.serve_forever()
 
