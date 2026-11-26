@@ -187,6 +187,18 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
 APP_VERSION = "3.0.2"
+
+
+def _build_stamp():
+    """当前程序的构建指纹(文件 mtime+size), 前端据此判断"手机上跑的是不是旧页面"。"""
+    try:
+        st = os.stat(os.path.abspath(__file__))
+        return "%d-%d" % (int(st.st_mtime), st.st_size)
+    except Exception:
+        return "0-0"
+
+
+BUILD_STAMP = _build_stamp()
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -967,7 +979,8 @@ def auto_update_loop():
 
 HTML = r"""<!DOCTYPE html>
 <html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta id="ovtheme" name="theme-color" content="#0e1216">
 <title>TSL哨兵云盘</title>
 <style id="base">
 :root {
@@ -2022,7 +2035,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 </style><script>
 /* 版本自检: 服务端升级后, 若当前页面仍是旧版本就自动重载 (看片时不打断, 最多 2 次防死循环) */
 (function () {
-  var MY = "__APP_VER__";
+  var MY = "__APP_VER__", MYB = "__BUILD__";
   function chk() {
     if (document.querySelector('.player.open')) return;
     var k = 'tsf_ver_chk', o = {};
@@ -2032,7 +2045,9 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     fetch('/api/ver?t=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        if (j && j.v && j.v !== MY) {
+        /* build 是文件指纹, 每次部署都会变 → 手机上开着旧页面也能自动刷新到最新代码 */
+        var stale = (j && j.build && j.build !== MYB) || (j && j.v && j.v !== MY);
+        if (stale) {
           o.n = (o.n || 0) + 1;
           try { sessionStorage.setItem(k, JSON.stringify(o)); } catch (e) {}
           location.reload();
@@ -4451,32 +4466,66 @@ function ovRate() {
   ovRateTo(rates[(rates.indexOf(ovRateVal) + 1) % rates.length] || 1);
 }
 function ovFull() {
-  const fs = document.fullscreenElement || document.webkitFullscreenElement;
-  if (fs) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
+  const fs0 = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fs0) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
+  const plEl = document.getElementById('ovplay');
+  /* 已经在兜底全屏里: 再点一次就是退出 */
+  if (plEl && plEl.classList.contains('fs-on')) { ovFsPseudoOff(); return; }
   /* 单条流(服务端合成 / 单路视角): 直接对视频元素发起原生全屏, 由浏览器把画面铺满整屏,
      页面里的任何条子/底色都没有机会漏出来 —— 不再靠容器"在界面里放大"那套。
      六路原生没法整屏(6 个 video 只能有一个进全屏), 仍走整块播放器全屏。 */
   const compVid = document.querySelector('#ovgrid.comp video');
   const live = [...document.querySelectorAll('#ovgrid video')].filter(v => v.offsetParent !== null);
   const solo = compVid || (live.length === 1 ? live[0] : null);
+  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) { const p2 = screen.orientation.lock('landscape'); if (p2 && p2.catch) p2.catch(() => {}); } } catch (e) {} };
   if (solo) {
-    try {
-      solo.setAttribute('playsinline', '');
-      if (solo.requestFullscreen) { solo.requestFullscreen().then(() => {}).catch(() => {}); }
-      else if (solo.webkitRequestFullscreen) solo.webkitRequestFullscreen();
+    solo.setAttribute('playsinline', '');
+    /* ① 视频元素原生全屏: 屏幕只剩这条视频, 连浏览器工具栏都收起 */
+    if (solo.requestFullscreen || solo.webkitRequestFullscreen) {
+      try {
+        const p = (solo.requestFullscreen || solo.webkitRequestFullscreen).call(solo);
+        if (p && p.catch) p.catch(() => ovFsPseudo());
+        return;
+      } catch (e) { /* 不支持就往下走 */ }
+    } else if (solo.webkitEnterFullscreen) {
       /* iOS 只给视频内置全屏入口 */
-      else if (solo.webkitEnterFullscreen) solo.webkitEnterFullscreen();
-      if (document.fullscreenEnabled === false && solo.webkitEnterFullscreen) solo.webkitEnterFullscreen();
-    } catch (e) {}
-    return;
+      try { solo.webkitEnterFullscreen(); return; } catch (e) {}
+    }
   }
   const pl = document.getElementById('ovplay');
   if (!pl) return;
-  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} };
-  try {
-    if (pl.requestFullscreen) pl.requestFullscreen().then(lockLand).catch(() => {});
-    else if (pl.webkitRequestFullscreen) { pl.webkitRequestFullscreen(); lockLand(); }
-  } catch (e) {}
+  /* ② 整个播放器(画面+控制条)原生全屏: 同样是真整屏, 浏览器 UI 一起收起 */
+  if (pl.requestFullscreen || pl.webkitRequestFullscreen) {
+    try {
+      const p = (pl.requestFullscreen || pl.webkitRequestFullscreen).call(pl);
+      if (p && p.then) { p.then(lockLand).catch(() => ovFsPseudo()); return; }
+      lockLand(); return;
+    } catch (e) {}
+  }
+  /* ③ 浏览器/WebView 根本不给全屏 API: 退回整页铺满(inset:0 黑底), 不再做"页面里放大的窗口" */
+  ovFsPseudo();
+}
+/* 无全屏 API 时的兜底: 整页铺满 + 压黑 + 竖屏旋转, 视觉上等同全屏(只是浏览器工具栏还在) */
+function ovFsPseudo() {
+  const pl = document.getElementById('ovplay');
+  if (!pl) return;
+  try { if (screen.orientation && screen.orientation.lock) { const p = screen.orientation.lock('landscape'); if (p && p.catch) p.catch(() => {}); } } catch (e) {}
+  pl.classList.add('fs-on');
+  ovFsLock(true);
+  ovFsShowBar();
+  setTimeout(() => {
+    const portrait = window.innerHeight > window.innerWidth;
+    pl.classList.toggle('fs-portrait', portrait);
+    ovFsLock(true, portrait);
+  }, 300);
+}
+/* 退出兜底全屏 */
+function ovFsPseudoOff() {
+  const pl = document.getElementById('ovplay');
+  if (!pl) return;
+  pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
+  ovFsLock(false);
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
 }
 /* 全屏退出解锁方向; 横屏锁不支持时(如 iOS)竖屏全屏旋转播放器模拟横屏; 控制条始终留在底部 */
 let ovFsHideTimer = null;
@@ -4493,6 +4542,10 @@ function ovFsCycle(el, props, on) {
 function ovFsLock(on, portrait) {
   const pl = document.getElementById('ovplay');
   const st = document.getElementById('ovstage');
+  if (on && pl && pl.parentElement === document.body && document.body.lastElementChild !== pl) {
+    /* 挪到 body 最后一个子节点: 绝对压在页面所有元素之上, 谁也盖不住画面 */
+    try { document.body.appendChild(pl); } catch (e) {}
+  }
   if (on) {
     if (pl) {
       pl.style.setProperty('position', 'fixed', 'important');
@@ -4535,6 +4588,9 @@ function ovFsLock(on, portrait) {
     document.body.classList.add('fs-black', 'fs-solo');
     document.documentElement.style.setProperty('background', '#000', 'important');
     document.body.style.setProperty('background', '#000', 'important');
+    /* 浏览器状态栏/工具栏底色也跟着黑, 断掉"顶部一条浅色"的另一条来源 */
+    const tm = document.getElementById('ovtheme');
+    if (tm) { if (!tm.dataset.orig) tm.dataset.orig = tm.content; tm.content = '#000000'; }
     try { window.scrollTo(0, 0); } catch (e) {}
     /* 合成(单格 3×2 拼图)整幅可见并居中; 原生六格保持 cover 铺满 */
     const g = pl && pl.querySelector('.ovgrid');
@@ -4548,6 +4604,8 @@ function ovFsLock(on, portrait) {
     document.body.classList.remove('fs-black', 'fs-solo');
     document.documentElement.style.removeProperty('background');
     document.body.style.removeProperty('background');
+    const tm = document.getElementById('ovtheme');
+    if (tm && tm.dataset.orig) tm.content = tm.dataset.orig;
     const g = pl && pl.querySelector('.ovgrid');
     if (g) [...g.querySelectorAll('video')].forEach(v => v.style.removeProperty('object-fit'));
   }
@@ -16916,7 +16974,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/ver":
             # 版本探针: 前端刷新时对比, 服务端升级了就自动重载, 不用手动清缓存
-            body = json.dumps({"v": APP_VERSION}).encode()
+            # v = 语义版本(不变), build = 文件 mtime+size(每次部署都会变, 前端靠它判断旧页面)
+            body = json.dumps({"v": APP_VERSION, "build": BUILD_STAMP}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -16930,11 +16989,14 @@ class Handler(BaseHTTPRequestHandler):
             html = (HTML.replace("__CAT_NAMES__", json.dumps(CAT_NAMES, ensure_ascii=False))
                     .replace("__I18N__", I18N_JS).replace("__LANGS__", LANG_JS)
                     .replace("__APP_VER__", APP_VERSION)
+                    .replace("__BUILD__", BUILD_STAMP)
                     .replace("__PREVIEW_SEC__", str(preview_seconds())))
             self._send(200, html.encode())
             return
         elif path == "/api/fan":
             self._json(fan_state())
+        elif path == "/api/ver":
+            self._json({"ver": BUILD_STAMP, "app": APP_VERSION})
         elif path == "/api/net":
             self._json(net_state())
         elif path == "/api/stitch/status":
