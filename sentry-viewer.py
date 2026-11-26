@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.6"
+APP_VERSION = "3.0.7"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -15638,7 +15638,7 @@ def archive_cleanup_loop():
 
 
 _PREVIEW_CACHE_LIMIT = 30 * 1024 * 1024 * 1024     # 预缓冲视频额度 30G; 缩略图另算 2G
-_CACHE_USED = {"t": 0, "v": 0}
+_CACHE_USED = {"t": 0, "v": 0, "busy": False}
 
 
 _PREVIEW_STATS_CACHE = {"ts": 0, "d": None, "busy": False}
@@ -15725,22 +15725,38 @@ def _preview_stats():
             "src": _archive_src_cached(), "sec": preview_seconds()}
 
 
+def _prebuf_used_build():
+    total = 0
+    for d in (PREVIEW_DIR,):
+        try:
+            for f in os.listdir(d):
+                p = os.path.join(d, f)
+                try:
+                    if os.path.isfile(p):
+                        total += os.path.getsize(p)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    _CACHE_USED.update(t=time.time(), v=total)
+    _CACHE_USED["busy"] = False
+
+
+def _prebuf_used_job():
+    try:
+        _prebuf_used_build()
+    except Exception:
+        pass
+    finally:
+        _CACHE_USED["busy"] = False
+
+
 def _prebuf_used():
-    """预缓冲视频在系统盘上的实际占用; 30 秒缓存, 别每 5 秒遍历一遍。"""
+    """预缓冲视频在系统盘上的实际占用; 后台扫, 网页请求不遍历 2000+ 个缓存文件。"""
     if time.time() - _CACHE_USED["t"] > 60:
-        total = 0
-        for d in (PREVIEW_DIR,):
-            try:
-                for f in os.listdir(d):
-                    p = os.path.join(d, f)
-                    try:
-                        if os.path.isfile(p):
-                            total += os.path.getsize(p)
-                    except OSError:
-                        pass
-            except OSError:
-                pass
-        _CACHE_USED.update(t=time.time(), v=total)
+        if not _CACHE_USED.get("busy"):
+            _CACHE_USED["busy"] = True
+            threading.Thread(target=_prebuf_used_job, daemon=True).start()
     return _CACHE_USED["v"]
 
 
