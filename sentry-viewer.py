@@ -2409,11 +2409,11 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <b style="font-size:13px">设备与存储</b>
         <span id="storage-summary" class="storage-meta"></span>
         <div class="storage-actions">
-          <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="true">收起</button>
+          <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="false">管理</button>
           <button class="storage-btn" onclick="refreshStorage()">刷新</button>
         </div>
       </div>
-      <div id="storage-body">
+      <div id="storage-body" hidden>
       <div id="storage-status" class="hint">正在读取...</div>
       <div id="storage-firsthint" class="hint" style="margin-top:6px"></div>
       <div id="storage-disks" style="margin-top:8px"></div>
@@ -7702,9 +7702,8 @@ function stab(which) {
   if (which === 'net') { netLoad(); netTimer = setInterval(netTick, 5000); }
   if (which === 'notify') ntLoad();
   if (which === 'auth') { pwLoad(); refreshBrand(); }
-  if (which === 'files') {           /* 进虚拟磁盘默认展开存储信息, 5 秒自动刷新一次 */
+  if (which === 'files') {           /* 进虚拟磁盘先拉一次摘要; 展开「管理」后才开始 10 秒刷新 */
     refreshStorage(); loadDriveLock();
-    if (!storageTimer) storageTimer = setInterval(() => { if (!document.hidden) refreshStorage(); }, 10000);
   }
   if (which === 'car') refreshWraps();
   if (which === 'skin') applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
@@ -8779,6 +8778,12 @@ function setStoragePanelOpen(open) {
   if (btn) {
     btn.textContent = open ? '收起' : '管理';
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  /* 展开时才跑 10 秒自动刷新, 收起就停, 不白耗盒子资源 */
+  if (storageTimer) { clearInterval(storageTimer); storageTimer = null; }
+  if (open) {
+    refreshStorage();
+    storageTimer = setInterval(() => { if (!document.hidden) refreshStorage(); }, 10000);
   }
 }
 function toggleStoragePanel() {
