@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.9"
+APP_VERSION = "3.1.0"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -2956,6 +2956,11 @@ applyTheme(localStorage.getItem('tsf_theme') || 'auto');
    换手机/浏览器也能保持一致。和深/浅色主题互不影响 */
 const STYLE_KEY = 'tsf_style';
 const STYLE_LIST = ['default', 'apple', 'claude', 'pixel'];
+function savedStyle() {
+  /* 本机选过就优先; 没选过沿用服务端写在 <html> 上的风格, 避免先闪默认再切 */
+  try { const s = localStorage.getItem(STYLE_KEY); if (s) return s; } catch (e) {}
+  return document.documentElement.dataset.style || 'default';
+}
 function applyStyle(s) {
   if (STYLE_LIST.indexOf(s) < 0) s = 'default';
   if (s === 'default') delete document.documentElement.dataset.style;
@@ -2972,7 +2977,7 @@ function setStyle(s) {
       body: JSON.stringify({ style: s }) }).catch(() => {});
   } catch (e) {}
 }
-applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
+applyStyle(savedStyle());
 /* 本地没选过时跟随服务端保存的风格 (在别的设备上设过) */
 (function () {
   try { if (localStorage.getItem(STYLE_KEY)) return; } catch (e) { return; }
@@ -7812,7 +7817,7 @@ function stab(which) {
   if (which === 'settings') {
     fanLoad(); fanTimer = setInterval(fanTick, 5000);
     dbgLoad();
-    applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
+    applyStyle(savedStyle());
     renderLangGrid();
     otaCheck(false); autoLoad();
   }
@@ -7824,7 +7829,7 @@ function stab(which) {
     if (!storageTimer) storageTimer = setInterval(() => { if (!document.hidden) refreshStorage(); }, 10000);
   }
   if (which === 'car') refreshWraps();
-  if (which === 'skin') applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
+  if (which === 'skin') applyStyle(savedStyle());
   if (which === 'debug') dbgLoad();
   if (which === 'update') { otaCheck(false); autoLoad(); }
 }
@@ -9316,6 +9321,18 @@ HTML = HTML.replace(_m_js.group(0),
                     '<script src="/s.js?v=__JS_VER__"></script></body></html>')
 
 _JS_CACHE = {"key": None, "ver": "", "gz": b""}
+_UI_STYLES = ("default", "apple", "claude", "pixel")
+# 首帧前先读本地主题/风格, 避免页面先用默认外观绘制、再被 JS 换成用户那套, 出现闪一下
+_HEAD_BOOT = """<script>
+(function(){try{var r=document.documentElement;
+var m=localStorage.getItem('tsf_theme')||'auto';
+var e=m==='auto'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m;
+if(e==='dark'||e==='light')r.dataset.theme=e;
+var s=localStorage.getItem('tsf_style');
+if(s&&s!=='default')r.dataset.style=s;
+else if(s==='default')delete r.dataset.style;
+}catch(e){}})();
+</script>"""
 
 
 def _js_asset():
@@ -18080,6 +18097,18 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             html = (HTML.replace("__APP_VER__", APP_VERSION)
                     .replace("__JS_VER__", _js_asset()["ver"]))
+            # 服务端保存的风格直接写在 <html> 上, 首帧就是用户选的那套;
+            # 本机 localStorage 里的选择由 _HEAD_BOOT 在样式表加载前覆盖。
+            try:
+                st = str(load_settings().get("ui_style") or "default")
+            except Exception:
+                st = "default"
+            if st not in _UI_STYLES:
+                st = "default"
+            if st != "default":
+                html = html.replace('<html lang="zh">',
+                                    '<html lang="zh" data-style="%s">' % st, 1)
+            html = html.replace("<head>", "<head>" + _HEAD_BOOT, 1)
             self._send(200, html.encode())
             return
         elif path == "/api/fan":
