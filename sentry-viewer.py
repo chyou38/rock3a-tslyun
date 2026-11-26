@@ -4189,6 +4189,8 @@ function ovBuildGrid(ev, ix) {
     cell.appendChild(fz);
     ['playing','waiting','emptied','pause','ended','loadeddata','seeked','timeupdate']
       .forEach(en => vid.addEventListener(en, ovCoverSync));
+    /* 卡顿发生的瞬间, 视频元素里还是最后一帧: 先抓成图盖住, 免得浏览器自己变黑/变白 */
+    ['waiting', 'stalled'].forEach(en => vid.addEventListener(en, () => ovHoldFrame(cell)));
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
@@ -4212,8 +4214,24 @@ function ovBuildGrid(ev, ix) {
       /* 占位底图: 该路自己的缩略图 (/thumb/ 与 /media/ 同路径), 高斯模糊后作为占位画面 */
       if (!isComp) {
         const cbg = c.querySelector('.ovcoverbg');
-        const turl = v.url.replace('/media/', '/thumb/');
-        if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
+        /* 缩略图多帧兜底: t=1 不行退 t=2, 再不行 t=3; 同时给 video 挂 poster,
+           这样 iOS/飞书内嵌浏览器在数据没到时画的是这张图, 而不是那个大播放键 */
+        const tbase = v.url.split('?')[0].replace('/media/', '/thumb/');
+        if (cbg) {
+          cbg.dataset.base = tbase;
+          cbg.onerror = function () {
+            const step = (+cbg.dataset.step || 1) + 1;
+            if (step <= 3) { cbg.dataset.step = step; cbg.src = tbase + '?t=' + step; }
+            else { cbg.style.visibility = 'hidden'; }
+          };
+          if (cbg.dataset.base0 !== tbase) {
+            cbg.dataset.base0 = tbase; cbg.dataset.step = 1; cbg.style.visibility = '';
+            cbg.src = tbase + '?t=1';
+          }
+        }
+        try { vid.setAttribute('poster', tbase + '?t=1'); } catch (e) {}
+        /* 顺手把 t=2/t=3 两张也预取进缓存: 首帧缩略图生成慢时能立刻接上 */
+        [2, 3].forEach(n => { try { const im = new Image(); im.src = tbase + '?t=' + n; } catch (e) {} });
       }
       vid._base = v.url; vid._qswapped = false; vid._composite = isComp;
       vid._hasFrame = false;   /* 换段/换源后重新等首帧, 出过画面才停帧 */
@@ -5088,7 +5106,7 @@ function renderFilters(cat) {
   const items = [['all', t('全部日期'), byReason.length]].concat(
     days.map(d => [d, d.slice(5).replace('-', '/'), dcnt[d] || 0]));
   dbox.innerHTML = '<span class="flab">' + t('日期') + '</span>' + items.map(([k, label, n]) =>
-    `<button class="chip d${k === dateFilter ? ' on' : ''}" onclick="setDate('${k}')">${label}<span class="n">${n}</span></button>`
+    `<button class="chip d${k === dateFilter ? ' on' : ''}" onclick="setDate('${k}')">${label}<span class="n"> · ${n}</span></button>`
   ).join('') + '<button class="chip pick" onclick="pickDate()" title="' + t('选择日期…') + '">' + t('选择日期…') + '</button>';
 }
 /* 自建日期选择器 (跟随当前主题/配色, 不再弹系统白色日历) */
