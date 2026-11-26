@@ -9057,6 +9057,9 @@ function switchArea(a) {
   const pw = document.getElementById('pwwrap');
   if (pw) pw.style.display = a === 'archive' ? '' : 'none';   /* 预缓冲/缩略图进度只在「归档区」子页显示 */
   document.getElementById('purge-box').style.display = a === 'usb' ? 'flex' : 'none';
+  /* 通用上传只在「车机U盘」子页出现: 归档区上传的文件没有任何入口会去读, 纯占空间 */
+  const up = document.getElementById('upbtn');
+  if (up) up.style.display = a === 'usb' ? '' : 'none';
   if (a === 'usb') refreshStorage();
   else loadArchiveRetention();   /* 归档区: 刷新占用与自动清理状态 */
   curDir = a === 'usb' ? '' : '/archive/files';
