@@ -1224,6 +1224,17 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 /* 横屏锁失败(如 iOS)时, 竖屏全屏把整个播放器旋转 90° 模拟横屏 */
 .ovplay.fs-portrait { position:fixed; top:50%; left:50%; width:100vh; height:100vw; max-width:none; max-height:none;
   transform:translate(-50%,-50%) rotate(90deg); }
+/* 竖屏里点"横屏": 把整个播放器就地旋转 90° 铺满, 不依赖浏览器全屏 API
+   (飞书/微信内置 WebView 里 requestFullscreen 根本不会生效) */
+.ovplay.rot-land { position:fixed !important; inset:auto !important; top:50% !important; left:50% !important;
+  width:100vh !important; height:100vw !important; max-width:none !important; max-height:none !important;
+  margin:0 !important; padding:0 !important; transform:translate(-50%,-50%) rotate(90deg) !important;
+  z-index:130; background:#000; overflow:hidden; }
+.ovplay.rot-land .ovtop { display:none !important; }
+.ovplay.rot-land .ovstage { position:absolute !important; inset:0 !important; width:auto !important;
+  height:auto !important; max-width:none !important; margin:0 !important; aspect-ratio:auto !important;
+  border:0 !important; border-radius:0 !important; }
+.ovplay.rot-land .ovbar { position:absolute; left:0; right:0; bottom:0; margin:0; }
 /* 总览六路: 3x2 六格, 6 个 video 各自独立播放, 主路(第一格)带节奏, 其余按它校准 */
 .ovgrid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr);
   gap:0; width:100%; height:100%; background:#000; position:relative; }
@@ -1469,6 +1480,11 @@ body.ovmode.allmode #filters { display:none; }
 /* 以下是叠在视频画面上的浮层, 永远在深色画面上, 用固定颜色 */
 .startmask { position:absolute; inset:0; z-index:5; background:rgba(0,0,0,.55); color:#fff; font-size:16px; display:none; align-items:center; justify-content:center; cursor:pointer; letter-spacing:1px; }
 .startmask.show { display:flex; }
+.startmask { background:transparent; }
+.smpill { background:#000000b8; border:1px solid #ffffff2e; color:#e8eef4; font-size:12.5px;
+  line-height:1; padding:9px 14px; border-radius:999px; }
+/* 未播放/缓冲时整幅画面高斯模糊: 只留一团模糊的现场, 不露出原始首帧, 也不放大播放键 */
+.ovgrid:not(.playing) video, .vgrid:not(.playing) video { filter:blur(11px) brightness(.72) saturate(1.05); }
 .vcell .clabel { position:absolute; right:7px; bottom:7px; font-size:11px; color:#e8eef4; background:rgba(20,24,29,.72); border-radius:6px; padding:2px 7px; pointer-events:none; }
 .vcell .cload { position:absolute; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px; color:#c6cdd4; background:rgba(10,13,18,.6); pointer-events:none; }
 .vcell .cload.err { color:#ff6b66; }
@@ -2043,6 +2059,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <span class="t" id="ovcur">00:00</span>
     <button class="spd" id="ovspd" onclick="ovRate()" title="点击切换 1x / 2x / 0.5x">1x</button>
     <button class="qbtn" onclick="ovFull()">全屏</button>
+    <button class="qbtn" id="ovrot" onclick="ovRot()" title="内置浏览器不支持全屏时, 用它把画面摆成横屏">横屏</button>
   </div>
   <div class="ovtools">
     <button onclick="ovSkip(-2)">◀ -2s</button>
@@ -2113,7 +2130,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         </div>
     </div>
     <div class="vwrap">
-      <div class="startmask" id="startmask">▶ 轻触开始同步播放</div>
+      <div class="startmask" id="startmask"><span class="smpill">▶ 轻触播放</span></div>
       <div class="vgrid" id="vgrid"></div>
     </div>
     <div class="cambar" id="cambar"></div>
@@ -3714,6 +3731,11 @@ function ovMoveTelemetry() {
 function closeOvFull() {
   if (!document.body.classList.contains('ovfull')) return;
   document.body.classList.remove('ovfull');
+  /* 关掉整屏页时把"横屏"旋转也复位, 免得下次打开还是歪的 */
+  const pl0 = document.getElementById('ovplay');
+  if (pl0) pl0.classList.remove('rot-land');
+  const rb0 = document.getElementById('ovrot');
+  if (rb0) rb0.textContent = '横屏';
   ovStopAll();
   ovEv = null;
   window.scrollTo(0, ovFullScroll || 0);
@@ -4409,6 +4431,16 @@ function ovFull() {
     else if (pl.webkitRequestFullscreen) { pl.webkitRequestFullscreen(); lockLand(); }
   } catch (e) {}
 }
+/* 竖屏/横屏切换: 有些内置浏览器(飞书/微信/Edge)压根不给全屏 API, 这时用旋转把画面摆成横屏 */
+function ovRot() {
+  const pl = document.getElementById('ovplay');
+  if (!pl) return;
+  const land = !pl.classList.contains('rot-land');
+  pl.classList.toggle('rot-land', land);
+  const b = document.getElementById('ovrot');
+  if (b) b.textContent = land ? '竖屏' : '横屏';
+  if (land) { try { window.scrollTo(0, 0); } catch (e) {} }
+}
 /* 全屏退出解锁方向; 横屏锁不支持时(如 iOS)竖屏全屏旋转播放器模拟横屏; 控制条始终留在底部 */
 let ovFsHideTimer = null;
 function ovFsChange() {
@@ -4417,6 +4449,8 @@ function ovFsChange() {
   if (!fs) {
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     if (pl) pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
+    pl.classList.remove('rot-land');
+    const rb = document.getElementById('ovrot'); if (rb) rb.textContent = '横屏';
     if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; }
     return;
   }
