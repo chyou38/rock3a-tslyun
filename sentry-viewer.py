@@ -1252,6 +1252,9 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 .ovcell .ovcoverbg { position:absolute; inset:-16px; width:calc(100% + 32px); height:calc(100% + 32px);
   object-fit:cover; filter:blur(14px) brightness(.62) saturate(1.05); transform:scale(1.06); }
 .ovcell .ovcover::after { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, #0000001f, #00000059); }
+/* 卡顿/换档瞬间: 盖住上一帧(冻结帧), 绝不留黑屏或浏览器播放键 */
+.ovcell .ovfreeze { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:5; display:none; }
+.ovcell.hold .ovfreeze { display:block; }
 .ovcover .cov6 { position:absolute; inset:0; display:grid; grid-template-columns:repeat(3,1fr);
   grid-template-rows:repeat(2,1fr); }
 .cov6 .cov6img { width:100%; height:100%; object-fit:cover; display:block;
@@ -3581,6 +3584,7 @@ let ovNoProgAt = 0;             // 主路 currentTime 连续不动的起始时�
 let ovLastProgT = 0;            // 上一次观察到的主路进度
 let ovLastDowngradeAt = 0;      // 上次自动降档时间, 防短时间连环降档
 let ovNoProgReloads = 0;        // 360p 仍无进度时的重载次数
+let ovQFail = [];               // 本片段加载失败过的档位, 自动降档不再回头试
 let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
 let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
 let ovLADone = -1;             // 已触发"提前预转码下一段"的段序号, 每段只触发一次
@@ -3632,7 +3636,10 @@ function ovQRank(q) { return OV_Q_ORDER.indexOf(q); }
 function ovQLabel(q) { return q === 'orig' ? '原画' : q; }
 function ovNextLowerQ(q) {
   const i = OV_Q_ORDER.indexOf(q);
-  return i > 0 ? OV_Q_ORDER[i - 1] : '';
+  if (i < 0) return '';
+  /* 360p 再往下没有更低档了: 最后兜底原画(原文件一定在), 保证还能播 */
+  if (i === 0) return q === 'orig' ? '' : 'orig';
+  return OV_Q_ORDER[i - 1];
 }
 function ovQFromWidth(w) {
   if (w >= 1200) return '1080p';
@@ -3666,6 +3673,8 @@ function ovReloadCurrent() {
   vs.forEach(v => {
     v._qswapped = false;
     try { v.pause(); } catch (e) {}
+    ovHoldFrame(v.parentElement); v._hasFrame = false;
+    v.parentElement.classList.remove('playing', 'frame');
     v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
     v.addEventListener('loadedmetadata', function h() {
       v.removeEventListener('loadedmetadata', h);
@@ -4086,6 +4095,7 @@ function ovSetQuality(q, opts) {
   opts = opts || {};
   ovQ = q;
   ovResetNoProg(); ovNoProgReloads = 0;
+  if (!opts.keepFail) ovQFail = [];
   try { if (opts.persist !== false) localStorage.setItem('ovq', q); } catch (e) {}
   const btn = document.getElementById('ovq');
   if (btn) { btn.textContent = ovQLabel(q); btn.classList.toggle('hi', q !== '360p'); }
@@ -4103,6 +4113,8 @@ function ovSetQuality(q, opts) {
     /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
     v._qswapped = false;
     try { v.pause(); } catch (e) {}
+    ovHoldFrame(v.parentElement); v._hasFrame = false;
+    v.parentElement.classList.remove('playing', 'frame');
     v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + q + '&preview=' + PREV_SEC;
     v.addEventListener('loadedmetadata', function h() {
       v.removeEventListener('loadedmetadata', h);
@@ -4172,12 +4184,15 @@ function ovBuildGrid(ev, ix) {
     const cbg = document.createElement('img'); cbg.className = 'ovcoverbg'; cbg.alt = '';
     cov.appendChild(cbg);
     cell.appendChild(cov);
+    const fz = document.createElement('img'); fz.className = 'ovfreeze'; fz.alt = '';
+    cell.appendChild(fz);
     ['playing','waiting','emptied','pause','ended','loadeddata','seeked','timeupdate']
       .forEach(en => vid.addEventListener(en, ovCoverSync));
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
   }
+  ovQFail = [];
   cells.forEach((c, i) => {
     const vid = c.querySelector('video'), lb = c.querySelector('.ovcam');
     if (i < vids.length) {
@@ -4354,12 +4369,22 @@ function ovSyncOn() {
         if (!ovStallAt) ovStallAt = Date.now();
         else if (Date.now() - ovStallAt > 1200) {
           ovStallAt = 0;
-          if (main.error || main.networkState === 3) {   /* 源加载失败: 重新挂一次当前段 */
+          if (main.error || main.networkState === 3) {   /* 源加载失败: 先按阶梯降档, 一路降到原画都失败才重挂 */
+            const nq = ovNextLowerQ(ovQ);
+            if (nq && ovQFail.indexOf(ovQ) < 0) {
+              ovQFail.push(ovQ);
+              ovBadge(ovQLabel(ovQ) + ' 加载失败, 自动降 ' + ovQLabel(nq), true);
+              try { toast(ovQLabel(ovQ) + ' 播不出来, 已自动切到 ' + ovQLabel(nq)); } catch (e) {}
+              ovSetQuality(nq, { persist: false, auto: true, keepFail: true });
+              return;
+            }
             const keep = main.currentTime || 0;          /* 记住进度, 重挂后落回原处, 不退回开头 */
             try {
               main.addEventListener('loadedmetadata', () => {
                 try { main.currentTime = Math.min(keep, Math.max(0, (main.duration || 0) - 0.3)); } catch (e) {}
               }, { once: true });
+              ovHoldFrame(main.parentElement); main._hasFrame = false;
+              main.parentElement.classList.remove('playing', 'frame');
               main.src = main._base + (main._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
             } catch (e) {}
           }
@@ -4403,6 +4428,8 @@ function ovSwapFull(tries) {
   const done = () => { if (--pending <= 0) finish(); };
   vs.forEach(v => {
     try { v.pause(); } catch (e) {}
+    ovHoldFrame(v.parentElement); v._hasFrame = false;
+    v.parentElement.classList.remove('playing', 'frame');
     v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
     v.addEventListener('loadedmetadata', () => {
       if (gen !== ovGen) return;
@@ -4436,6 +4463,20 @@ function ovSyncBtn() {
   if (b) b.textContent = (v && !v.paused) ? '⏸' : '▶';
 }
 /* 占位显隐: 主路真正在播才揭开, 加载/缓冲/暂停/未自动播放都露出模糊画面 */
+/* 把该格当前画面冻成一张图, 换源/卡顿时盖上去: 用户要求永远是"上一帧", 绝不黑屏/露播放键 */
+function ovHoldFrame(cell) {
+  const v = cell.querySelector('video');
+  const img = cell.querySelector('.ovfreeze');
+  if (!v || !img) return;
+  if (!v.videoWidth || v.readyState < 2) { if (cell.classList.contains('hold')) return; }
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = v.videoWidth; cv.height = v.videoHeight;
+    cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+    img.src = cv.toDataURL('image/jpeg', 0.7);
+    cell.classList.add('hold');
+  } catch (e) {}
+}
 function ovCoverSync() {
   const g = document.getElementById('ovgrid');
   if (!g) return;
@@ -4448,9 +4489,12 @@ function ovCoverSync() {
   g.querySelectorAll('.ovcell').forEach(c => {
     const v = c.querySelector('video');
     if (!v) return;
-    if (v.readyState >= 2 && v.videoWidth) v._hasFrame = true;
-    c.classList.toggle('playing', !!( !v.paused && !v.ended && v.readyState >= 3));
+    /* 换源瞬间 readyState 会掉到 0: 这时不能再当"有帧", 否则占位不盖、只剩黑屏 */
+    if (v.readyState >= 2 && v.videoWidth) v._hasFrame = true; else v._hasFrame = false;
+    const playing = !!( !v.paused && !v.ended && v.readyState >= 3);
+    c.classList.toggle('playing', playing);
     c.classList.toggle('frame', !!v._hasFrame);
+    if (playing) c.classList.remove('hold');   /* 真播起来了才撤掉冻结帧 */
   });
 }
 function ovSeek(val) {
