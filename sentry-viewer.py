@@ -1249,6 +1249,10 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 .ovcell .ovcoverbg { position:absolute; inset:-16px; width:calc(100% + 32px); height:calc(100% + 32px);
   object-fit:cover; filter:blur(14px) brightness(.62) saturate(1.05); transform:scale(1.06); }
 .ovcell .ovcover::after { content:''; position:absolute; inset:0; background:radial-gradient(circle at center, #0000001f, #00000059); }
+.ovcover .cov6 { position:absolute; inset:0; display:grid; grid-template-columns:repeat(3,1fr);
+  grid-template-rows:repeat(2,1fr); }
+.cov6 .cov6img { width:100%; height:100%; object-fit:cover; display:block;
+  filter:blur(5px) brightness(.78) saturate(1.05); transform:scale(1.03); }
 .ovgrid.playing .ovcover { opacity:0; pointer-events:none; }
 .ovmask { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:7px; background:#000000d9; color:#dfe6ec; font-size:12.5px;
@@ -4105,6 +4109,23 @@ function ovCycleQ() {
   const list = ['360p', '480p', '720p', '1080p', 'orig'];
   ovSetQuality(list[(list.indexOf(ovQ) + 1) % list.length]);
 }
+/* 合成格未播放时的占位: 把 6 路各自的缩略图按 3x2 拼起来(和真实合成画面同布局),
+   每张做高斯模糊, 不露出原始首帧, 也不放播放键 */
+function ovCoverSix(cov, vids) {
+  if (!cov || !vids || !vids.length) return;
+  const key = vids.map(v => v.url.split('/').pop()).join('|');
+  if (cov.dataset.key === key && cov.querySelector('.cov6')) return;   /* 同一组, 不用重建 */
+  cov.dataset.key = key;
+  cov.innerHTML = '';
+  const g = document.createElement('div'); g.className = 'cov6';
+  vids.slice(0, 6).forEach(v => {
+    const img = document.createElement('img'); img.className = 'cov6img'; img.alt = '';
+    img.loading = 'lazy';
+    img.src = v.url.replace('/media/', '/thumb/');
+    g.appendChild(img);
+  });
+  cov.appendChild(g);
+}
 function ovBuildGrid(ev, ix) {
   const g = document.getElementById('ovgrid');
   if (!g) return;
@@ -4145,7 +4166,10 @@ function ovBuildGrid(ev, ix) {
       c.style.display = '';
       if (lb) lb.textContent = isComp ? '合成' : camLabel(v.cam || '');
       const cov = c.querySelector('.ovcover');
-      if (cov) cov.style.display = isComp ? 'none' : '';
+      if (cov) {
+        cov.style.display = '';
+        if (isComp) ovCoverSix(cov, nativeVids);
+      }
       /* 占位底图: 该路自己的缩略图 (/thumb/ 与 /media/ 同路径), 高斯模糊后作为占位画面 */
       if (!isComp) {
         const cbg = c.querySelector('.ovcoverbg');
