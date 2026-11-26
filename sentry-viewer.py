@@ -4472,35 +4472,29 @@ function ovFull() {
   const plEl = document.getElementById('ovplay');
   /* 已经在兜底全屏里: 再点一次就是退出 */
   if (plEl && plEl.classList.contains('fs-on')) { ovFsPseudoOff(); return; }
-  /* 单条流(服务端合成 / 单路视角): 直接对视频元素发起原生全屏, 由浏览器把画面铺满整屏,
-     页面里的任何条子/底色都没有机会漏出来 —— 不再靠容器"在界面里放大"那套。
-     六路原生没法整屏(6 个 video 只能有一个进全屏), 仍走整块播放器全屏。 */
-  const compVid = document.querySelector('#ovgrid.comp video');
-  const live = [...document.querySelectorAll('#ovgrid video')].filter(v => v.offsetParent !== null);
-  const solo = compVid || (live.length === 1 ? live[0] : null);
-  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) { const p2 = screen.orientation.lock('landscape'); if (p2 && p2.catch) p2.catch(() => {}); } } catch (e) {} };
-  if (solo) {
-    solo.setAttribute('playsinline', '');
-    /* ① 视频元素原生全屏: 屏幕只剩这条视频, 连浏览器工具栏都收起 */
-    if (solo.requestFullscreen || solo.webkitRequestFullscreen) {
-      try {
-        const p = (solo.requestFullscreen || solo.webkitRequestFullscreen).call(solo);
-        if (p && p.catch) p.catch(() => ovFsPseudo());
-        return;
-      } catch (e) { /* 不支持就往下走 */ }
-    } else if (solo.webkitEnterFullscreen) {
-      /* iOS 只给视频内置全屏入口 */
-      try { solo.webkitEnterFullscreen(); return; } catch (e) {}
-    }
-  }
   const pl = document.getElementById('ovplay');
   if (!pl) return;
-  /* ② 整个播放器(画面+控制条)原生全屏: 同样是真整屏, 浏览器 UI 一起收起 */
+  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) { const p2 = screen.orientation.lock('landscape'); if (p2 && p2.catch) p2.catch(() => {}); } } catch (e) {} };
+  /* ① 整个播放器(画面 + 悬浮遥测 + 控制条)进原生全屏: 真整屏, 浏览器工具栏一起收起,
+     而且我们的 HUD/进度条都还在。不再单独把 video 推进原生全屏 —— 那样页面全没了,
+     遥测 HUD 也跟着消失, 而且不同浏览器(Edge)会自己画一条浅色条。 */
   if (pl.requestFullscreen || pl.webkitRequestFullscreen) {
     try {
       const p = (pl.requestFullscreen || pl.webkitRequestFullscreen).call(pl);
       if (p && p.then) { p.then(lockLand).catch(() => ovFsPseudo()); return; }
       lockLand(); return;
+    } catch (e) {}
+  }
+  /* ② 容器全屏不支持时, 单条流(合成/单视角)还能退回视频原生全屏 */
+  const compVid = document.querySelector('#ovgrid.comp video');
+  const live = [...document.querySelectorAll('#ovgrid video')].filter(v => v.offsetParent !== null);
+  const solo = compVid || (live.length === 1 ? live[0] : null);
+  if (solo) {
+    solo.setAttribute('playsinline', '');
+    try {
+      if (solo.webkitEnterFullscreen) { solo.webkitEnterFullscreen(); return; }
+      if (solo.requestFullscreen) { solo.requestFullscreen().catch(() => ovFsPseudo()); return; }
+      if (solo.webkitRequestFullscreen) { solo.webkitRequestFullscreen(); return; }
     } catch (e) {}
   }
   /* ③ 浏览器/WebView 根本不给全屏 API: 退回整页铺满(inset:0 黑底), 不再做"页面里放大的窗口" */
