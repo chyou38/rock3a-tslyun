@@ -5706,12 +5706,10 @@ async function loadPrewarmPolicy() {
     const st = document.getElementById('pw-policy-state');
     if (st) {
       if (j.on === false) st.textContent = '已关闭';
+      else if (j.sync_busy) st.textContent = '等待归档完成 · 转码排队';
       else if (j.paused) st.textContent = '暂停中 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复';
-      else if (j.sentry_writing) {
-        /* 哨兵写入不再暂停预缓冲: 只有归档真在搬 U 盘时才算暂停 */
-        st.textContent = j.sync_busy ? '暂停中 · 归档搬运中' : '运行中 · 哨兵写入中';
-      }
-      else if (j.car_writing) st.textContent = '暂停中 · 车机写入中';
+      else if (j.sentry_writing) st.textContent = '运行中 · 哨兵写入中';
+      else if (j.car_writing) st.textContent = '暂停中 · 行车写入中';
       else if (j.busy || j.night_busy || j.jobs > 0) st.textContent = '运行中 · 转码中';
       else st.textContent = '运行中 · 空闲待命';
     }
@@ -8868,7 +8866,7 @@ function storageInitButtonOk(sizeOk) {
 }
 function otgBadge(j) {
   const k = j.otg_kind || '';
-  if (k === 'ready') return '<span class="storage-ok">主机已连接 · 车机已识别U盘</span>';
+  if (k === 'ready') return '<span class="storage-ok">主机已连接</span>';
   if (k === 'ejected') return '<span class="storage-warn">主机已连接 · 车机把U盘弹出了</span>';
   if (k === 'manage') return '<span class="storage-meta">网页管理中 · 主机已断开</span>';
   if (k === 'none') return '<span class="storage-warn">无 OTG 控制器</span>';
@@ -9110,6 +9108,7 @@ async function loadDriveLock() {
     if (st) {
       if (!j.on) { st.className = 'ust-pill off'; st.textContent = '已关闭'; }
       else if (j.locked) { st.className = 'ust-pill lock'; st.textContent = '行车中 · 已锁定'; }
+      else if (j.parked_recording) { st.className = 'ust-pill ok'; st.textContent = '哨兵录像中 · 未锁定'; }
       else if (j.sentry_writing) { st.className = 'ust-pill ok'; st.textContent = '哨兵写入中 · 未锁定'; }
       else { st.className = 'ust-pill ok'; st.textContent = '已开启 · 车机空闲'; }
     }
@@ -12300,6 +12299,18 @@ def sentry_writing_only():
         return False
 
 
+def parked_recording():
+    """车机在写, 但同步侧用 SEI 判定这是停车哨兵录像(不是人在开车) -> True"""
+    try:
+        with open(WRITE_CAT_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        if time.time() - float(j.get("ts") or 0) > 30:
+            return False
+        return bool(j.get("recent")) and j.get("driving") is False and not bool(j.get("sentry") or j.get("saved"))
+    except (OSError, ValueError):
+        return False
+
+
 def driving_writing():
     """真的在开车(行车记录在写) -> True; 停车哨兵录像不算, 转码不受它限流。"""
     return car_writing() and not sentry_writing_only()
@@ -14672,9 +14683,59 @@ def _kill_transcode(p):
             pass
 
 
+_TRAN_PROCS = {}
+_TRAN_PROCS_LOCK = threading.Lock()
+_TRAN_PRIO = {"archive": False}
+
+
+def trans_priority_loop():
+    """归档永远第一: live-sync/网页管理 U 盘期间, 把正在跑的转码进程 SIGSTOP 挂起,
+    归档放锁后 SIGCONT 续跑。转码只用剩下来的 I/O/CPU, 不跟归档抢同一块盘。"""
+    while True:
+        try:
+            busy = usb_sync_busy()
+        except Exception:
+            busy = False
+        _TRAN_PRIO["archive"] = busy
+        with _TRAN_PROCS_LOCK:
+            items = list(_TRAN_PROCS.items())
+        for pid, d in items:
+            p = d["p"]
+            try:
+                if p.poll() is not None:
+                    with _TRAN_PROCS_LOCK:
+                        _TRAN_PROCS.pop(pid, None)
+                    continue
+                if busy and not d["stopped"]:
+                    os.killpg(pid, signal.SIGSTOP)
+                    d["stopped"] = True
+                elif not busy and d["stopped"]:
+                    os.killpg(pid, signal.SIGCONT)
+                    d["stopped"] = False
+            except (OSError, ProcessLookupError):
+                with _TRAN_PROCS_LOCK:
+                    _TRAN_PROCS.pop(pid, None)
+        time.sleep(0.5)
+
+
+def _archive_first_wait(cancel=None, limit=600):
+    """归档永远第一位: live-sync 正在搬 U 盘(持共享锁)时, 转码先排队等它搬完。
+    超过 limit 秒仍未放锁就放弃本次转码(返回 False), 避免播放端无限转圈。"""
+    t0 = time.time()
+    while usb_sync_busy():
+        if cancel is not None and cancel.is_set():
+            return False
+        if time.time() - t0 > limit:
+            return False
+        time.sleep(0.5)
+    return True
+
+
 def _run_transcode_cmd(cmd, cancel=None, timeout=900, env=None):
-    """行车记录写入期间并发压到 2 并钉 0-2 核, 留一核给 OTG;
-    停车哨兵录像/空闲不限制, 用满 4 核。"""
+    """归档优先: 先等 live-sync 归档/网页管理 U 盘结束, 再开始转码。
+    行车记录写入期间并发压到 2 并钉 0-2 核; 停车哨兵/空闲用满 4 核。"""
+    if not _archive_first_wait(cancel, min(600, timeout or 600)):
+        return None
     car = driving_writing()
     if car:
         deadline = time.time() + 600
@@ -14710,6 +14771,8 @@ def _run_transcode_inner(cmd, cancel=None, timeout=900, env=None):
                 pass
         return None
     rc = 0
+    with _TRAN_PROCS_LOCK:
+        _TRAN_PROCS[p.pid] = {"p": p, "stopped": False}
     try:
         deadline = time.time() + timeout
         while p.poll() is None:
@@ -14736,6 +14799,8 @@ def _run_transcode_inner(cmd, cancel=None, timeout=900, env=None):
                 pass
         return rc
     finally:
+        with _TRAN_PROCS_LOCK:
+            _TRAN_PROCS.pop(p.pid, None)
         if fh is not None:
             try:
                 fh.close()
@@ -17980,9 +18045,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/live":
             self._json(live_status())
         elif path == "/api/drive_lock":
-            self._json({"on": drive_lock_on(), "locked": DRIVE_LOCK["locked"],
-                        "car_writing": car_writing(),
-                        "sentry_writing": sentry_writing_only(),
+            _car = car_writing()
+            _sentry = sentry_writing_only()
+            _lock = drive_lock_on() and _car and not _sentry
+            self._json({"on": drive_lock_on(), "locked": _lock,
+                        "car_writing": _car,
+                        "sentry_writing": _sentry,
+                        "parked_recording": parked_recording(),
                         "attached": bool(usb_attached),
                         "car_age": round(usb_img_age(), 1)})
         elif path == "/api/auth/info":
@@ -19701,5 +19770,6 @@ if __name__ == "__main__":
     threading.Thread(target=lib_cleaner_loop, daemon=True).start()   # 作品库按保留天数定时清理
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     threading.Thread(target=drive_watch_loop, daemon=True).start()   # 行车锁看门狗
+    threading.Thread(target=trans_priority_loop, daemon=True).start()  # 归档期间挂起转码
     srv.serve_forever()
 
