@@ -1254,9 +1254,11 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
   grid-template-rows:repeat(2,1fr); }
 .cov6 .cov6img { width:100%; height:100%; object-fit:cover; display:block;
   filter:blur(5px) brightness(.78) saturate(1.05); transform:scale(1.03); }
-/* 按每一路自己的状态揭开占位: 某一路卡住/没加载出来时, 它自己那格继续盖着模糊缩略图,
-   不会露出浏览器画的大播放键 */
-.ovgrid .ovcell.playing .ovcover { opacity:0; pointer-events:none; }
+/* 每一格独立处理:
+   playing = 这一路正在播; frame = 这一路已经渲染过画面(停在上一帧, 不盖占位)
+   只有从没出过画面的格子才盖缩略图占位, 这样绝不会露出浏览器的白色大播放键 */
+.ovgrid .ovcell.playing .ovcover,
+.ovgrid .ovcell.frame .ovcover { opacity:0; pointer-events:none; }
 .ovmask { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:7px; background:#000000d9; color:#dfe6ec; font-size:12.5px;
   text-align:center; padding:0 16px; }
@@ -1491,7 +1493,7 @@ body.ovmode.allmode #filters { display:none; }
 .smpill { background:#000000b8; border:1px solid #ffffff2e; color:#e8eef4; font-size:12.5px;
   line-height:1; padding:9px 14px; border-radius:999px; }
 /* 未播放/缓冲时整幅画面高斯模糊: 只留一团模糊的现场, 不露出原始首帧, 也不放大播放键 */
-.ovcell:not(.playing) video, .vcell:not(.playing) video { filter:blur(6px) brightness(.78) saturate(1.05); }
+.ovcell:not(.frame) video, .vcell:not(.frame) video { filter:blur(6px) brightness(.78) saturate(1.05); }
 .vcell .clabel { position:absolute; right:7px; bottom:7px; font-size:11px; color:#e8eef4; background:rgba(20,24,29,.72); border-radius:6px; padding:2px 7px; pointer-events:none; }
 .vcell .cload { position:absolute; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px; color:#c6cdd4; background:rgba(10,13,18,.6); pointer-events:none; }
 .vcell .cload.err { color:#ff6b66; }
@@ -4162,7 +4164,8 @@ function ovBuildGrid(ev, ix) {
     const cbg = document.createElement('img'); cbg.className = 'ovcoverbg'; cbg.alt = '';
     cov.appendChild(cbg);
     cell.appendChild(cov);
-    ['playing','waiting','emptied','pause','ended'].forEach(en => vid.addEventListener(en, ovCoverSync));
+    ['playing','waiting','emptied','pause','ended','loadeddata','seeked','timeupdate']
+      .forEach(en => vid.addEventListener(en, ovCoverSync));
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
@@ -4186,6 +4189,7 @@ function ovBuildGrid(ev, ix) {
         if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
       }
       vid._base = v.url; vid._qswapped = false; vid._composite = isComp;
+      vid._hasFrame = false;   /* 换段/换源后重新等首帧, 出过画面才停帧 */
       const src = isComp ? (v.url + '&q=' + ovQ)
         : (v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC);
       if (vid.getAttribute('src') !== src) {
@@ -4427,12 +4431,15 @@ function ovCoverSync() {
   const main = ovVids()[0];
   const playing = !!(main && !main.paused && !main.ended && main.readyState >= 3);
   g.classList.toggle('playing', playing);
-  /* 关键: 逐格标记。某一路还在加载/卡住时, 它那格保持模糊缩略图占位,
-     而不是露出浏览器自己画的白色大播放键 */
+  /* 关键: 逐格标记。
+     - 已经出过画面的那一路: 只保留它自己的上一帧(不加模糊、不盖缩略图);
+     - 从没出过画面的那一路: 才盖模糊缩略图, 免得露出浏览器的白色播放键 */
   g.querySelectorAll('.ovcell').forEach(c => {
     const v = c.querySelector('video');
-    const own = !!(v && !v.paused && !v.ended && v.readyState >= 3);
-    c.classList.toggle('playing', own);
+    if (!v) return;
+    if (v.readyState >= 2 && v.videoWidth) v._hasFrame = true;
+    c.classList.toggle('playing', !!( !v.paused && !v.ended && v.readyState >= 3));
+    c.classList.toggle('frame', !!v._hasFrame);
   });
 }
 function ovSeek(val) {
