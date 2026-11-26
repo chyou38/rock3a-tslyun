@@ -3637,10 +3637,8 @@ function ovQRank(q) { return OV_Q_ORDER.indexOf(q); }
 function ovQLabel(q) { return q === 'orig' ? '原画' : q; }
 function ovNextLowerQ(q) {
   const i = OV_Q_ORDER.indexOf(q);
-  if (i < 0) return '';
-  /* 360p 再往下没有更低档了: 最后兜底原画(原文件一定在), 保证还能播 */
-  if (i === 0) return q === 'orig' ? '' : 'orig';
-  return OV_Q_ORDER[i - 1];
+  /* 只往下走: 360p 就是最后一档, 不再"升"到原画(4K 原片带宽更顶不住) */
+  return i > 0 ? OV_Q_ORDER[i - 1] : '';
 }
 function ovQFromWidth(w) {
   if (w >= 1200) return '1080p';
@@ -4414,7 +4412,7 @@ function ovSyncOn() {
         else if (Date.now() - ovStallAt > 1200) {
           ovStallAt = 0;
           if (main.error || main.networkState === 3) {   /* 源加载失败: 先按阶梯降档, 一路降到原画都失败才重挂 */
-            const nq = ovNextLowerQ(ovQ);
+            const nq = ovNextLowerQ(ovQ) || (ovQ === 'orig' ? '' : 'orig');
             if (nq && ovQFail.indexOf(ovQ) < 0) {
               ovQFail.push(ovQ);
               ovBadge(ovQLabel(ovQ) + ' 加载失败, 自动降 ' + ovQLabel(nq), true);
