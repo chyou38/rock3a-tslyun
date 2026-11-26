@@ -75,6 +75,7 @@ USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
 ROLL_MIN = int(os.environ.get("TSF_RECENT_ROLL_MIN", "60"))
 CATS = ("SentryClips", "SavedClips", "RecentClips")
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-")
+DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 # 车机 event.json 的 camera 编号 -> 文件名后缀; 推送封面就是从这一路抽帧
 CAM_SUFFIX = {0: "front", 3: "left_pillar", 4: "right_pillar",
               5: "left_repeater", 6: "right_repeater", 7: "back"}
@@ -636,9 +637,9 @@ def dump(exfat):
 
 
 def probe_sig(exfat):
-    """轻量探测: 只列目录项(不读文件内容), 返回哨兵/手动保存目录的签名。
-    车机往 TeslaCam/SentryClips 或 SavedClips 写东西时签名必然变化 ——
-    据此可以区分"行车记录在写" 和 "真告警/手动保存", 不被 RecentClips 持续录制干扰。"""
+    """轻量探测: 只列最近 2 个事件目录的目录项(不读文件内容), 返回哨兵/手动保存的签名。
+    只扫每个分类最新 2 个事件: 新告警/手动保存必然落在最新事件里, 这样一次探测
+    从 ~430ms(1400+ 条目) 降到 ~60ms, 撑得住 1 秒一轮。"""
     out = {}
     try:
         root = exfat.list_dir(exfat.root_cluster)
@@ -650,10 +651,15 @@ def probe_sig(exfat):
             catdir = exfat.find(cat_list, cat)
             if not catdir or not catdir.is_dir:
                 continue
-            for prefix, e in iter_media(exfat, catdir):
-                if not prefix:
-                    continue
-                out["%s/%s/%s" % (cat, prefix[0], e.name)] = (e.size, e.mtime)
+            evs = []
+            for e in exfat.list_dir(catdir.cluster, catdir.size):
+                if e.is_dir and DIR_RE.match(e.name or ""):
+                    evs.append(e)
+            evs.sort(key=lambda e: e.name)
+            for ed in evs[-2:]:
+                for prefix, e in iter_media(exfat, ed):
+                    ev_name = ed.name
+                    out["%s/%s/%s" % (cat, ev_name, e.name)] = (e.size, e.mtime)
     except Exception as e:
         log("目录探测失败: %s" % e)
     return out
@@ -778,9 +784,9 @@ def main():
     last_run = 0.0
     last_car_log = 0.0
     lock_miss = 0
-    # 哨兵/手动保存优先通道: 每 PROBE_SEC 秒只列一次目录项(不读内容),
+    # 哨兵/手动保存优先通道: 每 1 秒轻扫一次最近几个事件目录(不读内容),
     # 一旦 SentryClips/SavedClips 出现变化就立刻小步归档, 不等停车、不等定时归档。
-    probe_sec = float(os.environ.get("TSF_SENTRY_PROBE", "8"))
+    probe_sec = float(os.environ.get("TSF_SENTRY_PROBE", "1"))
     last_probe = 0.0
     last_sig = None
     urgent = False
