@@ -360,7 +360,7 @@ def _mark_hot(dest):
 
 def copy_entry(exfat, entry, dest_path):
     """把镜像里的文件写到归档区, 返回写入字节数。
-    车机写入期间读盘限速 ~4MB/s, 把带宽让给车机; 车机不写则全速。"""
+    车机写入期间暂停搬运(车机第一优先), 车机空闲再续; 车机不写则全速。"""
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
     written = 0
@@ -625,6 +625,10 @@ def main():
     log("在线同步启动: %s (簇 %dB, %d 簇)" % (IMG, exfat.cluster_size, exfat.cluster_count))
     state = load_state()
     if args.once:
+        if car_busy():
+            log("单轮跳过: 车机正在写 U 盘 (车机第一优先), 停车后再跑")
+            exfat.close()
+            return 0
         n, b = do_sync(exfat, state)
         log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
         exfat.close()
