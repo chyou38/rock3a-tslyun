@@ -17021,9 +17021,25 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _send(self, code, body, ctype="text/html; charset=utf-8"):
+        # gzip: 整页 HTML 约 512KB, 手机走 5G/Tailscale 要好几秒才出首屏;
+        # 压缩后约 90KB。只压缩文本类, 视频/切片走别的分支不受影响。
+        gz = False
+        try:
+            ae = (self.headers.get("Accept-Encoding") or "").lower()
+        except Exception:
+            ae = ""
+        if ("gzip" in ae) and len(body) > 1024 and (
+                "text/" in ctype or "json" in ctype or "javascript" in ctype
+                or "svg" in ctype or "xml" in ctype):
+            import gzip as _gzip
+            body = _gzip.compress(body, 6)
+            gz = True
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         # 页面/接口一律禁止缓存: 之前 HTML 没有任何缓存头, iOS Safari 会把旧页面留在内存里,
         # 升级后手机上仍然显示旧界面 (典型症状: 已经改了样式, 手机上还是老样子)
         if "text/html" in ctype or "application/json" in ctype:
