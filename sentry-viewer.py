@@ -12300,9 +12300,14 @@ def sentry_writing_only():
         return False
 
 
+def driving_writing():
+    """真的在开车(行车记录在写) -> True; 停车哨兵录像不算, 转码不受它限流。"""
+    return car_writing() and not sentry_writing_only()
+
+
 def car_cpu_prefix():
-    """车机写入时把 ffmpeg 钉在 0-2 核(留一核给 OTG), 空闲时返回空=全额 4 核。"""
-    return ["taskset", "-c", "0-2"] if car_writing() else []
+    """行车记录写入时把 ffmpeg 钉在 0-2 核(留一核给 OTG), 其余情况全额 4 核。"""
+    return ["taskset", "-c", "0-2"] if driving_writing() else []
 
 
 # ---------------- 行车锁 (虚拟U盘读取保护) ----------------
@@ -14668,8 +14673,9 @@ def _kill_transcode(p):
 
 
 def _run_transcode_cmd(cmd, cancel=None, timeout=900, env=None):
-    """车机写入第一优先: 写入期间并发压到 2 并钉 0-2 核, 留一核给 OTG; 空闲全额。"""
-    car = car_writing()
+    """行车记录写入期间并发压到 2 并钉 0-2 核, 留一核给 OTG;
+    停车哨兵录像/空闲不限制, 用满 4 核。"""
+    car = driving_writing()
     if car:
         deadline = time.time() + 600
         while not CAR_TRAN_SEM.acquire(timeout=1):
