@@ -5630,17 +5630,23 @@ async function loadPrewarmPolicy() {
   try {
     const j = await (await fetch('/api/prewarm_policy', {cache: 'no-store'})).json();
     const sel = document.getElementById('pw-resume');
-    if (sel) sel.value = String(j.resume_min || 10);
+    if (sel && document.activeElement !== sel) sel.value = String(j.resume_min || 10);
     const pv = document.getElementById('pw-prev');
-    if (pv) pv.value = String(j.preview_sec || 60);
+    if (pv && document.activeElement !== pv) pv.value = String(j.preview_sec || 60);
     const lw = document.getElementById('pw-lowwater');
-    if (lw) lw.value = String(j.preview_low_water_pct || 10);
+    if (lw && document.activeElement !== lw) lw.value = String(j.preview_low_water_pct || 10);
     const st = document.getElementById('pw-policy-state');
-    if (st) st.textContent = j.paused
-      ? ('已暂停 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复')
-      : '运行中';
+    if (st) {
+      if (j.on === false) st.textContent = '已关闭';
+      else if (j.car_writing) st.textContent = '暂停中 · 车机写入中';
+      else if (j.paused) st.textContent = '暂停中 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复';
+      else if (j.busy || j.night_busy || j.jobs > 0) st.textContent = '运行中 · 转码中';
+      else st.textContent = '运行中 · 空闲待命';
+    }
   } catch (e) {}
 }
+/* 每5秒同步预缓冲真实状态: 车机写入->暂停中, 空闲->运行中 (看门狗已在后台按车机写入让路) */
+setInterval(loadPrewarmPolicy, 5000);
 async function savePrewarmPolicy() {
   let mins = parseInt(document.getElementById('pw-resume').value || '2', 10);
   if (!mins || mins < 1) mins = 1;
@@ -17618,6 +17624,8 @@ class Handler(BaseHTTPRequestHandler):
                         "preview_sec": preview_seconds(),
                         "preview_low_water_pct": preview_low_water_pct(),
                         "paused": play_hold_active(), "remain": int(remain),
+                        "on": PREWARM["on"], "car_writing": car_writing(),
+                        "busy": PREWARM["busy"],
                         "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
                         "last": PREWARM["last"], "qs": PREWARM_QS,
                         "night_on": NIGHT_HW["on"], "night_window": _night_window(),
