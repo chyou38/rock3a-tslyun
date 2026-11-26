@@ -8819,8 +8819,7 @@ async function refreshStorage() {
     : '<b style="color:var(--amber)">还没有创建虚拟U盘。</b> 插入 USB 硬盘（≥8G），选择硬盘、拖动占比、输入序列号即可创建；盘上有数据请先备份。';
   st.innerHTML = '存储盘: ' + (!config ? '<span class="storage-warn">未选择 · 请在下方创建</span>' : (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>')) + '<br>' +
     'OTG 连接: ' + otgBadge(j) +
-    ' <span class="storage-meta">(' + escH(j.udc || '无 UDC') + ' / ' + escH(j.state || '未知') + ' / ' +
-      escH(j.host_connected ? (j.speed_text || j.speed || '未知速率') : ('端口 ' + (j.max_text || '未知速率'))) + ')</span><br>' +
+    ' <span class="storage-meta">(' + escH(j.host_connected && j.speed_text ? j.speed_text : 'no') + ')</span><br>' +
     '车机U盘(LUN): ' + (j.lun_backed
       ? '已装载 <b>' + escH(j.lun_name || '镜像') + '</b> · 车机可直接读写'
       : (j.otg_kind === 'ejected'
@@ -8832,7 +8831,8 @@ async function refreshStorage() {
     'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b> · 卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
   let h = '';
   for (const d of j.disks || []) {
-    h += '<div class="storage-disk">💾 ' + escH(d.disk) + ' ' + escH(d.size) + ' ' + escH(d.model) + ' · 序列号: <b>' + escH(storageSerial(d)) + '</b></div>';
+    h += '<div class="storage-disk">💾 ' + escH(d.disk) + ' ' + escH(d.size) + ' ' + escH(d.model) +
+      (d.link ? ' · ' + escH(d.link) : '') + ' · 序列号: <b>' + escH(storageSerial(d)) + '</b></div>';
     for (const p of d.parts) {
       const cur = p.dev === j.source;
       h += '<div class="storage-part">' +
@@ -10766,6 +10766,32 @@ def _disk_serial(path):
         return ""
 
 
+_USB_MBPS_MAP = {12: ("USB 1.1", "12Mbps"), 480: ("USB 2.0", "480Mbps"),
+                 5000: ("USB 3.0", "5Gbps"), 10000: ("USB 3.1", "10Gbps"),
+                 20000: ("USB 3.2", "20Gbps")}
+
+
+def _usb_link_speed(disk_path):
+    """硬盘实际挂在哪代 USB 口: 沿 /sys/block/<dev> 符号链接找 usb 设备节点读 speed"""
+    try:
+        seg = os.path.realpath("/sys/block/" + os.path.basename(disk_path)).split("/")
+    except OSError:
+        return ""
+    port = ""
+    for i, p in enumerate(seg):
+        if p.startswith("usb") and p[3:].isdigit() and i + 1 < len(seg):
+            port = seg[i + 1]
+    if not port:
+        return ""
+    try:
+        with open("/sys/bus/usb/devices/%s/speed" % port) as f:
+            mbps = int(float(f.read().strip()))
+    except (OSError, ValueError):
+        return ""
+    t = _USB_MBPS_MAP.get(mbps)
+    return ("%s · %s" % t) if t else ("%dMbps" % mbps)
+
+
 def _usb_disks():
     try:
         r = _run_cmd(["lsblk", "-b", "-J", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,TRAN,MODEL,LABEL"])
@@ -10791,6 +10817,7 @@ def _usb_disks():
                       "model": (d.get("model") or "").strip(),
                       "size": _human_bytes(disk_bytes), "size_bytes": disk_bytes,
                       "serial": _disk_serial(disk_path),
+                      "link": _usb_link_speed(disk_path),
                       "parts": parts})
     return disks
 
