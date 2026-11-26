@@ -1246,7 +1246,7 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 /* 事件触发的那一路: 机位标签直接标红(原生六路才参与, 合成单格是"合成", 不标) */
 .ovgrid .ovcam.trig { color:#ff6b66; background:#3a1113; border:1px solid #ff6b6655; font-weight:700; }
 /* 加载/缓冲/未自动播放占位: 每路缩略图高斯模糊垫底, 只留模糊画面, 不放播放键 */
-.ovcell .ovcover { position:absolute; inset:0; z-index:4; overflow:hidden;
+.ovcell .ovcover { position:absolute; inset:0; z-index:4; overflow:hidden; background-size:cover; background-position:center;
   -webkit-backdrop-filter:blur(12px) brightness(.75); backdrop-filter:blur(12px) brightness(.75);
   background:#0a0d11; transition:opacity .28s ease; }
 .ovcell .ovcoverbg { position:absolute; inset:-16px; width:calc(100% + 32px); height:calc(100% + 32px);
@@ -4230,6 +4230,14 @@ function ovBuildGrid(ev, ix) {
           }
         }
         try { vid.setAttribute('poster', tbase + '?t=1'); } catch (e) {}
+        /* 这一路自己的缩略图还没生成时, 先用列表里那张六格封面垫底: 冷启动也不会是一块纯黑 */
+        try {
+          const ps = v.url.split('?')[0].split('/');
+          if (cov && ps[2] && ps[3]) {
+            cov.style.backgroundImage = "url('/api/ovthumb?cat=" + encodeURIComponent(ps[2]) +
+              "&name=" + encodeURIComponent(ps[3]) + "')";
+          }
+        } catch (e) {}
         /* 顺手把 t=2/t=3 两张也预取进缓存: 首帧缩略图生成慢时能立刻接上 */
         [2, 3].forEach(n => { try { const im = new Image(); im.src = tbase + '?t=' + n; } catch (e) {} });
       }
