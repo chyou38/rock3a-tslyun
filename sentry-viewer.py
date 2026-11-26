@@ -2409,11 +2409,11 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <b style="font-size:13px">设备与存储</b>
         <span id="storage-summary" class="storage-meta"></span>
         <div class="storage-actions">
-          <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="false">管理</button>
+          <button class="storage-btn" id="storage-toggle" onclick="toggleStoragePanel()" aria-controls="storage-body" aria-expanded="true">收起</button>
           <button class="storage-btn" onclick="refreshStorage()">刷新</button>
         </div>
       </div>
-      <div id="storage-body" hidden>
+      <div id="storage-body">
       <div id="storage-status" class="hint">正在读取...</div>
       <div id="storage-firsthint" class="hint" style="margin-top:6px"></div>
       <div id="storage-disks" style="margin-top:8px"></div>
@@ -7676,6 +7676,7 @@ function doLogout() {
   if (!confirm(t('确定要退出登录吗？'))) return;
   location.href = '/logout';
 }
+let storageTimer = null;
 function stab(which) {
   /* 一个页签可以带多块内容: 车辆个性化=锁车语音+涂装, 设置=风扇+杂项 */
   const GROUPS = { car: ['audio', 'wraps'], settings: ['fan', 'debug', 'skin', 'lang', 'update'] };
@@ -7690,6 +7691,7 @@ function stab(which) {
   if (cur) cur.classList.add('active');
   if (fanTimer) { clearInterval(fanTimer); fanTimer = null; }
   if (netTimer) { clearInterval(netTimer); netTimer = null; }
+  if (storageTimer) { clearInterval(storageTimer); storageTimer = null; }
   if (which === 'settings') {
     fanLoad(); fanTimer = setInterval(fanTick, 5000);
     dbgLoad();
@@ -7700,6 +7702,10 @@ function stab(which) {
   if (which === 'net') { netLoad(); netTimer = setInterval(netTick, 5000); }
   if (which === 'notify') ntLoad();
   if (which === 'auth') { pwLoad(); refreshBrand(); }
+  if (which === 'files') {           /* 进虚拟磁盘默认展开存储信息, 5 秒自动刷新一次 */
+    refreshStorage(); loadDriveLock();
+    if (!storageTimer) storageTimer = setInterval(() => { if (!document.hidden) refreshStorage(); }, 10000);
+  }
   if (which === 'car') refreshWraps();
   if (which === 'skin') applyStyle(localStorage.getItem(STYLE_KEY) || 'default');
   if (which === 'debug') dbgLoad();
@@ -8786,6 +8792,14 @@ function storageInitButtonOk(sizeOk) {
   btn.disabled = linked || !sizeOk;
   btn.title = linked ? 'OTG 已连接主机, 请先拔出数据线' : (!sizeOk ? '整块硬盘至少 8G, 且虚拟盘与归档区各至少 4G' : '');
 }
+function otgBadge(j) {
+  const k = j.otg_kind || '';
+  if (k === 'ready') return '<span class="storage-ok">主机已连接 · 车机已识别U盘</span>';
+  if (k === 'ejected') return '<span class="storage-warn">主机已连接 · 车机把U盘弹出了</span>';
+  if (k === 'manage') return '<span class="storage-meta">网页管理中 · 主机已断开</span>';
+  if (k === 'none') return '<span class="storage-warn">无 OTG 控制器</span>';
+  return '<span class="storage-warn">未连接主机</span>';
+}
 async function refreshStorage() {
   const req = ++storageReq;
   const st = document.getElementById('storage-status'), box = document.getElementById('storage-disks');
@@ -8804,8 +8818,14 @@ async function refreshStorage() {
     ? '当前虚拟U盘已配置。更换或重建会清空所选硬盘；日常使用不需要动这里。'
     : '<b style="color:var(--amber)">还没有创建虚拟U盘。</b> 插入 USB 硬盘（≥8G），选择硬盘、拖动占比、输入序列号即可创建；盘上有数据请先备份。';
   st.innerHTML = '存储盘: ' + (!config ? '<span class="storage-warn">未选择 · 请在下方创建</span>' : (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>')) + '<br>' +
-    'OTG 连接: ' + (linked ? '<span class="storage-ok">已连接主机</span>' : '<span class="storage-warn">未连接主机</span>') +
-    ' <span class="storage-meta">(' + escH(j.udc || '无 UDC') + ' / ' + escH(j.state || '未知') + ' / ' + escH(j.speed || '未知速率') + ')</span><br>' +
+    'OTG 连接: ' + otgBadge(j) +
+    ' <span class="storage-meta">(' + escH(j.udc || '无 UDC') + ' / ' + escH(j.state || '未知') + ' / ' +
+      escH(j.host_connected ? (j.speed_text || j.speed || '未知速率') : ('端口 ' + (j.max_text || '未知速率'))) + ')</span><br>' +
+    '车机U盘(LUN): ' + (j.lun_backed
+      ? '已装载 <b>' + escH(j.lun_name || '镜像') + '</b> · 车机可直接读写'
+      : (j.otg_kind === 'ejected'
+        ? '<span class="storage-warn">空 · 已被车机弹出, 重新插拔数据线恢复</span>'
+        : '<span class="storage-meta">未导出到车机</span>')) + '<br>' +
     '虚拟U盘容量: ' + (!config ? '<span class="storage-warn">未创建</span>' : fmtSz(j.img_size) + ' (实际占用 ' + fmtSz(j.img_used) + ')') + '<br>' +
     '镜像: <span class="storage-meta">' + escH(j.img) + '</span><br>' +
     '当前存储: ' + escH(j.source || (config ? '未知' : '未配置')) + ' · 归档: <span class="storage-meta">' + escH(j.archive) + '</span><br>' +
@@ -10790,24 +10810,83 @@ def _find_usb_disk(device):
     return None
 
 
+_USB_SPEED_MAP = {
+    "low": ("USB 1.0", "1.5Mbps"),
+    "full": ("USB 1.1", "12Mbps"),
+    "high": ("USB 2.0", "480Mbps"),
+    "super": ("USB 3.0", "5Gbps"),
+    "super-speed": ("USB 3.0", "5Gbps"),
+    "super-speed-plus": ("USB 3.2", "10Gbps"),
+    "super+": ("USB 3.2", "10Gbps"),
+}
+
+
+def _usb_speed_text(code):
+    """内核 speed 值 -> 'USB 3.0 · 5Gbps'; 未连接/UNKNOWN 返回空串。"""
+    c = (code or "").strip().lower()
+    if not c or c == "unknown":
+        return ""
+    t = _USB_SPEED_MAP.get(c)
+    return ("%s · %s" % t) if t else code
+
+
+def _gadget_lun():
+    """读 configfs 的 mass_storage LUN: 有备份文件=车机能看到盘; 空=没导出或被主机弹出"""
+    fn = ""
+    fp = ""
+    try:
+        fns = [d for d in os.listdir(os.path.join(GADGET_DIR, "functions"))
+               if d.startswith("mass_storage")]
+    except OSError:
+        return {"fn": "", "file": "", "name": "", "backed": False}
+    for d in sorted(fns):
+        p = os.path.join(GADGET_DIR, "functions", d, "lun.0", "file")
+        try:
+            with open(p) as f:
+                fp = f.read().strip()
+        except OSError:
+            continue
+        fn = d
+        break
+    return {"fn": fn, "file": fp, "name": os.path.basename(fp) if fp else "", "backed": bool(fp)}
+
+
 def _otg_info():
     """读取真实主机连接线索; 不把网页挂载管理状态 usb_attached 当成 OTG 连接"""
     udc = _udc()
-    state = speed = ""
+    state = speed = max_speed = ""
     if udc:
-        for name, attr in (("state", "state"), ("current_speed", "speed")):
+        for name, attr in (("state", "state"), ("current_speed", "speed"),
+                           ("maximum_speed", "max_speed")):
             try:
                 with open("/sys/class/udc/%s/%s" % (udc, name)) as f:
                     value = f.read().strip()
                 if attr == "state":
                     state = value
-                else:
+                elif attr == "speed":
                     speed = value
+                else:
+                    max_speed = value
             except OSError:
                 pass
     connected = bool(udc and state in ("configured", "addressed", "suspended")
                      and speed.lower() != "unknown")
-    return {"udc": udc or "", "state": state, "speed": speed, "connected": connected}
+    cur_text = _usb_speed_text(speed)          # 已连接主机时的实际协商速率
+    max_text = _usb_speed_text(max_speed)      # 未连接时显示端口最高规格
+    lun = _gadget_lun()
+    # 状态码: none=没控制器 / off=主机没连 / ejected=主机连上但把U盘弹出 / ready=主机连上且能看到盘
+    if not udc:
+        kind = "none"
+    elif not connected:
+        kind = "off"
+    elif lun["backed"]:
+        kind = "ready"
+    else:
+        kind = "ejected"
+    return {"udc": udc or "", "state": state, "speed": speed,
+            "speed_text": cur_text, "max_text": max_text,
+            "kind": kind, "lun_backed": lun["backed"], "lun_name": lun["name"],
+            "lun_file": lun["file"], "connected": connected}
 
 
 def storage_status():
@@ -10833,6 +10912,9 @@ def storage_status():
         volume_serial = ""
     return {"ok": True, "storage_ready": storage_ready(), "storage_mount": STORAGE_MNT,
             "udc": otg["udc"], "state": otg["state"], "speed": otg["speed"],
+            "speed_text": otg["speed_text"], "max_text": otg["max_text"],
+            "otg_kind": ("manage" if usb_attached else otg["kind"]),
+            "lun_backed": otg["lun_backed"], "lun_name": otg["lun_name"],
             "host_connected": otg["connected"], "attached": usb_attached,
             "img": IMG, "img_size": img_size, "img_used": img_used,
             "img_configured": img_configured,
