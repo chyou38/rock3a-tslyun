@@ -5706,9 +5706,12 @@ async function loadPrewarmPolicy() {
     const st = document.getElementById('pw-policy-state');
     if (st) {
       if (j.on === false) st.textContent = '已关闭';
-      else if (j.sentry_writing) st.textContent = '暂停中 · 哨兵写入中';
-      else if (j.car_writing) st.textContent = '暂停中 · 车机写入中';
       else if (j.paused) st.textContent = '暂停中 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复';
+      else if (j.sentry_writing) {
+        /* 哨兵写入不再暂停预缓冲: 只有归档真在搬 U 盘时才算暂停 */
+        st.textContent = j.sync_busy ? '暂停中 · 归档搬运中' : '运行中 · 哨兵写入中';
+      }
+      else if (j.car_writing) st.textContent = '暂停中 · 车机写入中';
       else if (j.busy || j.night_busy || j.jobs > 0) st.textContent = '运行中 · 转码中';
       else st.textContent = '运行中 · 空闲待命';
     }
@@ -18208,6 +18211,7 @@ class Handler(BaseHTTPRequestHandler):
                         "paused": play_hold_active(), "remain": int(remain),
                         "on": PREWARM["on"], "car_writing": car_writing(),
                         "sentry_writing": sentry_writing_only(),
+                        "sync_busy": usb_sync_busy(),
                         "busy": PREWARM["busy"],
                         "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
                         "last": PREWARM["last"], "qs": PREWARM_QS,
