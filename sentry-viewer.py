@@ -1208,7 +1208,12 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 .ovstage video { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
 /* 全屏: 整个播放器(画面+控制条)进全屏, 画面占满上方, 播放/进度/倍速/视角控制条留在底部 */
 .ovplay.fs-on { max-width:none; width:100%; height:100%; margin:0; padding:0; position:relative; display:block !important; background:#000; }
-.ovplay.fs-on .ovtop { display:none; }
+.ovplay.fs-on .ovtop { display:none !important; }
+/* 全屏顶部不允许漏出浅色底/滚动条: 信息条一律压暗或隐藏, 进度条钉死在底部 */
+.ovplay.fs-on, .ovplay.fs-on * { scrollbar-width:none; }
+.ovplay.fs-on::-webkit-scrollbar, .ovplay.fs-on *::-webkit-scrollbar { display:none; width:0; height:0; }
+.ovplay.fs-on .ovbar { top:auto !important; bottom:0 !important; }
+.ovplay.fs-on .tpanel { background:linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,0)) !important; border:0 !important; }
 .ovplay.fs-on .ovstage { position:absolute; inset:0; width:100%; height:100%; aspect-ratio:auto; border-radius:0; border:0; }
 .ovplay.fs-on .ovbar { position:absolute; left:0; right:0; bottom:0; z-index:10; margin:0; padding:14px 16px 14px; background:linear-gradient(to top, #000000d9, #00000000); transition:opacity .3s ease; }
 .ovplay.fs-on.bar-hide .ovbar { opacity:0; pointer-events:none; }
