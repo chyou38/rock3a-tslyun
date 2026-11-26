@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.7"
+APP_VERSION = "3.0.9"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -2854,6 +2854,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 const ALL_CAT = '__all__';   // 哨兵总览: 把三类事件合成一条时间线, 默认页
 const DATA_CATS = ['SentryClips', 'SavedClips', 'RecentClips'];
 let data = {}, cur = null, syncTimer = null, currentCat = ALL_CAT, lastSig = '', reasonFilter = 'all', dateFilter = 'all';
+let eventsLoading = null, eventsCacheKey = 'tsf_events_v1';
 let curClips = [], curClipIx = 0, TEL = null;
 let autoNext = false, autoNexting = false;   // 行车记录固定按连续行程聚合, 不再按分钟散开
 try { localStorage.removeItem('tsfTripView'); } catch (e) {}   // 清掉历史遗留的"按分钟查看"状态
@@ -3623,7 +3624,16 @@ function renderTabs() {
   tabs.appendChild(lv);
 }
 async function load() {
-  data = await (await fetch('/api/events')).json();
+  /* 先拿本机缓存秒出列表, 再向服务端核对签名; 不再每次下拉刷新都重下整份事件 JSON */
+  const cached = readEventsCache();
+  let fromCache = false;
+  if (cached) {
+    data = cached.data; lastSig = cached.sig; fromCache = true;
+  } else {
+    data = await fetchEventsShared();
+    lastSig = sigOf(data);
+    saveEventsCache();
+  }
   /* 恢复上次停留的页签, 刷新不再一律跳回「哨兵总览」 */
   let want = '';
   try { want = localStorage.getItem('tsf_cat') || ''; } catch (e) {}
@@ -3649,6 +3659,7 @@ async function load() {
   }
   openDeepLink();
   prekickList();
+  if (fromCache) syncEvents();   // 缓存先出, 有新事件再后台补齐
 }
 /* 打开网站直接落在「哨兵总览」: 默认把最新的那条事件加载到上方播放区。
    深链 (?ev= / ?cat= / ?lib=1) 有自己的目标, 不抢。 */
@@ -5069,6 +5080,46 @@ function pollShareBuild(id) {
       setTimeout(() => pollShareBuild(id), 1200);
     }).catch(() => setTimeout(() => pollShareBuild(id), 1500));
 }
+function readEventsCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(eventsCacheKey) || 'null');
+    if (!c || !c.data || !c.sig || !Object.keys(c.data).length) return null;
+    if (c.ts && Date.now() - c.ts > 7 * 86400000) return null;
+    return c;
+  } catch (e) { return null; }
+}
+function saveEventsCache() {
+  try { localStorage.setItem(eventsCacheKey, JSON.stringify({sig: lastSig, data, ts: Date.now()})); } catch (e) {}
+}
+function fetchEventsShared() {
+  /* 首屏 load() 和 refreshLive() 会同时想要事件列表: 共用一个请求, 不再重复下 286KB */
+  if (!eventsLoading) {
+    eventsLoading = fetch('/api/events').then(r => r.json()).finally(() => { eventsLoading = null; });
+  }
+  return eventsLoading;
+}
+function applyEvents(d, s) {
+  lastSig = s; data = d; saveEventsCache();
+  renderTabs();
+  const st = document.getElementById('stat');
+  if (st) st.textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
+  if (!document.getElementById('player').classList.contains('open')) render(currentCat);
+  prekickList();
+}
+async function syncEvents() {
+  /* 每 10 秒只拉几十字节的签名; 真有新增事件才下载完整列表 */
+  if (!lastSig) return null;          // 首屏由 load() 负责, 避免两路并发拉同一份
+  let m = null;
+  try { m = await (await fetch('/api/events_meta', {cache: 'no-store'})).json(); } catch (e) { return null; }
+  if (!m || !m.sig || m.sig === lastSig) return null;
+  let d = null;
+  try { d = await fetchEventsShared(); } catch (e) { return null; }
+  if (!d) return null;
+  const s = sigOf(d);
+  if (s === lastSig) return null;
+  applyEvents(d, s);
+  return d;
+}
 function sigOf(d) {  return Object.keys(d).map(c => c + ':' + d[c].map(e => e.name + '/' + e.videos.length).join(',')).join('|');
 }
 
@@ -5085,7 +5136,7 @@ async function refreshLive() {
   /* 三个接口同时发出: 手机上一次串行要 3 个往返, 并行后首屏少等 2 个 RTT */
   const pLive = fetch('/api/live').then(r => r.json()).catch(() => null);
   const pSch = fetch('/api/archive_sched', {cache: 'no-store'}).then(r => r.json()).catch(() => null);
-  const pEv = fetch('/api/events').then(r => r.json()).catch(() => null);
+  const pEv = syncEvents();   // 只拉轻量签名, 真有新事件才下完整列表
   const live = await pLive;
   if (!live) return;
   const sch = await pSch;
@@ -5174,23 +5225,7 @@ async function refreshLive() {
   } else {
     sw.style.display = 'none';
   }
-  // 事件有变化时无缝重绘 (不打断播放器)
-  try {
-    const d = await pEv;
-    if (!d) return;
-    const s = sigOf(d);
-    if (s !== lastSig) {
-      lastSig = s; data = d;
-      const tabs = document.getElementById('tabs');
-      [...tabs.children].forEach(b => {
-        const c = b.dataset && b.dataset.cat;
-        if (c) b.innerHTML = `<span class="tl">${t(CATS_NAME[c] || c)}</span><span class="tn">${displayCount(c)}</span>`;
-      });
-      document.getElementById('stat').textContent = `${t('归档')} ${totalDisplayCount()} ${t('条')}`;
-      if (!document.getElementById('player').classList.contains('open')) render(currentCat);
-      prekickList();   // 新的哨兵/保存事件刚同步过来时, 按当前画质提交后台预转
-    }
-  } catch (e) {}
+  await pEv;   // syncEvents 内部已经按签名变化重绘, 这里不再重复处理
 }
 refreshLive();
 setInterval(refreshLive, 10000);
@@ -9490,6 +9525,19 @@ def list_events(force=False):
         out[cat] = events
     _EVENTS_CACHE.update(t=now, v=out)
     return out
+
+
+def events_sig(d):
+    """与前端 sigOf 同口径: 分类顺序 + 事件名 + 片段数。只用来判断有没有新事件。"""
+    return "|".join(str(c) + ":" + ",".join(
+        str(e.get("name", "")) + "/" + str(len(e.get("videos") or []))
+        for e in d.get(c, [])) for c in d)
+
+
+def events_meta():
+    d = list_events()
+    return {"sig": events_sig(d), "counts": {c: len(d.get(c, [])) for c in d},
+            "ts": int(time.time())}
 
 
 def _map_archive(p):
@@ -17579,17 +17627,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, "unauthorized".encode(), "text/plain; charset=utf-8")
         return False
 
-    def _send_asset(self, raw, gz, ctype):
-        """静态资源: 预压缩 + 一年缓存 (URL 带内容哈希, 换版本自然换地址)。"""
+    def _send_asset(self, raw, gz, ctype, ver=""):
+        """静态资源: 预压缩 + 一年缓存 (URL 带内容哈希, 换版本自然换地址)。
+        支持 If-None-Match: 手机下拉刷新/强制重载时只回 304, 不再重下 143KB JS。"""
         try:
             ae = (self.headers.get("Accept-Encoding") or "").lower()
         except Exception:
             ae = ""
         use = bool(gz) and ("gzip" in ae)
         body = gz if use else raw
+        etag = '"%s"' % ver if ver else ""
+        if etag:
+            try:
+                inm = (self.headers.get("If-None-Match") or "").strip()
+            except Exception:
+                inm = ""
+            if inm == etag or inm == "W/" + etag:
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.send_header("Vary", "Accept-Encoding")
+                self.end_headers()
+                return
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if etag:
+            self.send_header("ETag", etag)
         if use:
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Vary", "Accept-Encoding")
@@ -18003,7 +18067,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._gate():
             return
         if path == "/s.css":
-            self._send_asset(_CSS_BIN, _CSS_GZ, "text/css; charset=utf-8")
+            self._send_asset(_CSS_BIN, _CSS_GZ, "text/css; charset=utf-8", _CSS_VER)
             return
         if path == "/s.js":
             _a = _js_asset()
@@ -18011,7 +18075,7 @@ class Handler(BaseHTTPRequestHandler):
             if raw is None or _JS_CACHE.get("key") is None:
                 self._send(404, b"not found")
                 return
-            self._send_asset(raw, _a["gz"], "application/javascript; charset=utf-8")
+            self._send_asset(raw, _a["gz"], "application/javascript; charset=utf-8", _a["ver"])
             return
         if path in ("/", "/index.html"):
             html = (HTML.replace("__APP_VER__", APP_VERSION)
@@ -18132,6 +18196,9 @@ class Handler(BaseHTTPRequestHandler):
                 pass
         elif path == "/api/events":
             self._json(list_events())
+        elif path == "/api/events_meta":
+            # 轻量轮询: 只回分类计数和签名, 页面每 10 秒不用再拉 286KB 事件列表
+            self._json(events_meta())
         elif path == "/api/live/status":
             folder, newest = live_latest()
             self._json({"ok": True, "folder": folder,
