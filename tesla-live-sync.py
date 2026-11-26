@@ -358,9 +358,10 @@ def _mark_hot(dest):
         pass
 
 
-def copy_entry(exfat, entry, dest_path):
+def copy_entry(exfat, entry, dest_path, hold=True):
     """把镜像里的文件写到归档区, 返回写入字节数。
-    车机写入期间暂停搬运(车机第一优先), 车机空闲再续; 车机不写则全速。"""
+    hold=True: 车机写入期间暂停搬运(车机第一优先), 车机空闲再续。
+    hold=False: 哨兵/手动保存走优先通道, 车机在写也只做小让步, 不整段停。"""
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
     written = 0
@@ -372,9 +373,13 @@ def copy_entry(exfat, entry, dest_path):
             written += len(chunk)
             pace_bytes += len(chunk)
             if pace_bytes >= 1048576:
-                # 车机正在写盘 -> 暂停搬运直到车机空闲 (车机写入第一优先)
-                while _car_writing():
-                    time.sleep(1.0)
+                if hold:
+                    # 车机正在写盘 -> 暂停搬运直到车机空闲 (车机写入第一优先)
+                    while _car_writing():
+                        time.sleep(1.0)
+                elif _car_writing():
+                    # 哨兵优先通道: 只让一小步, 不把整轮归档挂起
+                    time.sleep(0.15)
                 pace_t = time.time()
                 pace_bytes = 0
         f.flush()
@@ -421,7 +426,7 @@ def save_state(st):
         pass
 
 
-def scan(exfat):
+def scan(exfat, cats=None):
     """返回 {(分类, 事件名, 文件名): Entry}"""
     found = {}
     try:
@@ -434,6 +439,8 @@ def scan(exfat):
         return found
     cat_list = exfat.list_dir(cam.cluster, cam.size)
     for cat in CATS:
+        if cats and cat not in cats:
+            continue
         catdir = exfat.find(cat_list, cat)
         if not catdir or not catdir.is_dir:
             continue
@@ -476,9 +483,9 @@ def load_pruned():
         return set()
 
 
-def do_sync(exfat, state, quiet=False):
+def do_sync(exfat, state, quiet=False, cats=None, hold=True):
     """跑一轮; 返回 (新增文件数, 字节数)"""
-    cur = scan(exfat)
+    cur = scan(exfat, cats)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
     cut = None
@@ -494,6 +501,11 @@ def do_sync(exfat, state, quiet=False):
     pending_key = "__pending__"
     pending = state.get(pending_key, {})
     new_pending = {}
+    # 只跑某一类(哨兵优先通道)时, 保留其它分类的待确认签名, 别把它们的进度冲掉
+    if cats:
+        for k, v in pending.items():
+            if k.split("/")[0] not in cats:
+                new_pending[k] = v
     copied = 0
     bytes_ = 0
     for (cat, ev, name), e in cur.items():
@@ -515,7 +527,7 @@ def do_sync(exfat, state, quiet=False):
                 log("发现新片段(待确认): %s (%d bytes)" % (key, e.size))
             continue
         try:
-            n = copy_entry(exfat, e, dest)
+            n = copy_entry(exfat, e, dest, hold=hold)
             copied += 1
             bytes_ += n
             _mark_hot(dest)
@@ -547,6 +559,30 @@ def dump(exfat):
         print("%s: %d 项" % (cat, len(items)))
         for it in items[:8]:
             print("   %s %-40s size=%d" % ("DIR " if it.is_dir else "FILE", it.name, it.size))
+
+
+def probe_sig(exfat):
+    """轻量探测: 只列目录项(不读文件内容), 返回哨兵/手动保存目录的签名。
+    车机往 TeslaCam/SentryClips 或 SavedClips 写东西时签名必然变化 ——
+    据此可以区分"行车记录在写" 和 "真告警/手动保存", 不被 RecentClips 持续录制干扰。"""
+    out = {}
+    try:
+        root = exfat.list_dir(exfat.root_cluster)
+        cam = exfat.find(root, "TeslaCam")
+        if not cam or not cam.is_dir:
+            return out
+        cat_list = exfat.list_dir(cam.cluster, cam.size)
+        for cat in ("SentryClips", "SavedClips"):
+            catdir = exfat.find(cat_list, cat)
+            if not catdir or not catdir.is_dir:
+                continue
+            for prefix, e in iter_media(exfat, catdir):
+                if not prefix:
+                    continue
+                out["%s/%s/%s" % (cat, prefix[0], e.name)] = (e.size, e.mtime)
+    except Exception as e:
+        log("目录探测失败: %s" % e)
+    return out
 
 
 _CAR_WRITE = {"mtime": None, "changed": 0.0}
@@ -639,9 +675,47 @@ def main():
     last_run = 0.0
     last_car_log = 0.0
     lock_miss = 0
+    # 哨兵/手动保存优先通道: 每 PROBE_SEC 秒只列一次目录项(不读内容),
+    # 一旦 SentryClips/SavedClips 出现变化就立刻小步归档, 不等停车、不等定时归档。
+    probe_sec = float(os.environ.get("TSF_SENTRY_PROBE", "8"))
+    last_probe = 0.0
+    last_sig = None
+    urgent = False
     write_sched(0, False, msg="等待首轮归档")
     while True:
-        time.sleep(5)
+        time.sleep(1)
+        now = time.time()
+        if now - last_probe >= probe_sec:
+            last_probe = now
+            try:
+                stp = os.stat(IMG)
+                if stp.st_ino != exfat.fd_ino:
+                    exfat.close()
+                    exfat = ExFat(IMG)
+                sig = probe_sig(exfat)
+                if last_sig is None:
+                    last_sig = sig          # 启动第一轮只记基线, 不补推历史
+                elif sig != last_sig:
+                    last_sig = sig
+                    urgent = True
+            except Exception as e:
+                log("哨兵探测失败: %s" % e)
+        if urgent:
+            lk = usb_shared_lock()
+            if lk is None:
+                continue                    # U 盘正被占用, 下一轮再试
+            try:
+                n, b = do_sync(exfat, state, cats=("SentryClips", "SavedClips"), hold=False)
+                urgent = False
+                if n:
+                    log("哨兵优先同步: %d 个片段, %.1f MB" % (n, b / 1048576))
+                    write_sched(last_run, False, copied=n,
+                                msg="哨兵优先同步 %d 个片段" % n)
+            except Exception as e:
+                log("哨兵优先同步失败: %s" % e)
+            finally:
+                usb_unlock(lk)
+            continue
         trig = os.path.exists(ARCHIVE_NOW_FLAG)
         iv = archive_interval_min() * 60
         due = (time.time() - last_run) >= iv
