@@ -1215,6 +1215,10 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 .ovplay.fs-on .ovbar { top:auto !important; bottom:0 !important; }
 .ovplay.fs-on .tpanel { background:linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,0)) !important; border:0 !important; }
 .ovplay.fs-on .ovstage { position:absolute; inset:0; width:100%; height:100%; aspect-ratio:auto; border-radius:0; border:0; }
+/* 全屏画面居中 + 四周留黑边统一: 浅色主题的格子/舞台底会在 contain 留边处漏成白/灰条, 一律压黑并居中 */
+.ovplay.fs-on .ovstage, .ovplay.fs-on .ovgrid, .ovplay.fs-on .ovcell,
+.ovplay.fs-on .ovstage video { background:#000 !important; }
+.ovplay.fs-on .ovgrid { height:100%; align-content:center; justify-content:center; }
 .ovplay.fs-on .ovbar { position:absolute; left:0; right:0; bottom:0; z-index:10; margin:0; padding:14px 16px 14px; background:linear-gradient(to top, #000000d9, #00000000); transition:opacity .3s ease; }
 .ovplay.fs-on.bar-hide .ovbar { opacity:0; pointer-events:none; }
 .ovplay.fs-on .ovbar .t { color:#fff; }
