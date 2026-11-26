@@ -73,6 +73,9 @@ USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
 ROLL_MIN = int(os.environ.get("TSF_RECENT_ROLL_MIN", "60"))
 CATS = ("SentryClips", "SavedClips", "RecentClips")
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})-")
+# 车机 event.json 的 camera 编号 -> 文件名后缀; 推送封面就是从这一路抽帧
+CAM_SUFFIX = {0: "front", 3: "left_pillar", 4: "right_pillar",
+              5: "left_repeater", 6: "right_repeater", 7: "back"}
 
 
 def log(msg):
@@ -483,6 +486,56 @@ def load_pruned():
         return set()
 
 
+def _read_small(exfat, entry, limit=8192):
+    """读小文件(event.json 之类)的内容; 只读前 limit 字节, 出错返回空。"""
+    out = b""
+    try:
+        for chunk in exfat.read_file(entry):
+            out += chunk
+            if len(out) >= limit:
+                break
+    except Exception:
+        return b""
+    return out
+
+
+def sentry_rank(exfat, cur):
+    """哨兵/手动保存事件内的搬运顺序: event.json 最前, 触发摄像头那一路其次,
+    然后前视, 其余最后 —— 保证推送封面能最早抽到帧。"""
+    ranks = {}
+    meta_cache = {}
+    for (cat, ev, name), e in cur.items():
+        if cat not in ("SentryClips", "SavedClips"):
+            continue
+        if name == "event.json":
+            ranks[(cat, ev, name)] = 0
+            continue
+        if not name.lower().endswith(".mp4"):
+            ranks[(cat, ev, name)] = 4
+            continue
+        m = meta_cache.get((cat, ev))
+        if m is None:
+            m = {}
+            ej = cur.get((cat, ev, "event.json"))
+            if ej:
+                try:
+                    m = json.loads(_read_small(exfat, ej).decode("utf-8", "ignore")) or {}
+                except Exception:
+                    m = {}
+            meta_cache[(cat, ev)] = m
+        cam = m.get("camera")
+        cam = str(cam).strip()
+        suffix = CAM_SUFFIX.get(int(cam)) if cam.isdigit() else None
+        own = name.rsplit("-", 1)[-1][:-4]
+        if suffix and own == suffix:
+            ranks[(cat, ev, name)] = 1
+        elif own == "front":
+            ranks[(cat, ev, name)] = 2
+        else:
+            ranks[(cat, ev, name)] = 3
+    return ranks
+
+
 def do_sync(exfat, state, quiet=False, cats=None, hold=True):
     """跑一轮; 返回 (新增文件数, 字节数)"""
     cur = scan(exfat, cats)
@@ -506,9 +559,16 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True):
         for k, v in pending.items():
             if k.split("/")[0] not in cats:
                 new_pending[k] = v
+    items = list(cur.items())
+    if cats and "SentryClips" in cats:
+        try:
+            ranks = sentry_rank(exfat, cur)
+        except Exception:
+            ranks = {}
+        items.sort(key=lambda kv: (ranks.get(kv[0], 9), kv[0][2]))
     copied = 0
     bytes_ = 0
-    for (cat, ev, name), e in cur.items():
+    for (cat, ev, name), e in items:
         if "%s/%s" % (cat, ev) in pruned:
             continue            # 已被盒子侧定期清理, 不再重抄
         if cut is not None and cat == "RecentClips":
