@@ -13,6 +13,9 @@ ALERT_CMA=${TSF_WATCH_ALERT_CMA:-0}
 # 需要恢复: tsf-watch.service 里设 Environment=TSF_WATCH_ALERT_SVC=1
 ALERT_SVC=${TSF_WATCH_ALERT_SVC:-0}
 
+# 告警开关: 由网页「推送 → 巡检告警」写入, 每轮重读; 只有勾选的才推飞书, 其余只记日志
+FLAGS=/opt/tesla-sentry/watch-flags.conf
+
 alert() {
     echo "[$(date '+%m-%d %H:%M:%S')] ALERT $*" >> "$LOG"
     # 同步推飞书(经 viewer 回环接口, 复用推送配置, 相同告警 10 分钟去重); 失败不影响巡检
@@ -31,6 +34,8 @@ run() {
     note "watch start (interval=${INTERVAL}s)"
     last_reset=-1; last_null=-1; last_lun=""; last_state=""; last_mem=0; last_bad="x"
     while :; do
+        # 开关每轮重读: 网页上改了立刻生效, 不用重启巡检
+        [ -r "$FLAGS" ] && . "$FLAGS" 2>/dev/null || true
         rotate
         ts=$(date '+%H:%M:%S')
         # USB gadget
@@ -38,7 +43,10 @@ run() {
         lun=$(cat /sys/kernel/config/usb_gadget/g1/functions/mass_storage.0/lun.0/file 2>/dev/null || echo "")
         [ "$st" != "$last_state" ] && { note "usb state: $last_state -> $st"; last_state="$st"; }
         if [ "$lun" != "$last_lun" ]; then
-            if [ -z "$lun" ]; then alert "LUN EMPTY (host ejected?)"; else note "LUN -> ${lun##*/}"; fi
+            if [ -z "$lun" ]; then
+                if [ "${W_LUN:-1}" = 1 ]; then alert "LUN EMPTY (host ejected?)"
+                else note "LUN EMPTY (alert off)"; fi
+            else note "LUN -> ${lun##*/}"; fi
             last_lun="$lun"
         fi
         # kernel USB / MPP counters
@@ -48,7 +56,8 @@ run() {
             note "usb reset +$((nr - last_reset)) (total $nr)"
         fi
         if [ "$last_null" -ge 0 ] && [ "$nn" -gt "$last_null" ]; then
-            alert "mpp buffer NULL +$((nn - last_null)) (total $nn)"
+            if [ "${W_MPP:-1}" = 1 ]; then alert "mpp buffer NULL +$((nn - last_null)) (total $nn)"
+            else note "mpp buffer NULL +$((nn - last_null)) (alert off)"; fi
         fi
         last_reset=$nr; last_null=$nn
         # memory / load / temp
@@ -56,7 +65,10 @@ run() {
         cf=$(awk '/CmaFree/{print int($2/1024)}' /proc/meminfo)
         ld=$(cut -d' ' -f1 /proc/loadavg)
         tp=$(awk '{printf "%.0f", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
-        [ "$ma" -lt 150 ] && alert "MemAvailable low: ${ma}MB"
+        if [ "$ma" -lt 150 ]; then
+            if [ "${W_MEM:-1}" = 1 ]; then alert "MemAvailable low: ${ma}MB"
+            else note "MemAvailable low: ${ma}MB (alert off)"; fi
+        fi
         [ "$ALERT_CMA" = 1 ] && [ "$cf" -lt 2 ] && [ "$last_mem" -ge 2 ] && alert "CmaFree low: ${cf}MB"
         last_mem=$cf
         # services: 只在状态变化时记一行; 默认不推飞书(部署重启的短暂停服不该打扰)
@@ -66,14 +78,19 @@ run() {
         done
         if [ "$svcbad" != "$last_bad" ]; then
             if [ -n "$svcbad" ]; then
-                if [ "$ALERT_SVC" = 1 ]; then alert "service$svcbad NOT active"
+                svcon=${W_SVC:-0}          # dash 不支持嵌套默认值, 分两步取
+                [ -n "$TSF_WATCH_ALERT_SVC" ] && svcon=$TSF_WATCH_ALERT_SVC
+                if [ "$svcon" = 1 ]; then alert "service$svcbad NOT active"
                 else note "service$svcbad NOT active (alert off)"; fi
             else note "service all active"; fi
             last_bad="$svcbad"
         fi
         # OOM / panic in kernel ring
         no=$(dmesg 2>/dev/null | grep -c -iE 'out of memory|oom-kill|kernel panic')
-        [ "$no" -gt 0 ] && alert "kernel OOM/panic lines: $no"
+        if [ "$no" -gt 0 ]; then
+            if [ "${W_OOM:-1}" = 1 ]; then alert "kernel OOM/panic lines: $no"
+            else note "kernel OOM/panic lines: $no (alert off)"; fi
+        fi
         note "hb mem=${ma}M cma=${cf}M load=$ld temp=${tp}C usb=$st lun=$([ -n "$lun" ] && echo ok || echo EMPTY) reset=$nr null=$nn"
         sleep "$INTERVAL"
     done

@@ -2578,6 +2578,13 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <button class="mini" onclick="ntTest()">发送测试</button>
     </div>
     <div class="hint" id="nt-msg"></div>
+    <div class="stabsec sep">巡检告警</div>
+    <div class="hint">勾选才推飞书；不勾只写日志。巡检每 10 秒一轮。</div>
+    <label class="nrow"><span>服务异常（服务停了/重启）</span><input type="checkbox" id="watch-svc" onchange="watchSave('watch_svc',this.checked)"></label>
+    <label class="nrow"><span>内存不足（可用低于 150MB）</span><input type="checkbox" id="watch-mem" onchange="watchSave('watch_mem',this.checked)"></label>
+    <label class="nrow"><span>解码异常（MPP buffer NULL）</span><input type="checkbox" id="watch-mpp" onchange="watchSave('watch_mpp',this.checked)"></label>
+    <label class="nrow"><span>U盘被弹空（LUN EMPTY）</span><input type="checkbox" id="watch-lun" onchange="watchSave('watch_lun',this.checked)"></label>
+    <label class="nrow"><span>内核 OOM / panic</span><input type="checkbox" id="watch-oom" onchange="watchSave('watch_oom',this.checked)"></label>
   </div>
   <div id="tab-auth" style="display:none">
     <b style="font-size:13px">图标与名称</b>
@@ -8057,6 +8064,10 @@ async function ntLoad() {
     document.getElementById('nt-secret').dataset.has = j.has_secret ? '1' : '0';
     document.getElementById('nt-url').value = j.public_url || '';
     document.getElementById('nt-delay').value = j.delay || 20;
+    for (const [k, id] of WATCH_IDS) {
+      const el = document.getElementById(id);
+      if (el) el.checked = !!j[k];
+    }
     ntSetEye(ntHidden);
     const m = document.getElementById('nt-msg');
     if (j.last && j.last.msg) {
@@ -8066,6 +8077,15 @@ async function ntLoad() {
     else if (j.dm_ready) { m.textContent = t('已启用私聊推送, 等下一个哨兵事件'); m.style.color = ''; }
     else { m.textContent = t('已启用, 但接收人/应用凭据未配全'); m.style.color = 'var(--accent)'; }
   } catch (e) { document.getElementById('nt-msg').textContent = t('读取设置失败') + ': ' + e; }
+}
+const WATCH_IDS = [['watch_svc', 'watch-svc'], ['watch_mem', 'watch-mem'], ['watch_mpp', 'watch-mpp'],
+                   ['watch_lun', 'watch-lun'], ['watch_oom', 'watch-oom']];
+async function watchSave(key, val) {
+  try {
+    const j = await (await fetch('/api/notify/save', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: !!val }) })).json();
+    toast(j.ok ? '✅ ' + t('已保存') : '❌ ' + (j.msg || t('保存失败')));
+  } catch (e) { toast('❌ ' + t('保存失败')); }
 }
 async function ntSave() {
   const body = {
@@ -9171,6 +9191,11 @@ def _js_asset():
         _JS_CACHE.update(key=key, ver=_hl_asset.sha256(body).hexdigest()[:10],
                          raw=body, gz=_gz_asset.compress(body, 6))
     return _JS_CACHE
+
+
+def _init_watch_flags_once():
+    """启动时落一次开关文件, 让 tsf-watch.sh 有个确定值。"""
+    write_watch_flags()
 
 
 def ensure_dirs():
@@ -12980,7 +13005,13 @@ _NC_DEFAULT = {
     "enabled": False, "mode": "dm", "webhook": "", "app_id": "", "app_secret": "",
     "receive_id": "", "receive_id_type": "", "public_url": "", "saved": False, "delay": 20,
     "media": "thumb", "quality": "480p", "vdur": 30,
+    # 巡检告警开关 (网页「推送」页里勾选; 不勾只写 watch.log, 不推飞书)
+    "watch_svc": False, "watch_mem": True, "watch_mpp": True, "watch_lun": True, "watch_oom": True,
 }
+# 给 tsf-watch.sh 用的极简开关文件: 纯 KEY=0/1, shell 直接 source, 零解析开销
+WATCH_FLAGS_FILE = os.environ.get("TSF_WATCH_FLAGS", "/opt/tesla-sentry/watch-flags.conf")
+_WATCH_KEYS = (("watch_svc", "W_SVC"), ("watch_mem", "W_MEM"), ("watch_mpp", "W_MPP"),
+               ("watch_lun", "W_LUN"), ("watch_oom", "W_OOM"))
 _TOK = {"v": "", "exp": 0}
 CAM_NUM = {0: "前视", 3: "左B柱", 4: "右B柱", 5: "左翼子板", 6: "右翼子板", 7: "后视"}
 # 相机英文名 -> 中文 (和网页 CAM_NAME 保持一致, 飞书卡片里不再出现 front/left_repeater 这种英文)
@@ -14256,6 +14287,23 @@ def notify_loop():
         time.sleep(30)
 
 
+def write_watch_flags(conf=None):
+    """把巡检告警开关落成 shell 可读的 KEY=0/1 文件; 失败不影响主流程。"""
+    c = conf if isinstance(conf, dict) else notify_conf()
+    try:
+        txt = "".join("%s=%d\n" % (env, 1 if c.get(k) else 0) for k, env in _WATCH_KEYS)
+        tmp = WATCH_FLAGS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(txt)
+        try:
+            os.chmod(tmp, 0o644)
+        except OSError:
+            pass
+        os.replace(tmp, WATCH_FLAGS_FILE)
+    except OSError:
+        pass
+
+
 def notify_status():
     conf = notify_conf()
     st = _nstate_load()
@@ -14277,6 +14325,9 @@ def notify_status():
         "vdur": int(conf.get("vdur") or 30),
         "last": st.get("last") or {},
         "sent_total": len(st.get("seen") or {}),
+        "watch_svc": bool(conf.get("watch_svc")), "watch_mem": bool(conf.get("watch_mem")),
+        "watch_mpp": bool(conf.get("watch_mpp")), "watch_lun": bool(conf.get("watch_lun")),
+        "watch_oom": bool(conf.get("watch_oom")),
     }
 
 
@@ -18476,7 +18527,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "msg": "参数错误"}, 400)
                 return
             patch = {}
-            for k in ("enabled", "saved"):
+            for k in ("enabled", "saved", "watch_svc", "watch_mem", "watch_mpp",
+                      "watch_lun", "watch_oom"):
                 if k in body:
                     patch[k] = bool(body.get(k))
             for k in ("mode", "media", "quality", "webhook", "app_id", "receive_id",
@@ -18500,6 +18552,7 @@ class Handler(BaseHTTPRequestHandler):
             if str(patch.get("media") or "") not in ("thumb", "video"):
                 patch.pop("media", None)
             conf = notify_save(patch)
+            write_watch_flags(conf)      # 巡检脚本下一轮就能读到新开关
             if _dm_ready(conf):
                 warn = "" if (conf.get("public_url") or "").strip() else "私聊已可用; 填「查看链接前缀」后卡片上会有查看按钮"
             elif str(conf.get("webhook") or "").strip():
@@ -19138,6 +19191,7 @@ if __name__ == "__main__":
         print("为避免无认证暴露, 服务不启动。修复 %s 后重启 (或重跑 install.sh 重新生成密码)。" % AUTH_FILE)
         sys.exit(2)
     ensure_dirs()
+    _init_watch_flags_once()      # 巡检告警开关落盘, tsf-watch.sh 启动即有确定值
     # 编码版本变了要清几 GB 旧缓存: 放到绑定端口之后再延迟跑, 别让磁盘删除把启动卡住
     # (清的同时用户可能正在播放旧预缓冲, 延迟 40s 让首屏请求先跑完)
     def _gc_later():
