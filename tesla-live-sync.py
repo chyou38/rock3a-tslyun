@@ -20,7 +20,7 @@ exFAT 目录项里 DataLength 在文件关闭时才落最终值, 因此必须:
 ----
   tesla-live-sync.py --dump            打印镜像内 TeslaCam 目录树 (调试)
   tesla-live-sync.py --once            扫一轮就退出
-  tesla-live-sync.py                   常驻轮询 (默认 15 秒)
+  tesla-live-sync.py                   定时归档 (默认 10 分钟, 网页可自定义; 车机写入时顺延)
 """
 import argparse
 import datetime
@@ -58,6 +58,13 @@ LOG = os.environ.get("TSF_LIVE_LOG", "/root/tesla-live.log")
 STATE = os.environ.get("TSF_LIVE_STATE", "/root/.tesla-live-state.json")
 INTERVAL = int(os.environ.get("TSF_LIVE_INTERVAL", "15"))
 CAR_WRITE_HOLD = float(os.environ.get("TSF_LIVE_CAR_HOLD", "30"))
+# 归档调度 (2026-11-26): 不再实时搬运, 默认每 10 分钟归档一次, 间隔在网页
+# 「个性化 → 虚拟硬盘 → 归档区」自定义; 「立即归档」写触发文件, 车机空闲后马上执行。
+TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
+SETTINGS_FILE = os.environ.get("TSF_SETTINGS", os.path.join(TSF_DIR, "settings.json"))
+ARCHIVE_SCHED_FILE = os.path.join(TSF_DIR, "archive-sched.json")
+ARCHIVE_NOW_FLAG = os.path.join(TSF_DIR, "archive-now.flag")
+
 # 与网页 U盘管理 / 定时归档 / U盘自愈共用的跨进程锁 (那边持排他, 这里持共享)
 USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
 # 归档滚动窗口(分钟), 与 sentry-viewer.py 的 TSF_RECENT_ROLL_MIN 保持一致;
@@ -365,10 +372,9 @@ def copy_entry(exfat, entry, dest_path):
             written += len(chunk)
             pace_bytes += len(chunk)
             if pace_bytes >= 1048576:
-                if _car_writing():
-                    dt = time.time() - pace_t
-                    if dt < 0.25:
-                        time.sleep(0.25 - dt)
+                # 车机正在写盘 -> 暂停搬运直到车机空闲 (车机写入第一优先)
+                while _car_writing():
+                    time.sleep(1.0)
                 pace_t = time.time()
                 pace_bytes = 0
         f.flush()
@@ -564,6 +570,28 @@ def car_busy():
     return (now - _CAR_WRITE["changed"]) < CAR_WRITE_HOLD
 
 
+def archive_interval_min():
+    """网页设置的归档间隔(分钟), 默认 10, 范围 1-1440。每轮现读, 改完即生效。"""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            v = int(json.load(f).get("archive_interval_min", 10) or 10)
+    except Exception:
+        v = 10
+    return max(1, min(v, 1440))
+
+
+def write_sched(last, running, copied=0, msg=""):
+    try:
+        tmp = ARCHIVE_SCHED_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"last": last, "running": running, "copied": copied,
+                       "msg": msg, "interval_min": archive_interval_min(),
+                       "ts": time.time()}, f)
+        os.replace(tmp, ARCHIVE_SCHED_FILE)
+    except OSError:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="store_true")
@@ -602,32 +630,36 @@ def main():
         exfat.close()
         return 0
 
-    lock_miss = 0
+    # 定时归档调度: 每 5s 醒一次, 到点(间隔可在网页自定义, 默认10分钟)或收到
+    # 「立即归档」触发文件才搬; 车机正在写盘 / 网页管理U盘 / 持锁冲突一律顺延。
+    last_run = 0.0
     last_car_log = 0.0
+    lock_miss = 0
+    write_sched(0, False, msg="等待首轮归档")
     while True:
+        time.sleep(5)
+        trig = os.path.exists(ARCHIVE_NOW_FLAG)
+        iv = archive_interval_min() * 60
+        due = (time.time() - last_run) >= iv
+        if not (trig or due):
+            continue
         if car_busy():
             now = time.time()
             if now - last_car_log >= 60:
-                log("车机正在写 U 盘, 暂停本轮在线同步 (给 OTG 让路)")
+                log("车机正在写 U 盘, 归档顺延 (给 OTG 让路)")
                 last_car_log = now
-            time.sleep(args.interval)
+            write_sched(last_run, False, msg="车机写入中, 归档顺延")
+            continue
+        if os.path.ismount(MNT):
             continue
         lk = usb_shared_lock()
         if lk is None:
-            # 网页正在管理U盘 / 定时归档正在挂载: 跳过本轮。
-            # 节流日志: 万一锁文件不可写导致长期停摆, 仍要留下线索。
             lock_miss += 1
             if lock_miss in (1, 20, 80):
                 log("跳过本轮: U盘被网页管理/归档占用, 或锁文件不可写 (%s), 连续 %d 轮" % (USB_LOCK, lock_miss))
-            time.sleep(args.interval)
             continue
         lock_miss = 0
         try:
-            # 网页正在管理U盘(已挂载)时跳过, 避免与挂载视图不一致
-            if os.path.ismount(MNT):
-                time.sleep(args.interval)
-                continue
-            # 镜像被重建/替换时 fd 会指向旧 inode, 需要重开
             try:
                 st = os.stat(IMG)
                 if st.st_ino != exfat.fd_ino:
@@ -636,14 +668,24 @@ def main():
                     exfat = ExFat(IMG)
             except OSError as ex:
                 log("镜像不可读: %s" % ex)
-                time.sleep(args.interval)
                 continue
-            do_sync(exfat, state)
+            write_sched(last_run, True, msg="归档中")
+            n, b = do_sync(exfat, state)
+            last_run = time.time()
+            if trig:
+                try:
+                    os.unlink(ARCHIVE_NOW_FLAG)
+                except OSError:
+                    pass
+            write_sched(last_run, False, copied=n,
+                        msg="本轮 %d 个新片段, %.1f MB" % (n, b / 1048576))
+            if n:
+                log("定时归档完成: %d 个新片段, %.1f MB%s" % (n, b / 1048576, " (立即归档)" if trig else ""))
         except Exception as e:
-            log("轮询异常: %s" % e)
+            log("归档异常: %s" % e)
+            write_sched(last_run, False, msg="归档异常: %s" % str(e)[:120])
         finally:
             usb_unlock(lk)
-        time.sleep(args.interval)
 
 
 if __name__ == "__main__":

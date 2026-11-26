@@ -2430,6 +2430,17 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <div class="hint">播放视频时自动暂停列表缩略图与后台预缓冲；三档都走硬解硬编，360P 优先，480P/720P 在空闲时补档，停止播放后按所选时间恢复。</div>
       </div>
       <div class="arc-clean">
+        <div class="arc-clean-head"><b>归档同步</b><span class="hint" id="arc-sync-state">…</span></div>
+        <div class="arc-clean-row">
+          <span class="hint">每</span>
+          <input id="arc-sync-min" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric">
+          <span class="hint">分钟归档一次（1–1440，可自行填写）</span>
+          <button class="arc-btn" onclick="saveArchiveSched()">保存</button>
+          <button class="arc-btn" onclick="archiveNow()">立即归档</button>
+        </div>
+        <div class="hint">不再实时搬运：按设定间隔把车机写好的片段搬进归档区；车机正在写 U 盘时自动顺延，停止写入后再归档。「立即归档」同样等车机空闲后马上执行。</div>
+      </div>
+      <div class="arc-clean">
         <div class="arc-clean-head"><b>归档自动清理</b><span class="hint" id="arc-clean-last">尚未清理</span></div>
         <div class="arc-clean-row">
           <span class="hint">保留</span>
@@ -5595,6 +5606,7 @@ async function loadArchiveRetention() {
       (d.msg || ('归档 ' + d.files + ' 个视频 · ' + (d.used / 1073741824).toFixed(1) + ' GB'));
   } catch (e) {}
   loadPrewarmPolicy();
+  loadArchiveSched();
 }
 /* 预缓冲策略: 播放时自动暂停, 停止播放后按 10/20/30 分钟恢复; 也可以立即恢复 */
 async function loadPrewarmPolicy() {
@@ -5658,6 +5670,44 @@ async function archiveCleanupNow() {
     loadArchiveRetention(); refreshLive();
   } catch (e) { toast('❌ 清理失败'); }
 }
+/* 归档同步调度: 默认10分钟一次可自定义; 立即归档; 车机写入时顺延 */
+async function loadArchiveSched() {
+  try {
+    const j = await (await fetch('/api/archive_sched', {cache: 'no-store'})).json();
+    const inp = document.getElementById('arc-sync-min');
+    if (inp && document.activeElement !== inp) inp.value = String(j.interval_min || 10);
+    const st = document.getElementById('arc-sync-state');
+    if (st) {
+      let t;
+      if (j.running) t = '归档中…';
+      else if (j.car_writing && (j.queued || j.next_in <= 0)) t = '车机写入中 · 空闲后归档';
+      else if (j.queued) t = '已排队 · 车机空闲后马上归档';
+      else if (j.last) t = '上次 ' + new Date(j.last * 1000).toLocaleTimeString() + ' · 约 ' + Math.max(1, Math.ceil((j.next_in || 0) / 60)) + ' 分钟后下一轮';
+      else t = '待首轮归档';
+      st.textContent = t;
+    }
+  } catch (e) {}
+}
+async function saveArchiveSched() {
+  let mins = parseInt(document.getElementById('arc-sync-min').value || '10', 10);
+  if (!mins || mins < 1) mins = 1;
+  if (mins > 1440) mins = 1440;
+  document.getElementById('arc-sync-min').value = String(mins);
+  try {
+    const j = await (await fetch('/api/archive_sched', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({interval_min: mins})})).json();
+    toast(j.ok ? ('✅ 已保存：每 ' + mins + ' 分钟归档一次') : '❌ 保存失败');
+    loadArchiveSched();
+  } catch (e) { toast('❌ 保存失败'); }
+}
+async function archiveNow() {
+  try {
+    const j = await (await fetch('/api/archive_now', {method: 'POST'})).json();
+    toast(j.ok ? ('✅ ' + j.msg) : '❌ 操作失败');
+    loadArchiveSched();
+  } catch (e) { toast('❌ 操作失败'); }
+}
+setInterval(loadArchiveSched, 10000);
 /* 多路同看: 直接等目标档(最高 360p), 有更低替代档先播; 不再让六格各自拉原画把上行打满。 */
 function waitVariantMulti(vid, baseUrl, cl) {
   /* 多路全览不再先拉 6 路原画(那是 40Mbps 级别), 最高只等 360p; 没就绪先显示生成中,
@@ -14916,6 +14966,20 @@ def archive_cleanup(days=None):
         ARCH_CLEAN["running"] = False
 
 
+# 归档调度 (个性化→虚拟硬盘→归档区): 间隔默认10分钟可自定义; 立即归档写触发文件,
+# 由 tesla-live-sync.py 在车机空闲时执行; 状态读它写的 archive-sched.json。
+ARCHIVE_SCHED_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "archive-sched.json")
+ARCHIVE_NOW_FLAG = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "archive-now.flag")
+
+
+def archive_interval_min():
+    try:
+        v = int(load_settings().get("archive_interval_min", 10) or 10)
+    except (TypeError, ValueError):
+        v = 10
+    return max(1, min(v, 1440))
+
+
 def archive_low_water_pct():
     try:
         v = int(load_settings().get("archive_low_water_pct", 10) or 0)
@@ -17496,6 +17560,21 @@ class Handler(BaseHTTPRequestHandler):
                         "msg": msg,
                         "files": info["files"], "used": info["used"],
                         "system": sysd})
+        elif path == "/api/archive_sched":
+            st = {}
+            try:
+                with open(ARCHIVE_SCHED_FILE, encoding="utf-8") as f:
+                    st = json.load(f)
+            except Exception:
+                pass
+            iv = archive_interval_min()
+            last = st.get("last") or 0
+            self._json({"interval_min": iv, "last": last,
+                        "running": bool(st.get("running")),
+                        "next_in": max(0, int(last + iv * 60 - time.time())) if last else 0,
+                        "car_writing": car_writing(),
+                        "queued": os.path.exists(ARCHIVE_NOW_FLAG),
+                        "copied": st.get("copied", 0), "msg": st.get("msg", "")})
         elif path == "/api/brand/logo":
             data, ct = brand_logo_bytes()
             self.send_response(200)
@@ -18010,6 +18089,29 @@ class Handler(BaseHTTPRequestHandler):
             save_settings({"archive_retention_days": days, "archive_low_water_pct": water})
             ARCH_CLEAN["msg"] = "已保存: 保留 %d 天, 水位 %d%%" % (days, water)
             self._json({"ok": True, "days": days, "low_water_pct": water, "msg": "已保存"})
+            return
+        if path == "/api/archive_sched":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            try:
+                mins = max(1, min(int(body.get("interval_min") or 10), 1440))
+            except (TypeError, ValueError):
+                mins = 10
+            save_settings({"archive_interval_min": mins})
+            self._json({"ok": True, "interval_min": mins, "msg": "已保存"})
+            return
+        if path == "/api/archive_now":
+            try:
+                with open(ARCHIVE_NOW_FLAG, "a"):
+                    pass
+            except OSError:
+                self._json({"ok": False, "msg": "无法写入触发文件"})
+                return
+            cw = car_writing()
+            self._json({"ok": True, "queued": cw,
+                        "msg": "车机正在写入, 停止写入后自动归档" if cw else "已触发立即归档"})
             return
         if path == "/api/archive_cleanup":
             try:
