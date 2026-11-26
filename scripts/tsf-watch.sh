@@ -6,6 +6,9 @@
 LOG=/opt/tesla-sentry/watch.log
 PIDF=/run/tsf-watch.pid
 INTERVAL=10
+# CmaFree 在 RK3568 上长期 0-1MB 属正常波动, 默认不再推飞书告警
+# 需要恢复时: 在 tsf-watch.service 里设 Environment=TSF_WATCH_ALERT_CMA=1
+ALERT_CMA=${TSF_WATCH_ALERT_CMA:-0}
 
 alert() {
     echo "[$(date '+%m-%d %H:%M:%S')] ALERT $*" >> "$LOG"
@@ -51,7 +54,7 @@ run() {
         ld=$(cut -d' ' -f1 /proc/loadavg)
         tp=$(awk '{printf "%.0f", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
         [ "$ma" -lt 150 ] && alert "MemAvailable low: ${ma}MB"
-        [ "$cf" -lt 2 ] && [ "$last_mem" -ge 2 ] && alert "CmaFree low: ${cf}MB"
+        [ "$ALERT_CMA" = 1 ] && [ "$cf" -lt 2 ] && [ "$last_mem" -ge 2 ] && alert "CmaFree low: ${cf}MB"
         last_mem=$cf
         # services
         for s in sentry-viewer tesla-gadget tesla-live; do
