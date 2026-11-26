@@ -1245,6 +1245,7 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
   padding:3px 5px; border-radius:5px; background:#000000a8; color:#cfd8e3; }
 /* 加载/缓冲/未自动播放占位: 每路缩略图高斯模糊垫底, 只留模糊画面, 不放播放键 */
 .ovcell .ovcover { position:absolute; inset:0; z-index:4; overflow:hidden;
+  -webkit-backdrop-filter:blur(12px) brightness(.75); backdrop-filter:blur(12px) brightness(.75);
   background:#0a0d11; transition:opacity .28s ease; }
 .ovcell .ovcoverbg { position:absolute; inset:-16px; width:calc(100% + 32px); height:calc(100% + 32px);
   object-fit:cover; filter:blur(14px) brightness(.62) saturate(1.05); transform:scale(1.06); }
@@ -1253,7 +1254,9 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
   grid-template-rows:repeat(2,1fr); }
 .cov6 .cov6img { width:100%; height:100%; object-fit:cover; display:block;
   filter:blur(5px) brightness(.78) saturate(1.05); transform:scale(1.03); }
-.ovgrid.playing .ovcover { opacity:0; pointer-events:none; }
+/* 按每一路自己的状态揭开占位: 某一路卡住/没加载出来时, 它自己那格继续盖着模糊缩略图,
+   不会露出浏览器画的大播放键 */
+.ovgrid .ovcell.playing .ovcover { opacity:0; pointer-events:none; }
 .ovmask { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
   justify-content:center; gap:7px; background:#000000d9; color:#dfe6ec; font-size:12.5px;
   text-align:center; padding:0 16px; }
@@ -1488,7 +1491,7 @@ body.ovmode.allmode #filters { display:none; }
 .smpill { background:#000000b8; border:1px solid #ffffff2e; color:#e8eef4; font-size:12.5px;
   line-height:1; padding:9px 14px; border-radius:999px; }
 /* 未播放/缓冲时整幅画面高斯模糊: 只留一团模糊的现场, 不露出原始首帧, 也不放大播放键 */
-.ovgrid:not(.playing) video, .vgrid:not(.playing) video { filter:blur(11px) brightness(.72) saturate(1.05); }
+.ovcell:not(.playing) video, .vcell:not(.playing) video { filter:blur(6px) brightness(.78) saturate(1.05); }
 .vcell .clabel { position:absolute; right:7px; bottom:7px; font-size:11px; color:#e8eef4; background:rgba(20,24,29,.72); border-radius:6px; padding:2px 7px; pointer-events:none; }
 .vcell .cload { position:absolute; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:7px; font-size:12.5px; color:#c6cdd4; background:rgba(10,13,18,.6); pointer-events:none; }
 .vcell .cload.err { color:#ff6b66; }
@@ -4121,7 +4124,13 @@ function ovCoverSix(cov, vids) {
   vids.slice(0, 6).forEach(v => {
     const img = document.createElement('img'); img.className = 'cov6img'; img.alt = '';
     img.loading = 'lazy';
-    img.src = v.url.replace('/media/', '/thumb/');
+    const thumb = v.url.replace('/media/', '/thumb/');
+    img.src = thumb;
+    /* 缩略图没生成/取不到时补一次带参数的请求, 仍失败就藏掉, 留模糊深色底, 不出白块 */
+    img.onerror = function () {
+      if (!img.dataset.retry) { img.dataset.retry = '1'; img.src = thumb + (thumb.indexOf('?') >= 0 ? '&' : '?') + 't=1'; }
+      else { img.style.visibility = 'hidden'; }
+    };
     g.appendChild(img);
   });
   cov.appendChild(g);
@@ -4418,6 +4427,13 @@ function ovCoverSync() {
   const main = ovVids()[0];
   const playing = !!(main && !main.paused && !main.ended && main.readyState >= 3);
   g.classList.toggle('playing', playing);
+  /* 关键: 逐格标记。某一路还在加载/卡住时, 它那格保持模糊缩略图占位,
+     而不是露出浏览器自己画的白色大播放键 */
+  g.querySelectorAll('.ovcell').forEach(c => {
+    const v = c.querySelector('video');
+    const own = !!(v && !v.paused && !v.ended && v.readyState >= 3);
+    c.classList.toggle('playing', own);
+  });
 }
 function ovSeek(val) {
   const vs = ovVids(), main = vs[0];
