@@ -536,13 +536,25 @@ def sentry_rank(exfat, cur):
     return ranks
 
 
+def roll_min():
+    """行车记录归档窗口(分钟), 由页面「行车记录保留」决定, 1 小时~7 天。"""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            s = json.load(f) or {}
+        v = int(s.get("recent_keep_min", 60) or 60)
+    except Exception:
+        v = 60
+    return max(60, min(v, 10080))
+
+
 def do_sync(exfat, state, quiet=False, cats=None, hold=True):
     """跑一轮; 返回 (新增文件数, 字节数)"""
     cur = scan(exfat, cats)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
     cut = None
-    if ROLL_MIN > 0:
+    rm = int(os.environ.get("TSF_RECENT_ROLL_MIN") or roll_min())
+    if rm > 0:
         newest = None
         for (cat, ev, name) in cur:
             if cat == "RecentClips":
@@ -550,7 +562,7 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True):
                 if d and (newest is None or d > newest):
                     newest = d
         if newest:
-            cut = newest - datetime.timedelta(minutes=ROLL_MIN)
+            cut = newest - datetime.timedelta(minutes=rm)
     pending_key = "__pending__"
     pending = state.get(pending_key, {})
     new_pending = {}

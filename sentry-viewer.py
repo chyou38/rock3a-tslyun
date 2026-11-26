@@ -768,6 +768,16 @@ def load_settings():
                 d["preview_sec"] = max(5, min(int(j.get("preview_sec") or 30), 120))
             except (TypeError, ValueError):
                 d["preview_sec"] = 30
+            # 归档同步间隔: 之前没读回, 填 1 分钟保存后又被默认 10 盖掉
+            try:
+                d["archive_interval_min"] = max(1, min(int(j.get("archive_interval_min") or 10), 1440))
+            except (TypeError, ValueError):
+                d["archive_interval_min"] = 10
+            # 行车记录归档保留 (1 小时 ~ 7 天)
+            try:
+                d["recent_keep_min"] = max(60, min(int(j.get("recent_keep_min") or 60), 10080))
+            except (TypeError, ValueError):
+                d["recent_keep_min"] = 60
             # 打开视频默认视角 + 是否自动播放 (个性化→界面与播放)
             ov = str(j.get("open_view") or "")
             if ov in ("all", "quad", "front", "back", "left_pillar", "right_pillar",
@@ -1059,7 +1069,7 @@ html[data-theme="light"] .tab.active { background:#17191c; color:#fff; }
 .arc-clean-row .hint { margin-bottom:0; line-height:1.4; }
 .arc-clean > .hint { margin:6px 0 0; line-height:1.5; }
 .arc-select { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 8px; font-size:12px; outline:none; }
-.arc-input { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 8px; font-size:12px; outline:none; width:78px; }
+.arc-input { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:4px 6px; font-size:12px; outline:none; width:58px; text-align:center; }
 .arc-btn { background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:8px; padding:5px 12px; font-size:12px; cursor:pointer; }
 .arc-btn:hover { border-color:var(--muted2); }
 .arc-btn-danger { background:#e8443f; border-color:#e8443f; color:#fff; }
@@ -2451,20 +2461,20 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <div class="arc-clean-head"><b>预缓冲</b><span class="hint" id="pw-policy-state">—</span></div>
         <div class="arc-clean-row">
           <span class="hint">播放停止后恢复</span>
-          <input id="pw-resume" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric">
+          <input id="pw-resume" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric" oninput="pwEditing=true">
           <span class="hint">分钟（1–1440，可自行填写）</span>
           <button class="arc-btn" onclick="savePrewarmPolicy()">保存</button>
           <button class="arc-btn" onclick="prewarmNow()">立即预缓冲</button>
         </div>
         <div class="arc-clean-row">
           <span class="hint">预解码时长</span>
-          <input id="pw-prev" class="arc-input" type="number" min="5" max="120" step="1" inputmode="numeric">
+          <input id="pw-prev" class="arc-input" type="number" min="5" max="120" step="1" inputmode="numeric" oninput="pwEditing=true">
           <span class="hint">秒</span>
           <button class="arc-btn" onclick="savePrewarmPolicy()">确定</button>
         </div>
         <div class="arc-clean-row">
           <span class="hint">额度剩余低于</span>
-          <input id="pw-lowwater" class="arc-input" type="number" min="5" max="30" step="1" inputmode="numeric">
+          <input id="pw-lowwater" class="arc-input" type="number" min="5" max="30" step="1" inputmode="numeric" oninput="pwEditing=true">
           <span class="hint">% 自动清理</span>
         </div>
         <div class="hint">播放时暂停，停止后按设定恢复；360P 优先，480P/720P 空闲补档。</div>
@@ -2473,7 +2483,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <div class="arc-clean-head"><b>归档同步</b><span class="hint" id="arc-sync-state">…</span></div>
         <div class="arc-clean-row">
           <span class="hint">每</span>
-          <input id="arc-sync-min" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric">
+          <input id="arc-sync-min" class="arc-input" type="number" min="1" max="1440" step="1" inputmode="numeric" oninput="markArcDirty('arc-sync-min')">
           <span class="hint">分钟一次（1–1440）</span>
           <button class="arc-btn" onclick="saveArchiveSched()">保存</button>
           <button class="arc-btn" onclick="archiveNow()">立即归档</button>
@@ -2482,6 +2492,21 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       </div>
       <div class="arc-clean">
         <div class="arc-clean-head"><b>归档自动清理</b><span class="hint" id="arc-clean-last">尚未清理</span></div>
+        <div class="arc-clean-row">
+          <span class="hint">行车记录保留</span>
+          <select id="arc-recent" class="arc-select">
+            <option value="60">1 小时</option>
+            <option value="360">6 小时</option>
+            <option value="1440">1 天</option>
+            <option value="2880">2 天</option>
+            <option value="4320">3 天</option>
+            <option value="5760">4 天</option>
+            <option value="7200">5 天</option>
+            <option value="8640">6 天</option>
+            <option value="10080">7 天</option>
+          </select>
+          <span class="hint">超过自动删（哨兵/手动保存不受影响）</span>
+        </div>
         <div class="arc-clean-row">
           <span class="hint">保留</span>
           <select id="arc-ret" class="arc-select">
@@ -5654,6 +5679,8 @@ async function loadArchiveRetention() {
     if (sel) sel.value = String(d.days || 0);
     const wat = document.getElementById('arc-water');
     if (wat) wat.value = String(d.low_water_pct == null ? 10 : d.low_water_pct);
+    const rec = document.getElementById('arc-recent');
+    if (rec && rec.value !== String(d.recent_min || 60)) rec.value = String(d.recent_min || 60);
     const last = document.getElementById('arc-clean-last');
     if (last) last.textContent = d.last ? ('上次清理 ' + new Date(d.last * 1000).toLocaleString()) : '尚未清理';
     const msg = document.getElementById('arc-clean-msg');
@@ -5663,16 +5690,17 @@ async function loadArchiveRetention() {
   loadPrewarmPolicy();
   loadArchiveSched();
 }
-/* 预缓冲策略: 播放时自动暂停, 停止播放后按 10/20/30 分钟恢复; 也可以立即恢复 */
+/* 预缓冲策略: 播放时自动暂停, 停止播放后按设定分钟数恢复; 也可以立即恢复 */
+let pwEditing = false;   // 用户正在改这三个输入框时, 5 秒轮询不要覆盖他的输入
 async function loadPrewarmPolicy() {
   try {
     const j = await (await fetch('/api/prewarm_policy', {cache: 'no-store'})).json();
     const sel = document.getElementById('pw-resume');
-    if (sel && document.activeElement !== sel) sel.value = String(j.resume_min || 10);
+    if (sel && !pwEditing && document.activeElement !== sel) sel.value = String(j.resume_min || 2);
     const pv = document.getElementById('pw-prev');
-    if (pv && document.activeElement !== pv) pv.value = String(j.preview_sec || 60);
+    if (pv && !pwEditing && document.activeElement !== pv) pv.value = String(j.preview_sec || 60);
     const lw = document.getElementById('pw-lowwater');
-    if (lw && document.activeElement !== lw) lw.value = String(j.preview_low_water_pct || 10);
+    if (lw && !pwEditing && document.activeElement !== lw) lw.value = String(j.preview_low_water_pct || 10);
     const st = document.getElementById('pw-policy-state');
     if (st) {
       if (j.on === false) st.textContent = '已关闭';
@@ -5702,6 +5730,7 @@ async function savePrewarmPolicy() {
     const j = await (await fetch('/api/prewarm_policy', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({resume_min: mins, preview_sec: psec, preview_low_water_pct: pwater})})).json();
     toast(j.ok ? ('✅ 已保存：预解码 ' + psec + ' 秒 · 剩余低于 ' + pwater + '% 自动清理 · 停止播放 ' + mins + ' 分钟后恢复') : '❌ 保存失败');
+    if (j.ok) pwEditing = false;
     loadPrewarmPolicy();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -5715,10 +5744,11 @@ async function prewarmNow() {
 async function saveArchiveRetention() {
   const days = parseInt(document.getElementById('arc-ret').value || '0', 10);
   const water = parseInt(document.getElementById('arc-water').value || '0', 10);
+  const recent = parseInt((document.getElementById('arc-recent') || {}).value || '60', 10);
   try {
     const j = await (await fetch('/api/archive_retention', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: days, low_water_pct: water})})).json();
-    toast(j.ok ? '✅ 已保存' : '❌ 保存失败');
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days: days, low_water_pct: water, recent_keep_min: recent})})).json();
+    toast(j.ok ? ('✅ 已保存：行车记录保留 ' + recent + ' 分钟') : '❌ 保存失败');
     loadArchiveRetention();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -5732,11 +5762,13 @@ async function archiveCleanupNow() {
   } catch (e) { toast('❌ 清理失败'); }
 }
 /* 归档同步调度: 默认10分钟一次可自定义; 立即归档; 车机写入时顺延 */
+const arcDirty = new Set();          // 用户正在改的输入框, 10 秒轮询不要覆盖
+function markArcDirty(id) { arcDirty.add(id); }
 async function loadArchiveSched() {
   try {
     const j = await (await fetch('/api/archive_sched', {cache: 'no-store'})).json();
     const inp = document.getElementById('arc-sync-min');
-    if (inp && document.activeElement !== inp) inp.value = String(j.interval_min || 10);
+    if (inp && !arcDirty.has('arc-sync-min') && document.activeElement !== inp) inp.value = String(j.interval_min || 10);
     const st = document.getElementById('arc-sync-state');
     if (st) {
       let t;
@@ -5758,6 +5790,7 @@ async function saveArchiveSched() {
     const j = await (await fetch('/api/archive_sched', {method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify({interval_min: mins})})).json();
     toast(j.ok ? ('✅ 已保存：每 ' + mins + ' 分钟归档一次') : '❌ 保存失败');
+    if (j.ok) arcDirty.delete('arc-sync-min');
     loadArchiveSched();
   } catch (e) { toast('❌ 保存失败'); }
 }
@@ -12172,7 +12205,7 @@ def prewarm_resume_min():
         v = int(load_settings().get("prewarm_resume_min", 2) or 2)
     except (TypeError, ValueError):
         v = 10
-    v = max(1, min(v, 30))
+    v = max(1, min(v, 1440))
     _PREWARM_MIN_CACHE["ts"] = time.time()
     _PREWARM_MIN_CACHE["v"] = v
     return v
@@ -12856,7 +12889,8 @@ def _ev_dt(name):
 def roll_recent():
     """盒子侧 RecentClips 按滚动窗口自动淘汰 (只删盒子归档, 不碰车机 U 盘)"""
     rd = os.path.join(ARCHIVE, "RecentClips")
-    if RECENT_ROLL_MIN <= 0 or not os.path.isdir(rd):
+    keep_min = int(os.environ.get("TSF_RECENT_ROLL_MIN") or recent_keep_min())
+    if keep_min <= 0 or not os.path.isdir(rd):
         return 0
     evs = []
     for e in os.listdir(rd):
@@ -12867,7 +12901,7 @@ def roll_recent():
         return 0
     evs.sort()
     # 以"最新片段"为锚点而不是当前时间: 车休眠/哨兵关闭期间没有新片段, 就不会被误清空
-    cutoff = evs[-1][0] - datetime.timedelta(minutes=RECENT_ROLL_MIN)
+    cutoff = evs[-1][0] - datetime.timedelta(minutes=keep_min)
     n = 0
     for dt, e in evs:
         if dt < cutoff:
@@ -15281,6 +15315,15 @@ def archive_retention_days():
     except (TypeError, ValueError):
         v = 0
     return max(0, min(v, 3650))
+
+
+def recent_keep_min():
+    """行车记录(RecentClips)归档保留分钟: 1 小时 ~ 7 天, 默认 60 分钟。"""
+    try:
+        v = int(load_settings().get("recent_keep_min", 60) or 60)
+    except (TypeError, ValueError):
+        v = 60
+    return max(60, min(v, 10080))
 
 
 def archive_cleanup(days=None):
@@ -18151,6 +18194,7 @@ class Handler(BaseHTTPRequestHandler):
                 free_pct = None
             msg = ARCH_CLEAN["msg"] or ("保留 %d 天, 水位 %d%%" % (days, water))
             self._json({"days": days,
+                        "recent_min": recent_keep_min(),
                         "low_water_pct": water, "free_pct": free_pct,
                         "last": ARCH_CLEAN["last"], "deleted": ARCH_CLEAN["deleted"],
                         "freed": ARCH_CLEAN["freed"], "running": ARCH_CLEAN["running"],
@@ -18683,9 +18727,15 @@ class Handler(BaseHTTPRequestHandler):
                 water = max(0, min(int(body.get("low_water_pct", 10) or 0), 50))
             except (TypeError, ValueError):
                 water = 10
-            save_settings({"archive_retention_days": days, "archive_low_water_pct": water})
-            ARCH_CLEAN["msg"] = "已保存: 保留 %d 天, 水位 %d%%" % (days, water)
-            self._json({"ok": True, "days": days, "low_water_pct": water, "msg": "已保存"})
+            try:
+                recent = max(60, min(int(body.get("recent_keep_min", 60) or 60), 10080))
+            except (TypeError, ValueError):
+                recent = 60
+            save_settings({"archive_retention_days": days, "archive_low_water_pct": water,
+                           "recent_keep_min": recent})
+            ARCH_CLEAN["msg"] = "已保存: 保留 %d 天, 水位 %d%%, 行车记录 %d 分钟" % (days, water, recent)
+            self._json({"ok": True, "days": days, "low_water_pct": water,
+                        "recent_min": recent, "msg": "已保存"})
             return
         if path == "/api/archive_sched":
             body = self._read_json()
