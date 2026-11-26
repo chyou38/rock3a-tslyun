@@ -1243,6 +1243,8 @@ body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
 .ovgrid video { display:block; width:100%; height:100%; object-fit:cover; background:#000; }
 .ovgrid .ovcam { position:absolute; left:4px; bottom:4px; font-size:9.5px; line-height:1; z-index:5;
   padding:3px 5px; border-radius:5px; background:#000000a8; color:#cfd8e3; }
+/* 事件触发的那一路: 机位标签直接标红(原生六路才参与, 合成单格是"合成", 不标) */
+.ovgrid .ovcam.trig { color:#ff6b66; background:#3a1113; border:1px solid #ff6b6655; font-weight:700; }
 /* 加载/缓冲/未自动播放占位: 每路缩略图高斯模糊垫底, 只留模糊画面, 不放播放键 */
 .ovcell .ovcover { position:absolute; inset:0; z-index:4; overflow:hidden;
   -webkit-backdrop-filter:blur(12px) brightness(.75); backdrop-filter:blur(12px) brightness(.75);
@@ -4143,6 +4145,9 @@ function ovBuildGrid(ev, ix) {
   ovClipIx = ix || 0;
   ovResetNoProg(); ovLastDowngradeAt = 0; ovNoProgReloads = 0;
   const nativeVids = ovPickVids(ev, ix);
+  /* 哨兵事件的触发机位: 只用来给原生那几路的机位标签标红, 合成格不参与 */
+  const trigCam = (ev && ev.meta && ev.meta.camera != null && isSentryEv(ev.meta))
+    ? (CAM_IDX[+ev.meta.camera] || '') : '';
   const compOn = wantComposite(nativeVids.length);
   let vids = nativeVids;
   if (compOn) {
@@ -4176,7 +4181,10 @@ function ovBuildGrid(ev, ix) {
       const v = vids[i];
       const isComp = !!v._composite;
       c.style.display = '';
-      if (lb) lb.textContent = isComp ? '合成' : camLabel(v.cam || '');
+      if (lb) {
+        lb.textContent = isComp ? '合成' : camLabel(v.cam || '');
+        lb.classList.toggle('trig', !isComp && !!trigCam && (v.cam || '') === trigCam);
+      }
       const cov = c.querySelector('.ovcover');
       if (cov) {
         cov.style.display = '';
@@ -5771,7 +5779,6 @@ function renderClip() {
   if (md.est_lat && md.est_lon) rh += '<div data-k="coord"><span class="ick">坐标</span>' + md.est_lat + ', ' + md.est_lon + '</div>';
   if (md.reason) rh += '<div><span class="ick">触发原因</span>' + (reasonLabel(md.reason) || md.reason) + '</div>';
   /* camera 字段只有哨兵事件有意义; 手动保存等也会带 camera:"0" */
-  if (md.camera && isSentryEv(md)) { const cn = CAM_IDX[+md.camera]; rh += '<div data-k="camera"><span class="ick">触发画面</span>' + (cn ? camLabel(cn) : '摄像头') + ' #' + md.camera + '</div>'; }
   if (md.campaign_id) rh += '<div><span class="ick">活动ID</span>' + md.campaign_id + '</div>';
   rh += '<div><span class="ick">画面</span>' + clip.vids.length + ' 路</div>';
   if (curClips.length > 1) rh += '<div><span class="ick">片段</span>共 ' + curClips.length + ' 段, 当前第 ' + (curClipIx + 1) + ' 段</div>';
@@ -5834,15 +5841,9 @@ function loadTelemetry(url, meta) {
   const _pl = document.querySelector('#tpanel .tp-place');
   if (_pl) _pl.style.display = (locShort(TEL_META) || (TEL_META.est_lat && TEL_META.est_lon)) ? '' : 'none';
   // 触发画面摄像头: 只有哨兵事件显示 (手动保存等也会带无意义的 camera:"0")
+  /* 触发机位不再单独写一行文字: 直接标在对应那一路的机位标签上(标红) */
   const camTag = document.getElementById('tp-tag');
-  if (TEL_META.camera && isSentryEv(TEL_META)) {
-    const cn = CAM_IDX[+TEL_META.camera];
-    camTag.innerHTML = '触发画面 <b>' + (cn ? camLabel(cn) : '摄像头') + ' #' + TEL_META.camera + '</b>';
-    camTag.classList.add('show');
-  } else {
-    camTag.classList.remove('show');
-    camTag.innerHTML = '';
-  }
+  if (camTag) { camTag.classList.remove('show'); camTag.innerHTML = ''; }
   telT0 = null;
   if (!url) { TEL = null; TEL_URL = ''; p.classList.remove('show', 'plain', 'stale'); return; }
   const m = url.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/);
