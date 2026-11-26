@@ -5825,13 +5825,13 @@ function loadTelemetry(url, meta) {
      旧做法"先保留旧数据等新的"会在无 SEI 段残留上一分钟的车速/时间戳。 */
   if (url !== TEL_URL) {
     TEL = null; TEL_URL = url;
-    if (p.classList.contains('show')) {
-      p.classList.add('stale');
-      const q = id => document.getElementById(id);
-      q('tp-spd').textContent = '—'; q('tp-gear').textContent = '—'; q('tp-thr-n').textContent = '—';
-      q('tp-brk').classList.remove('on');
-      q('tp-bl').classList.remove('on'); q('tp-br').classList.remove('on');
-    }
+    /* 换片段(尤其从有 SEI 的行车记录切到无 SEI 的哨兵告警): 面板立刻收起,
+       等新片段真的有遥测再点亮; 旧做法留 stale 灰显会先露出一条全 "—" 的空框 */
+    p.classList.remove('show', 'stale', 'plain');
+    const q = id => document.getElementById(id);
+    q('tp-spd').textContent = '—'; q('tp-gear').textContent = '—'; q('tp-thr-n').textContent = '—';
+    q('tp-brk').classList.remove('on');
+    q('tp-bl').classList.remove('on'); q('tp-br').classList.remove('on');
   }
   if (!TEL && !p.classList.contains('stale')) p.classList.remove('show', 'plain');
   if (card) card.classList.remove('plain');
