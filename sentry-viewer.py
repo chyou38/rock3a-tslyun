@@ -1228,6 +1228,27 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 /* 二级播放页(body.ovfull)的 980px 限宽和浅色底会压过全屏样式: 全屏时一并解除, 否则画面缩在中间一条 */
 body.ovfull .ovplay.fs-on { background:#000; padding:0; overflow:hidden; }
 body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
+/* 关键权重冲突: body.ovmode .ovplay(吸顶, 浅色底, padding-top:6px) 在文件里更靠后, 同权重压过
+   .ovplay.fs-on 与 body.ovfull .ovplay → 全屏时播放器仍 sticky、不铺满视口, 顶部露出 --bg 浅色条、
+   画面也不居中。这里用 (0,3,1)+(0,4,1) 的 !important 规则钉死全屏几何, 彻底绕开这组权重打架。 */
+body.ovmode .ovplay.fs-on, body.ovfull .ovplay.fs-on,
+.ovplay.fs-on { position:fixed !important; inset:0 !important; width:auto !important; height:auto !important;
+  max-width:none !important; max-height:none !important; margin:0 !important; padding:0 !important;
+  background:#000 !important; overflow:hidden !important; border-radius:0 !important; box-shadow:none !important; }
+/* 竖屏无横屏锁时(fs-portrait)仍要旋转成横屏: 放在上面那条规则之后, 同权重靠后生效 */
+.ovplay.fs-on.fs-portrait { inset:auto !important; top:50% !important; left:50% !important;
+  width:100vh !important; height:100vw !important; transform:translate(-50%,-50%) rotate(90deg) !important; }
+body.ovmode .ovplay.fs-on .ovstage, body.ovfull .ovplay.fs-on .ovstage,
+.ovplay.fs-on .ovstage { position:absolute !important; inset:0 !important; width:auto !important; height:auto !important;
+  max-width:none !important; margin:0 !important; padding:0 !important; aspect-ratio:auto !important;
+  border:0 !important; border-radius:0 !important; }
+/* 合成流是 3×2 拼图, 用 contain 才能整幅可见且自动居中; 原生六格继续 cover 铺满 */
+.ovplay.fs-on .ovgrid.one video { object-fit:contain !important; }
+.ovplay.fs-on .ovgrid { place-items:stretch; }
+/* 全屏时禁止页面底色从任何缝隙漏出来 */
+body.fs-black, body.fs-black::before { background:#000 !important; }
+/* 纯 CSS 兜底(JS 未执行时也压黑整页, 免得顶部露出浅色条) */
+html:has(.ovplay.fs-on), body:has(.ovplay.fs-on) { background:#000 !important; }
 /* 详细数据(加速度等)不再在行车数据行里展示, 节点保留给渲染逻辑写入 */
 #tp-rows[hidden], #tp-fold[hidden] { display:none !important; }
 /* 横屏锁失败(如 iOS)时, 竖屏全屏把整个播放器旋转 90° 模拟横屏 */
@@ -4420,20 +4441,96 @@ function ovFull() {
 }
 /* 全屏退出解锁方向; 横屏锁不支持时(如 iOS)竖屏全屏旋转播放器模拟横屏; 控制条始终留在底部 */
 let ovFsHideTimer = null;
+/* 全屏几何硬锁: 直接给元素打内联 !important, 优先级高于一切样式表的权重打架
+   (body.ovmode/.ovfull 的 sticky + 浅色底会压过 fs-on 规则, 造成画面不居中 + 顶部白条) */
+const OV_FS_PL = ['position', 'inset', 'top', 'left', 'width', 'height', 'max-width', 'max-height', 'margin', 'padding',
+                  'background', 'overflow', 'border-radius', 'box-shadow', 'transform', 'z-index'];
+const OV_FS_ST = ['position', 'inset', 'width', 'height', 'max-width', 'margin', 'padding', 'aspect-ratio',
+                  'border', 'border-radius'];
+function ovFsCycle(el, props, on) {
+  if (!el) return;
+  props.forEach(k => el.style.setProperty(k, on ? 'initial' : '', 'important'));
+}
+function ovFsLock(on, portrait) {
+  const pl = document.getElementById('ovplay');
+  const st = document.getElementById('ovstage');
+  if (on) {
+    if (pl) {
+      pl.style.setProperty('position', 'fixed', 'important');
+      if (portrait) {
+        pl.style.setProperty('inset', 'auto', 'important');
+        pl.style.setProperty('top', '50%', 'important');
+        pl.style.setProperty('left', '50%', 'important');
+        pl.style.setProperty('width', '100vh', 'important');
+        pl.style.setProperty('height', '100vw', 'important');
+        pl.style.setProperty('transform', 'translate(-50%,-50%) rotate(90deg)', 'important');
+      } else {
+        pl.style.setProperty('inset', '0px', 'important');
+        pl.style.setProperty('top', 'auto', 'important');
+        pl.style.setProperty('left', 'auto', 'important');
+        pl.style.setProperty('width', 'auto', 'important');
+        pl.style.setProperty('height', 'auto', 'important');
+        pl.style.setProperty('transform', 'none', 'important');
+      }
+      pl.style.setProperty('max-width', 'none', 'important');
+      pl.style.setProperty('max-height', 'none', 'important');
+      pl.style.setProperty('margin', '0px', 'important');
+      pl.style.setProperty('padding', '0px', 'important');
+      pl.style.setProperty('background', '#000', 'important');
+      pl.style.setProperty('overflow', 'hidden', 'important');
+      pl.style.setProperty('border-radius', '0px', 'important');
+      pl.style.setProperty('box-shadow', 'none', 'important');
+      pl.style.setProperty('z-index', '2147483000', 'important');
+    }
+    if (st) {
+      st.style.setProperty('position', 'absolute', 'important');
+      st.style.setProperty('inset', '0px', 'important');
+      st.style.setProperty('width', 'auto', 'important');
+      st.style.setProperty('height', 'auto', 'important');
+      st.style.setProperty('max-width', 'none', 'important');
+      st.style.setProperty('margin', '0px', 'important');
+      st.style.setProperty('padding', '0px', 'important');
+      st.style.setProperty('aspect-ratio', 'auto', 'important');
+      st.style.setProperty('border', '0', 'important');
+      st.style.setProperty('border-radius', '0px', 'important');
+    }
+    document.body.classList.add('fs-black');
+    document.documentElement.style.setProperty('background', '#000', 'important');
+    document.body.style.setProperty('background', '#000', 'important');
+    try { window.scrollTo(0, 0); } catch (e) {}
+    /* 合成(单格 3×2 拼图)整幅可见并居中; 原生六格保持 cover 铺满 */
+    const g = pl && pl.querySelector('.ovgrid');
+    if (g && g.classList.contains('one')) {
+      const v = g.querySelector('video');
+      if (v) v.style.setProperty('object-fit', 'contain', 'important');
+    }
+  } else {
+    ovFsCycle(pl, OV_FS_PL, false);
+    ovFsCycle(st, OV_FS_ST, false);
+    document.body.classList.remove('fs-black');
+    document.documentElement.style.removeProperty('background');
+    document.body.style.removeProperty('background');
+    const g = pl && pl.querySelector('.ovgrid');
+    if (g) [...g.querySelectorAll('video')].forEach(v => v.style.removeProperty('object-fit'));
+  }
+}
 function ovFsChange() {
   const fs = document.fullscreenElement || document.webkitFullscreenElement;
   const pl = document.getElementById('ovplay');
   if (!fs) {
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     if (pl) pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
+    ovFsLock(false);
     if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; }
     return;
   }
   if (pl) pl.classList.add('fs-on');
+  ovFsLock(true);
   ovFsShowBar();
   setTimeout(() => {
     const portrait = window.innerHeight > window.innerWidth;
     if (pl) pl.classList.toggle('fs-portrait', portrait);
+    ovFsLock(true, portrait);
   }, 320);
 }
 document.addEventListener('fullscreenchange', ovFsChange);
