@@ -1228,6 +1228,18 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 /* 二级播放页(body.ovfull)的 980px 限宽和浅色底会压过全屏样式: 全屏时一并解除, 否则画面缩在中间一条 */
 body.ovfull .ovplay.fs-on { background:#000; padding:0; overflow:hidden; }
 body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
+/* 整屏播放页(body.ovfull)本身就是"全屏"形态: 浅色主题的 8px/12px 内边距会在顶部亮出一条浅色细条
+   (实测用户截图顶部那条浅色带恒为 17 物理像素 ≈ 8 CSS 像素, 正好等于这里 padding-top:8px),
+   所以整屏页一律黑底 + 零补白 + 全宽, 不再给画面留浅色边。 */
+body.ovfull { background:#000 !important; }
+body.ovfull .ovplay { padding:0 !important; margin:0 !important; max-width:none !important; background:#000 !important; }
+body.ovfull .ovplay .ovtop { margin:0 !important; padding:8px 10px 8px !important; background:#000 !important; }
+body.ovfull .ovplay .ovstage { max-width:none !important; margin:0 !important; }
+body.ovfull .ovplay .ovbar, body.ovfull .ovplay .ovtools,
+body.ovfull .ovplay .ovcams, body.ovfull .ovplay .ovclips,
+body.ovfull .ovplay .ovinfo { max-width:none !important; margin-left:0 !important; margin-right:0 !important; }
+/* 合成(单格 3×2 拼图)整幅可见并居中; 原生单路/六格继续 cover 铺满 */
+.ovgrid.comp video, .ovplay.fs-on .ovgrid.one video { object-fit:contain !important; }
 /* 关键权重冲突: body.ovmode .ovplay(吸顶, 浅色底, padding-top:6px) 在文件里更靠后, 同权重压过
    .ovplay.fs-on 与 body.ovfull .ovplay → 全屏时播放器仍 sticky、不铺满视口, 顶部露出 --bg 浅色条、
    画面也不居中。这里用 (0,3,1)+(0,4,1) 的 !important 规则钉死全屏几何, 彻底绕开这组权重打架。 */
@@ -4136,6 +4148,7 @@ function ovBuildGrid(ev, ix) {
   }
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
+  g.classList.toggle('comp', compOn);
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
   let cells = [...g.querySelectorAll('.ovcell')];
   while (cells.length < 6) {
@@ -4440,6 +4453,23 @@ function ovRate() {
 function ovFull() {
   const fs = document.fullscreenElement || document.webkitFullscreenElement;
   if (fs) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
+  /* 单条流(服务端合成 / 单路视角): 直接对视频元素发起原生全屏, 由浏览器把画面铺满整屏,
+     页面里的任何条子/底色都没有机会漏出来 —— 不再靠容器"在界面里放大"那套。
+     六路原生没法整屏(6 个 video 只能有一个进全屏), 仍走整块播放器全屏。 */
+  const compVid = document.querySelector('#ovgrid.comp video');
+  const live = [...document.querySelectorAll('#ovgrid video')].filter(v => v.offsetParent !== null);
+  const solo = compVid || (live.length === 1 ? live[0] : null);
+  if (solo) {
+    try {
+      solo.setAttribute('playsinline', '');
+      if (solo.requestFullscreen) { solo.requestFullscreen().then(() => {}).catch(() => {}); }
+      else if (solo.webkitRequestFullscreen) solo.webkitRequestFullscreen();
+      /* iOS 只给视频内置全屏入口 */
+      else if (solo.webkitEnterFullscreen) solo.webkitEnterFullscreen();
+      if (document.fullscreenEnabled === false && solo.webkitEnterFullscreen) solo.webkitEnterFullscreen();
+    } catch (e) {}
+    return;
+  }
   const pl = document.getElementById('ovplay');
   if (!pl) return;
   const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} };
@@ -4532,6 +4562,8 @@ function ovFsChange() {
     if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; }
     return;
   }
+  /* 视频元素自己进了原生全屏: 屏幕只有这条视频, 不去动播放器容器 */
+  if (fs && fs.tagName === 'VIDEO') return;
   if (pl) pl.classList.add('fs-on');
   ovFsLock(true);
   ovFsShowBar();
