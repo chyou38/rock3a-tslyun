@@ -5047,10 +5047,13 @@ function storColor(pct) {
 
 /* 归档同步状态胶囊 (定时归档, 非实时) + 新片段自动出现 */
 async function refreshLive() {
-  let live = null;
-  try { live = await (await fetch('/api/live')).json(); } catch (e) { return; }
-  let sch = null;
-  try { sch = await (await fetch('/api/archive_sched', {cache: 'no-store'})).json(); } catch (e) {}
+  /* 三个接口同时发出: 手机上一次串行要 3 个往返, 并行后首屏少等 2 个 RTT */
+  const pLive = fetch('/api/live').then(r => r.json()).catch(() => null);
+  const pSch = fetch('/api/archive_sched', {cache: 'no-store'}).then(r => r.json()).catch(() => null);
+  const pEv = fetch('/api/events').then(r => r.json()).catch(() => null);
+  const live = await pLive;
+  if (!live) return;
+  const sch = await pSch;
   const dot = document.getElementById('livedot'), txt = document.getElementById('livetxt');
   if (live.running) {
     dot.style.background = '#4cc38a';
@@ -5138,7 +5141,8 @@ async function refreshLive() {
   }
   // 事件有变化时无缝重绘 (不打断播放器)
   try {
-    const d = await (await fetch('/api/events')).json();
+    const d = await pEv;
+    if (!d) return;
     const s = sigOf(d);
     if (s !== lastSig) {
       lastSig = s; data = d;
@@ -9124,6 +9128,49 @@ load();
 // 字体状态预热: 这时还没开播放器, 连接池是空的, 一定能拿到
 loadFontInfo().then(paintFont);
 </script></body></html>"""
+
+# ===== 静态资源分离 (2026-11 提速) =====
+# 整页原来是一次性下发 611KB 文本: 手机走 5G/Tailscale 首屏要等好几秒, 而且每次打开都重下。
+# 拆成 /s.css 与 /s.js 两个带版本号的文件后, 浏览器可长期缓存(immutable),
+# 第二次打开只下十几 KB 的 HTML 外壳; 版本号取内容哈希, 改了代码自动换 URL, 不会读到旧样式。
+import re as _re_asset
+import hashlib as _hl_asset
+import gzip as _gz_asset
+
+_m_css = _re_asset.search(r'<style id="base">(.+?)</style>', HTML, _re_asset.S)
+assert _m_css, "css block not found"
+_CSS_TXT = _m_css.group(1)
+_CSS_BIN = _CSS_TXT.encode()
+_CSS_GZ = _gz_asset.compress(_CSS_BIN, 6)
+_CSS_VER = _hl_asset.sha256(_CSS_BIN).hexdigest()[:10]
+
+_m_js = _re_asset.search(r'<script>\s*(const ALL_CAT.+?)</script></body></html>', HTML, _re_asset.S)
+assert _m_js, "main js block not found"
+_JS_TPL = _m_js.group(1)
+
+# 多语言表也搬进 JS: 它本身有 80KB, 留在 HTML 里会让外壳一直很胖
+_I18N_TAG = '<script>window.__I18N=__I18N__;window.__LANGS=__LANGS__;</script>'
+assert _I18N_TAG in HTML, "i18n tag not found"
+
+HTML = HTML.replace(_m_css.group(0),
+                    '<link rel="stylesheet" href="/s.css?v=' + _CSS_VER + '">')
+HTML = HTML.replace(_I18N_TAG, '')
+HTML = HTML.replace(_m_js.group(0),
+                    '<script src="/s.js?v=__JS_VER__"></script></body></html>')
+
+_JS_CACHE = {"key": None, "ver": "", "gz": b""}
+
+
+def _js_asset():
+    """JS 带 __CAT_NAMES__/__PREVIEW_SEC__ 两个服务端注入点, 按预解码秒数缓存一份。"""
+    key = preview_seconds()
+    if _JS_CACHE["key"] != key:
+        body = ('window.__I18N=' + I18N_JS + ';window.__LANGS=' + LANG_JS + ';\n' + _JS_TPL
+                ).replace("__CAT_NAMES__", json.dumps(CAT_NAMES, ensure_ascii=False)
+                ).replace("__PREVIEW_SEC__", str(key)).encode()
+        _JS_CACHE.update(key=key, ver=_hl_asset.sha256(body).hexdigest()[:10],
+                         raw=body, gz=_gz_asset.compress(body, 6))
+    return _JS_CACHE
 
 
 def ensure_dirs():
@@ -17020,6 +17067,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, "unauthorized".encode(), "text/plain; charset=utf-8")
         return False
 
+    def _send_asset(self, raw, gz, ctype):
+        """静态资源: 预压缩 + 一年缓存 (URL 带内容哈希, 换版本自然换地址)。"""
+        try:
+            ae = (self.headers.get("Accept-Encoding") or "").lower()
+        except Exception:
+            ae = ""
+        use = bool(gz) and ("gzip" in ae)
+        body = gz if use else raw
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        if use:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send(self, code, body, ctype="text/html; charset=utf-8"):
         # gzip: 整页 HTML 约 512KB, 手机走 5G/Tailscale 要好几秒才出首屏;
         # 压缩后约 90KB。只压缩文本类, 视频/切片走别的分支不受影响。
@@ -17292,11 +17357,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._gate():
             return
+        if path == "/s.css":
+            self._send_asset(_CSS_BIN, _CSS_GZ, "text/css; charset=utf-8")
+            return
+        if path == "/s.js":
+            _a = _js_asset()
+            raw = _JS_CACHE.get("raw")
+            if raw is None or _JS_CACHE.get("key") is None:
+                self._send(404, b"not found")
+                return
+            self._send_asset(raw, _a["gz"], "application/javascript; charset=utf-8")
+            return
         if path in ("/", "/index.html"):
-            html = (HTML.replace("__CAT_NAMES__", json.dumps(CAT_NAMES, ensure_ascii=False))
-                    .replace("__I18N__", I18N_JS).replace("__LANGS__", LANG_JS)
-                    .replace("__APP_VER__", APP_VERSION)
-                    .replace("__PREVIEW_SEC__", str(preview_seconds())))
+            html = (HTML.replace("__APP_VER__", APP_VERSION)
+                    .replace("__JS_VER__", _js_asset()["ver"]))
             self._send(200, html.encode())
             return
         elif path == "/api/fan":
