@@ -3585,6 +3585,7 @@ let ovLastDowngradeAt = 0;      // 上次自动降档时间, 防短时间连环�
 let ovNoProgReloads = 0;        // 360p 仍无进度时的重载次数
 let ovQFail = [];               // 本片段加载失败过的档位, 自动降档不再回头试
 let ovNoFrameAt = 0;            // 主路一直没有画面的起始时刻(选高档转不出来时自动降档)
+let ovNoFrameHinted = false;    // 最低档也没画面时只提示一次, 避免每 10 秒刷屏
 let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
 let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
 let ovLADone = -1;             // 已触发"提前预转码下一段"的段序号, 每段只触发一次
@@ -3625,11 +3626,32 @@ function ovModeBadge() {
   const vs = ovVids();
   return (vs.length && vs[0]._composite) ? '服务端合成 · 1 条流' : (vs.length + ' 路同步');
 }
-function ovBadge(txt, ok) {
+let ovBadgeAct = null;
+function ovBadge(txt, ok, act) {
   const b = document.getElementById('ovb');
   if (!b) return;
   b.textContent = txt;
   b.classList.toggle('ok', !!ok);
+  /* 卡死时把提示做成可点的“重试”: 用户不用退出去重进, 点一下右上角就行 */
+  ovBadgeAct = act || null;
+  b.onclick = act ? (e) => { try { e.stopPropagation(); } catch (err) {} try { act(); } catch (err) {} } : null;
+  b.style.cursor = act ? 'pointer' : '';
+  b.title = act ? '点此重试' : '';
+}
+/* 某一路换源后 6 秒还没拿到 metadata: 带 t= 重开一次请求, 最多两次。
+   六路同时换档时服务端排队, 先重开的能出画, 整组就不会一直停在模糊占位。 */
+function ovKickVid(v) {
+  if (!v || !v._base) return false;
+  const now = Date.now();
+  if (v.readyState >= 1) return false;
+  if ((v._retryN || 0) >= 2) return false;
+  if (now - (v._srcAt || 0) < 6000) return false;
+  v._retryN = (v._retryN || 0) + 1;
+  v._srcAt = now;
+  const sep = v._base.indexOf('?') >= 0 ? '&' : '?';
+  try { v.src = v._base + sep + 'q=' + ovQ + '&preview=' + PREV_SEC + '&t=' + now; } catch (e) { return false; }
+  try { v.load(); } catch (e) {}
+  return true;
 }
 function ovResetNoProg() { ovNoProgAt = 0; ovLastProgT = 0; }
 function ovQRank(q) { return OV_Q_ORDER.indexOf(q); }
@@ -3673,7 +3695,9 @@ function ovReloadCurrent() {
     try { v.pause(); } catch (e) {}
     ovHoldFrame(v.parentElement); v._hasFrame = false;
     v.parentElement.classList.remove('playing', 'frame');
-    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&t=' + Date.now();
+    v._pendingAt = at; v._srcAt = Date.now(); v._retryN = 0;
+    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC + '&t=' + Date.now();
+    try { v.load(); } catch (e) {}
     v.addEventListener('loadedmetadata', function h() {
       v.removeEventListener('loadedmetadata', h);
       if (gen !== ovGen) return;
@@ -3705,8 +3729,15 @@ function ovNoProgressRecover() {
   }
   ovNoProgReloads++;
   if (ovNoProgReloads >= 2) {
-    ovBadge('360p 仍无进度, 请切段或重试', true);
-    try { toast('当前片段 360p 仍无进度, 请切换片段重试'); } catch (e) {}
+    /* 360p 还是没画面: 不再默默放弃。先把提示做成可点重试, 再每 10 秒自动重开一次,
+       用户看到的始终是上一帧/模糊封面, 不会黑屏/露播放键 */
+    ovBadge('360p 仍无画面, 点此重试', true, () => { ovNoProgReloads = 0; ovReloadCurrent(); });
+    try { toast('当前片段加载很慢, 已停在上一帧; 点右上角提示可立即重试'); } catch (e) {}
+    ovResetNoProg();
+    setTimeout(() => {
+      const v0 = ovVids()[0];
+      if (ovWantPlay && v0 && !v0.videoWidth) { ovNoProgReloads = 0; ovReloadCurrent(); }
+    }, 10000);
     return;
   }
   ovBadge('360p 无进度, 正在重载当前段…', true);
@@ -3931,12 +3962,14 @@ function ovShot() {
   if (/iPad|iPhone|iPod/.test(navigator.userAgent || '')) {
     const w = window.open('');
     if (w) w.document.write('<img src="' + u + '" style="max-width:100%;display:block">');
+    try { toast('截图已生成, 长按图片可保存'); } catch (e) {}
     return;
   }
   const a = document.createElement('a');
   a.href = u;
   a.download = 'sentry_' + ((ovEv && ovEv.name) || 'shot') + '.jpg';
   a.click();
+  try { toast('截图已保存到下载目录'); } catch (e) {}
 }
 function ovRenderCams(ev) {
   const el = document.getElementById('ovcams');
@@ -4099,28 +4132,44 @@ function ovSetQuality(q, opts) {
   if (btn) { btn.textContent = ovQLabel(q); btn.classList.toggle('hi', q !== '360p'); }
   const vs = ovVids();
   if (!vs.length) return;
-  /* 合成是实时 fMP4, 没有索引不能可靠 seek: 换档从头播, 不拽旧进度 */
+  const gen = ovGen;   /* 连点换档时, 旧档位的延迟 src 赋值必须作废 */
   const at = vs[0]._composite ? 0 : (vs[0].currentTime || 0), playing = !vs[0].paused;
   ovBadge(ovQLabel(q) + (opts.auto ? ' 自动切换中…' : ' 切换中…'));
   /* 某一路一直不 loadedmetadata(转码没生成/网络卡)时不能永远挂在"切换中" */
   let left = vs.length;
   const watchdog = setTimeout(() => {
-    if (left > 0) ovBadge(q + ' 部分画面未就绪, 可再点一次', true);
+    if (left <= 0 || gen !== ovGen) return;
+    /* 还没拿到 metadata 的先主动重开一次请求, 别只弹提示把恢复动作交给用户 */
+    vs.forEach(v => { if (v.readyState < 1) ovKickVid(v); });
+    ovBadge(q + ' 部分画面未就绪, 点此重试', true, () => ovSetQuality(q, { persist: false, keepFail: true }));
   }, 12000);
-  vs.forEach(v => {
-    /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
-    v._qswapped = false;
-    try { v.pause(); } catch (e) {}
-    ovHoldFrame(v.parentElement); v._hasFrame = false;
-    v.parentElement.classList.remove('playing', 'frame');
-    v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + q + '&preview=' + PREV_SEC;
-    v.addEventListener('loadedmetadata', function h() {
-      v.removeEventListener('loadedmetadata', h);
-      try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
-      try { v.playbackRate = ovRateVal; } catch (e) {}
-      if (playing) v.play().catch(() => {});
-      if (--left <= 0) { clearTimeout(watchdog); ovBadge(ovModeBadge(), true); }
-    });
+  vs.forEach((v, i) => {
+    const go = () => {
+      if (gen !== ovGen || !v.isConnected) return;
+      /* 换档后仍是 20 秒预缓冲, 播到点时再自动换完整档 (ovSyncOn 会读 ovQ 用新档换) */
+      v._qswapped = false;
+      try { v.pause(); } catch (e) {}
+      ovHoldFrame(v.parentElement); v._hasFrame = false;
+      v.parentElement.classList.remove('playing', 'frame');
+      v._pendingAt = at; v._srcAt = Date.now(); v._retryN = 0;
+      v.src = v._base + (v._base.indexOf('?') >= 0 ? '&' : '?') + 'q=' + q + '&preview=' + PREV_SEC;
+      /* 明确 load(): 暂停态+换源时浏览器会延后取流, 六格里可能只有一路真的去拉。
+         这里强制每一路立即开始, 不必等用户再点一次播放 */
+      try { v.load(); } catch (e) {}
+      const kick = setTimeout(() => { if (v.readyState < 1) { try { v.load(); } catch (e) {} ovKickVid(v); } }, 7000 + i * 300);
+      v.addEventListener('loadedmetadata', function h() {
+        v.removeEventListener('loadedmetadata', h);
+        clearTimeout(kick);
+        if (gen !== ovGen) return;
+        try { v.currentTime = Math.min(at, Math.max(0, (v.duration || 0) - 0.3)); } catch (e) {}
+        try { v.playbackRate = ovRateVal; } catch (e) {}
+        if (playing || ovWantPlay) v.play().catch(() => {});
+        if (--left <= 0) { clearTimeout(watchdog); ovBadge(ovModeBadge(), true); }
+      });
+      v.addEventListener('error', function eh() { v.removeEventListener('error', eh); if (v.readyState < 1) ovKickVid(v); });
+    };
+    /* 六路不要同一毫秒一起发请求: 错开 250ms, 让前面几路先拿到 metadata */
+    if (i) setTimeout(go, i * 250); else go();
   });
   try { if (!vs.some(v => v._composite)) fetch('/api/kick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths: vs.map(v => v._base), q: q }) }).catch(() => {}); } catch (e) {}
@@ -4156,7 +4205,7 @@ function ovBuildGrid(ev, ix) {
   const g = document.getElementById('ovgrid');
   if (!g) return;
   ovClipIx = ix || 0;
-  ovResetNoProg(); ovLastDowngradeAt = 0; ovNoProgReloads = 0;
+  ovResetNoProg(); ovLastDowngradeAt = 0; ovNoProgReloads = 0; ovNoFrameHinted = false;
   const nativeVids = ovPickVids(ev, ix);
   /* 哨兵事件的触发机位: 只用来给原生那几路的机位标签标红, 合成格不参与 */
   const trigCam = (ev && ev.meta && ev.meta.camera != null && isSentryEv(ev.meta))
@@ -4167,6 +4216,24 @@ function ovBuildGrid(ev, ix) {
     /* 合成播放器在总览里也只占一个 vcell: 服务端拼好整条, 前端只解码一条流 */
     vids = [{ cam: 'all', url: compositeBase(nativeVids), _composite: true, _nativeN: nativeVids.length }];
   }
+  /* 换记录/换分钟段: 上一段的冻结帧必须清掉。
+     六个格子是复用的, 不清就会把上一条记录的画面继续盖在新片段上 (看起来像放错视频) */
+  try {
+    const evKey = ((ev && ev._cat) || '') + '/' + ((ev && ev.name) || '');
+    if (g.dataset.evKey !== evKey) {
+      g.dataset.evKey = evKey;
+      compositeFallback = false;   /* 换一条记录允许重新试服务端合成, 不因上一条超时就永远退回六路 */
+    }
+    const key0 = evKey + '#' + (ix || 0) + '#' + ((vids[0] && vids[0].url) || '');
+    if (g.dataset.clipKey !== key0) {
+      g.dataset.clipKey = key0;
+      [...g.querySelectorAll('.ovcell')].forEach(c => {
+        c.classList.remove('hold');
+        const fz = c.querySelector('.ovfreeze');
+        if (fz) fz.removeAttribute('src');
+      });
+    }
+  } catch (e) {}
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
@@ -4186,6 +4253,19 @@ function ovBuildGrid(ev, ix) {
     cell.appendChild(fz);
     ['playing','waiting','emptied','pause','ended','loadeddata','seeked','timeupdate']
       .forEach(en => vid.addEventListener(en, ovCoverSync));
+    /* 每个 video 节点只绑一次: 换档/重试重新挂 src 后, metadata 一到就落到待播位置并接着播,
+       不依赖某一次 ovSetQuality 里的临时回调 (那个回调一旦错过就再也播不起来) */
+    if (!vid._metaBound) {
+      vid._metaBound = true;
+      vid.addEventListener('loadedmetadata', function () {
+        const at = vid._pendingAt;
+        if (at != null) {
+          try { vid.currentTime = Math.min(at, Math.max(0, (vid.duration || 0) - 0.3)); } catch (e) {}
+        }
+        try { vid.playbackRate = ovRateVal; } catch (e) {}
+        if (ovWantPlay) vid.play().catch(() => {});
+      });
+    }
     /* 卡顿发生的瞬间, 视频元素里还是最后一帧: 先抓成图盖住, 免得浏览器自己变黑/变白 */
     ['waiting', 'stalled'].forEach(en => vid.addEventListener(en, () => ovHoldFrame(cell)));
     const lb = document.createElement('span'); lb.className = 'ovcam';
@@ -4240,21 +4320,23 @@ function ovBuildGrid(ev, ix) {
       }
       vid._base = v.url; vid._qswapped = false; vid._composite = isComp;
       vid._hasFrame = false;   /* 换段/换源后重新等首帧, 出过画面才停帧 */
+      vid._srcAt = Date.now(); vid._retryN = 0; vid._pendingAt = null;
       const src = isComp ? (v.url + '&q=' + ovQ)
         : (v.url + (v.url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + ovQ + '&preview=' + PREV_SEC);
       if (vid.getAttribute('src') !== src) {
         try { vid.pause(); } catch (e) {}
         vid.src = src;
+        try { vid.load(); } catch (e) {}
         if (isComp) {
           const cg = ovGen;
           setTimeout(() => {
             if (cg !== ovGen || !vid.isConnected || !vid._composite) return;
             if (vid.readyState < 1 && !compositeFallback) {
               compositeFallback = true;
-              try { toast('服务端合成 8 秒没有画面, 已退回六路原生'); } catch (e) {}
+              try { toast('服务端合成 20 秒没有画面, 已退回六路原生'); } catch (e) {}
               ovBuildGrid(ovEv, ovClipIx);
             }
-          }, 8000);
+          }, 20000);
         }
       } else {
         try { vid.currentTime = 0; } catch (e) {}
@@ -4347,6 +4429,8 @@ function ovSyncOn() {
     if (main) {
       const now = Date.now();
       ovNoteActualQ(main);
+      /* 任一路换源后一直没有 metadata: 主动重开请求 (最多两次), 不等用户点 */
+      vs.forEach(v => { if (v.readyState < 1) ovKickVid(v); });
       const progressing = ovWantPlay && !main.paused && !main.ended && !main.seeking &&
         !ovSwapping && ovPendingSeek == null && !ovAutoLock;
       if (progressing) {
@@ -4356,7 +4440,7 @@ function ovSyncOn() {
         } else if (!ovNoProgAt) {
           ovNoProgAt = now;
         }
-        if (ovNoProgAt && now - ovNoProgAt >= 8000 && now - ovLastDowngradeAt > 3000) {
+        if (ovNoProgAt && now - ovNoProgAt >= 12000 && now - ovLastDowngradeAt > 3000) {
           ovLastDowngradeAt = now; ovNoProgAt = now;
           ovNoProgressRecover();
         }
@@ -4367,7 +4451,7 @@ function ovSyncOn() {
          和"卡住没进度"是两件事: 这里连第一帧都没有 */
       if (ovWantPlay && !ovSwapping && ovPendingSeek == null && !ovAutoLock && !main.videoWidth) {
         if (!ovNoFrameAt) ovNoFrameAt = now;
-        else if (now - ovNoFrameAt >= 10000 && now - ovLastDowngradeAt > 3000) {
+        else if (now - ovNoFrameAt >= 14000 && now - ovLastDowngradeAt > 3000) {
           const nq0 = ovNextLowerQ(ovQ);
           if (nq0 && ovQFail.indexOf(ovQ) < 0) {
             ovQFail.push(ovQ);
@@ -4375,7 +4459,15 @@ function ovSyncOn() {
             ovBadge(ovQLabel(ovQ) + ' 迟迟没有画面, 自动降 ' + ovQLabel(nq0), true);
             try { toast(ovQLabel(ovQ) + ' 没转好, 已自动切到 ' + ovQLabel(nq0)); } catch (e) {}
             ovSetQuality(nq0, { persist: false, auto: true, keepFail: true });
-          } else ovNoFrameAt = now;
+          } else {
+            /* 已经是最低档 360p 仍没画面: 别只重置计时干等, 给可点重试并提示 */
+            ovBadge('360p 仍无画面, 点此重试', true, () => { ovNoFrameAt = 0; ovReloadCurrent(); });
+            if (!ovNoFrameHinted) {
+              ovNoFrameHinted = true;
+              try { toast('当前片段 360p 也转不出来, 已停在缩略图; 点右上角提示可重试'); } catch (e) {}
+            }
+            ovNoFrameAt = now;
+          }
         }
       } else {
         ovNoFrameAt = 0;
@@ -6236,18 +6328,28 @@ let liveCam = localStorage.getItem('tsflivecam') || 'front';
 const LIVE_Q_STORE_KEY = 'tsfliveq-' + Q_NET_MODE;
 let liveQ = localStorage.getItem(LIVE_Q_STORE_KEY) || '';
 let liveFolder = '', liveTimer = null, liveBusy = false, liveLoading = false, liveSyncTimer = null, liveEv = null;
+let liveFailN = 0;   /* 连续检查失败次数: 上行被视频占满时偶发超时, 不立刻吓唬用户 */
+let liveUserPaused = false;   /* 用户主动按过暂停: 多路全景不要自动给他恢复 */
 function liveQv() { return liveQ || curQ || 'orig'; }
-function lvUrl(u, full) {
-  const q = liveQv();
+function lvUrl(u, full, qOverride) {
+  const q = qOverride || liveQv();
   /* live=1: 服务端据此把实时浏览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
   const sep = u.indexOf('?') < 0 ? '?' : '&';
   if (q === 'orig') return u + sep + 'live=1';
   /* 先要 20 秒快速短档秒开 (与主播放器一致), 播到点再换完整档; full=true 取完整档 */
   return u + sep + 'q=' + q + (full ? '' : '&preview=' + PREV_SEC) + '&live=1';
 }
+/* 多路全景: 6/4 路同时拉 1080p/原画会把上行打满, 实测四路全黑。
+   全景统一压到 480p (单路仍按用户选择), 先保证每一路都能出画面。 */
+function lvGridQ() {
+  const q = liveQv();
+  if (q === 'orig' || q === '1080p' || q === '720p') return '480p';
+  return q;
+}
 /* 实时浏览快速起播后换完整档: 播过预缓冲秒数就把 src 换成完整档并接回当前位置, 只换一次 */
-function lvArmSwap(el, baseUrl) {
-  if (liveQv() === 'orig') return;
+function lvArmSwap(el, baseUrl, qOverride) {
+  const q = qOverride || liveQv();
+  if (q === 'orig') return;
   el._lvSwapped = false;
   el.addEventListener('timeupdate', function h() {
     if (el._lvSwapped || (el.currentTime || 0) <= Math.max(8, PREV_SEC - 5)) return;
@@ -6258,7 +6360,15 @@ function lvArmSwap(el, baseUrl) {
       try { el.currentTime = Math.min(at, Math.max(0, (el.duration || 0) - 0.3)); } catch (e) {}
       el.play().catch(() => {}); };
     el.addEventListener('loadedmetadata', resume);
-    try { el.src = lvUrl(baseUrl, true); } catch (e) {}
+    try { el.src = lvUrl(baseUrl, true, q); } catch (e) {}
+    /* 完整档转不出来/太慢: 5 秒还没 metadata 就退回 20 秒预览档继续播,
+       否则多路全景会一直停在模糊封面 (视频已 paused, 画面永远不揭开) */
+    setTimeout(() => {
+      if (!el.isConnected || el.readyState >= 1) return;
+      try { el.src = lvUrl(baseUrl, false, q); } catch (e) {}
+      el.addEventListener('loadedmetadata', resume, { once: true });
+      el.play().catch(() => {});
+    }, 5000);
   });
 }
 /* ===== 实时浏览全屏: 悬浮播放条 + 自动隐藏 + 锁横屏 (与主播放器一致体验) ===== */
@@ -6295,6 +6405,7 @@ function lvSyncBar() {
 function lvPlayToggle() {
   const vs = lvVids(); if (!vs.length) return;
   const any = vs.some(v => !v.paused && !v.ended);
+  liveUserPaused = any;
   vs.forEach(v => { if (any) v.pause(); else v.play().catch(() => {}); });
   lvSyncBar();
 }
@@ -6429,6 +6540,7 @@ function closeLive() {
 }
 function renderLive(ev) {
   liveEv = ev;
+  liveUserPaused = false;   /* 换片段/换视角默认继续播 */
   document.getElementById('lv-name').textContent = '最新片段: ' + ev.name.replace(/_/g, ' ');
   const vids = camSort(ev.videos || []);
   if (!vids.length) return;
@@ -6459,6 +6571,7 @@ function renderLive(ev) {
     buildLiveGrid(liveCam === '__quad' ? quadVids : vids);
   } else {
     clearLiveGrid();
+    lvQSync();
     vid.style.display = '';
     if (stage) stage.style.display = '';
     const v = vids.find(x => x.cam === liveCam) || vids[0];
@@ -6491,6 +6604,12 @@ function buildLiveGrid(vids) {
   g.innerHTML = '';
   g.classList.add('on');
   g.classList.toggle('n1', vids.length === 1);
+  const gq = lvGridQ();
+  if (gq !== liveQv()) {
+    try { toast('多路全景已按 ' + lvQText(gq) + ' 加载, 避免上行被 6 路打满'); } catch (e) {}
+    const qb = document.getElementById('lv-q');
+    if (qb) qb.textContent = lvQText(gq) + '·全景';
+  }
   vids.forEach((v, ix) => {
     const cell = document.createElement('div');
     cell.className = 'lvcell';
@@ -6515,9 +6634,10 @@ function buildLiveGrid(vids) {
       liveCam = v.cam; localStorage.setItem('tsflivecam', liveCam); if (liveEv) renderLive(liveEv);
     };
     g.appendChild(cell);
-    /* 逐路上屏: 每路错开 350ms, 避免 4 路同时抢占上行 */
+    /* 逐路上屏: 每路错开 500ms, 避免 4/6 路同时抢占上行 */
     el.oncanplay = null;
-    setTimeout(() => { if (!el.getAttribute('src')) { el.src = lvUrl(v.url); lvArmSwap(el, v.url); } }, ix * 350);
+    el._lvBase = v.url; el._lvQ = gq; el._srcAt = Date.now(); el._retryN = 0;
+    setTimeout(() => { if (!el.getAttribute('src')) { el.src = lvUrl(v.url, false, gq); try { el.load(); } catch (e) {} lvArmSwap(el, v.url, gq); } }, ix * 500);
   });
   lvCoverSync();
   /* 每秒对齐一次进度, 任一路拖进度条/暂停 → 其余跟随 */
@@ -6525,7 +6645,19 @@ function buildLiveGrid(vids) {
   liveSyncTimer = setInterval(() => {
     const vs = [...g.querySelectorAll('video')];
     if (!vs.length) return;
+    /* 多路全景某一路 8 秒还没 metadata: 自动重挂一次 (带 t= 破缓存), 不再让格子永远模糊 */
+    const now0 = Date.now();
+    vs.forEach(v => {
+      if (v.readyState < 1 && v._lvBase && now0 - (v._srcAt || 0) > 8000 && (v._retryN || 0) < 1) {
+        v._retryN = 1; v._srcAt = now0;
+        try { v.src = lvUrl(v._lvBase, false, v._lvQ) + '&t=' + now0; v.load(); } catch (e) {}
+      }
+    });
     const lead = vs.find(v => !v.paused && !v.seeking) || vs[0];
+    /* 换完整档会先把视频暂停, 数据到了要自己接着播; 用户主动暂停过就不插手 */
+    if (!liveUserPaused) {
+      vs.forEach(v => { if (v.paused && !v.ended && v.readyState >= 2) v.play().catch(() => {}); });
+    }
     vs.forEach(v => {
       if (v === lead) return;
       if (Math.abs((v.currentTime || 0) - (lead.currentTime || 0)) > 0.45) v.currentTime = lead.currentTime;
@@ -6546,7 +6678,13 @@ async function liveTick() {
     finally { clearTimeout(to); }
     let r = null;
     try { r = JSON.parse(txt); } catch (e) {}
-    if (!r) { st.textContent = '检查暂时不可达, 下轮重试…'; return; }
+    if (!r) {
+      /* 偶发一次超时 (多路视频占满上行) 不改状态栏; 连续两次才提示, 避免误报 */
+      liveFailN++;
+      if (liveFailN >= 2) st.textContent = '检查暂时不可达, 下轮重试…';
+      return;
+    }
+    liveFailN = 0;
     /* 状态文字先更新: 下面的全量列表刷新可能很慢 (设备负载高时数秒), 不能让它挡住状态栏 */
     if (!r.folder) st.textContent = '归档里还没有行车片段';
     else {
@@ -6565,7 +6703,10 @@ async function liveTick() {
         if (ev && document.getElementById('livep').classList.contains('open')) renderLive(ev);
       }).catch(() => {}).finally(() => { liveLoading = false; });
     }
-  } catch (e) { st.textContent = '检查暂时不可达, 下轮重试…'; }
+  } catch (e) {
+    liveFailN++;
+    if (liveFailN >= 2) st.textContent = '检查暂时不可达, 下轮重试…';
+  }
   finally { liveBusy = false; }
 }
 function liveRestart() {
