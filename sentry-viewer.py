@@ -731,7 +731,8 @@ BRAND_LOGO_B64 = (
 def load_settings():
     d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
          "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10,
-         "lib_ttl_days": 7, "amap_key": "", "open_view": "all", "open_autoplay": True}
+         "lib_ttl_days": 7, "amap_key": "", "open_view": "all", "open_autoplay": True,
+         "drive_lock": True}
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -774,6 +775,9 @@ def load_settings():
                 d["open_view"] = ov
             if "open_autoplay" in j:
                 d["open_autoplay"] = bool(j["open_autoplay"])
+            # 行车锁: 车机写入(行车中)时禁止读虚拟U盘镜像, 默认开
+            if "drive_lock" in j:
+                d["drive_lock"] = bool(j["drive_lock"])
             st = str(j.get("ui_style") or "")
             if st in ("default", "apple", "claude", "pixel"):
                 d["ui_style"] = st
@@ -2365,6 +2369,15 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div id="usb-status" style="display:none;margin-bottom:10px"></div>
     <div id="usb-hint" class="hint">浏览和管理车机U盘 (特斯拉写入的镜像)。连接后会临时断开车机读取几秒，5 分钟无操作自动恢复。</div>
+    <div id="drivelock-panel" class="arc-clean" style="margin-bottom:10px">
+      <div class="arc-clean-head"><b>行车锁</b><span class="hint" id="drivelock-state">…</span></div>
+      <div class="arc-clean-row">
+        <label class="hint" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input id="drivelock-on" type="checkbox" onchange="saveDriveLock()"> 行车中锁定虚拟U盘
+        </label>
+      </div>
+      <div class="hint">开启后，车机正在写 U 盘（行车中）时禁止连接/读取虚拟U盘镜像，避免与车机抢读写导致掉盘；停车后自动解锁。归档区视频回放不受影响，随时可看。</div>
+    </div>
     <div id="storage-panel" class="storage-card">
       <div class="storage-head">
         <b style="font-size:13px">设备与存储 · 虚拟U盘</b>
@@ -8889,6 +8902,9 @@ function switchArea(a) {
   document.getElementById('usb-hint').style.display = a === 'usb' ? '' : 'none';
   const sp = document.getElementById('storage-panel');
   if (sp) sp.style.display = a === 'usb' ? '' : 'none';   /* 虚拟U盘设置只在「车机U盘」子页显示 */
+  const dl = document.getElementById('drivelock-panel');
+  if (dl) dl.style.display = a === 'usb' ? '' : 'none';   /* 行车锁只在「车机U盘」子页显示 */
+  if (a === 'usb') loadDriveLock();
   document.getElementById('arch-hint').style.display = a === 'archive' ? '' : 'none';
   const pw = document.getElementById('pwwrap');
   if (pw) pw.style.display = a === 'archive' ? '' : 'none';   /* 预缓冲/缩略图进度只在「归档区」子页显示 */
@@ -8910,6 +8926,7 @@ function usbStatusHtml(attached, msg) {
     '<button onclick="usbDetach()" style="background:#242c35;border:none;color:#e8eaed;border-radius:8px;padding:7px 16px;font-size:12.5px;cursor:pointer;margin-top:6px">✅ 恢复车机导出</button></div>';
 }
 async function usbAttach() {
+  if (DRIVE_LOCK_STATE.locked) { toast('🔒 行车锁：车机正在写入U盘，停车后自动解锁；归档区可正常回放'); return; }
   toast('⏳ 正在连接 (车机读取将断开几秒)...');
   const r = await fetch('/api/usb/attach', { method: 'POST' });
   const j = await r.json();
@@ -8923,6 +8940,32 @@ async function usbDetach() {
   document.getElementById('dir-nav').style.display = 'none';
   refreshFiles();
 }
+/* 行车锁: 车机写入(行车中)禁止读虚拟U盘镜像; 归档区不受影响 */
+let DRIVE_LOCK_STATE = {on: true, locked: false, car_writing: false};
+async function loadDriveLock() {
+  try {
+    const j = await (await fetch('/api/drive_lock', {cache: 'no-store'})).json();
+    DRIVE_LOCK_STATE = j;
+    const cb = document.getElementById('drivelock-on');
+    if (cb) cb.checked = !!j.on;
+    const st = document.getElementById('drivelock-state');
+    if (st) {
+      if (!j.on) st.textContent = '已关闭';
+      else if (j.locked) st.textContent = '🔒 行车中 · 虚拟U盘已锁定（停车后自动解锁）';
+      else st.textContent = '🟢 已开启 · 车机空闲，可正常读取';
+    }
+  } catch (e) {}
+}
+async function saveDriveLock() {
+  const on = document.getElementById('drivelock-on').checked;
+  try {
+    const j = await (await fetch('/api/drive_lock', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({on: on})})).json();
+    toast(j.ok ? (on ? '✅ 行车锁已开启' : '✅ 行车锁已关闭') : '❌ 保存失败');
+    loadDriveLock();
+  } catch (e) { toast('❌ 保存失败'); }
+}
+setInterval(loadDriveLock, 5000);
 function goDir(d) {
   if (area === 'usb') {
     d = (d || '').trim().replace(/^\/+|\/+$/g, '');
@@ -9410,6 +9453,9 @@ def usb_attach():
     with usb_lock:
         if usb_attached and os.path.ismount(MNT):
             return True, "already"
+        # 行车锁: 车机正在写镜像(行车中)时禁止读取虚拟U盘, 停车后自动解锁
+        if drive_lock_on() and car_writing():
+            return False, "行车锁：车机正在写入U盘（行车中），暂不能读取虚拟U盘；停车后自动解锁，归档区可正常回放"
         # 先拿跨进程锁再动 UDC: 归档/自愈正在操作镜像时直接让开, 不抢 loop 与挂载点。
         # 在线同步只短暂持共享锁, 等它放开即可, 避免用户偶发"点不动 U盘管理"。
         for _ in range(6):
@@ -11933,6 +11979,37 @@ def car_writing():
 def car_cpu_prefix():
     """车机写入时把 ffmpeg 钉在 0-2 核(留一核给 OTG), 空闲时返回空=全额 4 核。"""
     return ["taskset", "-c", "0-2"] if car_writing() else []
+
+
+# ---------------- 行车锁 (虚拟U盘读取保护) ----------------
+# 行车中(车机正在写镜像)禁止连接/读取虚拟U盘镜像, 避免与车机抢读写导致 OTG 掉盘;
+# 归档区是独立副本, 回放/实时预览不受影响。开关在网页「车机U盘」页, 默认开。
+DRIVE_LOCK = {"on": True, "locked": False, "car_writing": False, "since": 0.0}
+
+
+def drive_lock_on():
+    return bool(load_settings().get("drive_lock", True))
+
+
+def drive_watch_loop():
+    """行车锁看门狗: 每 3s 跟踪车机写入状态供页面显示; 若行车锁开启且车机正在写入时
+    镜像仍被本地挂载(异常态), 主动归还车机导出, 车机写入永远第一优先。"""
+    while True:
+        try:
+            cw = car_writing()
+            on = drive_lock_on()
+            locked = on and cw
+            if locked and not DRIVE_LOCK["locked"]:
+                DRIVE_LOCK["since"] = time.time()
+            DRIVE_LOCK["on"] = on
+            DRIVE_LOCK["car_writing"] = cw
+            DRIVE_LOCK["locked"] = locked
+            if locked and usb_attached and os.path.ismount(MNT):
+                print("drive-watch: 车机写入中, 自动恢复车机导出 (行车锁)")
+                usb_detach_safe()
+        except Exception as e:
+            print("drive-watch error:", e)
+        time.sleep(3)
 
 
 # 启动爬坡: 重启/清缓存后预热补欠账别一上来就满并发(实测 load 冲 9.8),
@@ -17303,6 +17380,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, **tel})
         elif path == "/api/live":
             self._json(live_status())
+        elif path == "/api/drive_lock":
+            self._json({"on": drive_lock_on(), "locked": DRIVE_LOCK["locked"],
+                        "car_writing": car_writing(), "attached": bool(usb_attached),
+                        "car_age": round(usb_img_age(), 1)})
         elif path == "/api/auth/info":
             self._json({"user": AUTH_USER, "on": AUTH_ON})
         elif path == "/api/notify":
@@ -18394,6 +18475,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "open_view": s.get("open_view", "all"),
                         "open_autoplay": s.get("open_autoplay", True)})
             return
+        if path == "/api/drive_lock":
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            on = bool(body.get("on", True))
+            save_settings({"drive_lock": on})
+            DRIVE_LOCK["on"] = on
+            self._json({"ok": True, "on": on, "locked": on and car_writing()})
+            return
         if path == "/api/amap/key":
             body = self._read_json()
             if body == "TOOBIG" or not isinstance(body, dict):
@@ -18993,5 +19084,6 @@ if __name__ == "__main__":
     threading.Thread(target=archive_cleanup_loop, daemon=True).start()
     threading.Thread(target=lib_cleaner_loop, daemon=True).start()   # 作品库按保留天数定时清理
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
+    threading.Thread(target=drive_watch_loop, daemon=True).start()   # 行车锁看门狗
     srv.serve_forever()
 
