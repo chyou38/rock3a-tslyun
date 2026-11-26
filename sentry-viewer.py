@@ -5839,7 +5839,9 @@ function loadTelemetry(url, meta) {
   if (_co) _co.textContent = (TEL_META.est_lat && TEL_META.est_lon) ? (TEL_META.est_lat + ', ' + TEL_META.est_lon) : '—';
   /* 地点和坐标都没有时整块不占位, 免得留两行空标签 */
   const _pl = document.querySelector('#tpanel .tp-place');
-  if (_pl) _pl.style.display = (locShort(TEL_META) || (TEL_META.est_lat && TEL_META.est_lon)) ? '' : 'none';
+  const _hasPlace = !!(locShort(TEL_META) || (TEL_META.est_lat && TEL_META.est_lon));
+  if (_pl) _pl.style.display = _hasPlace ? '' : 'none';
+  if (!_hasPlace && !TEL) p.classList.remove('show');   /* 没遥测又没地点: 整块别显示 */
   // 触发画面摄像头: 只有哨兵事件显示 (手动保存等也会带无意义的 camera:"0")
   /* 触发机位不再单独写一行文字: 直接标在对应那一路的机位标签上(标红) */
   const camTag = document.getElementById('tp-tag');
@@ -5895,9 +5897,11 @@ function showPlainPanel() {
   const p = document.getElementById('tpanel'), card = document.getElementById('infocard');
   p.classList.add('show', 'plain');
   p.classList.remove('stale');
-  /* 连地点/坐标都没有就别留一个空面板 */
+  /* 连地点/坐标都没有(或地点文字是空的)就别留一个空面板: 否则播放区上面会多出一条白框 */
   const _pl2 = document.querySelector('#tpanel .tp-place');
-  if (_pl2 && _pl2.style.display === 'none') p.classList.remove('show');
+  const _txt = _pl2 ? (_pl2.innerText || '').replace(/\s+/g, '') : '';
+  const _hasPlace2 = !!_txt && _txt.replace(/位置未知|未知/g, '') !== '';
+  if (!_pl2 || _pl2.style.display === 'none' || !_hasPlace2) p.classList.remove('show');
   if (card) card.classList.add('plain');
   ['time', 'city', 'street', 'camera'].forEach(k => {
     const el = document.querySelector('#ic-rows > div[data-k="' + k + '"]');
