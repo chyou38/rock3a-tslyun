@@ -2585,7 +2585,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       </select>
     </div>
     <div class="hint" id="play-mode-state">—</div>
-    <div class="hint" style="color:#8b96a3">服务端合成: 盒子把多路拼成一条 fMP4 再传, 远程只占一条连接; 第一版只支持连续播放, 不拖动。8 秒没有画面会自动退回六路原生。</div>
+    <div class="hint" style="color:#8b96a3">服务端合成: 盒子把多路拼成一条 fMP4 再传, 远程只占一条连接; 第一版只支持连续播放, 不拖动。20 秒没有画面会自动退回六路原生。</div>
     <div class="updrow"><span class="updk">打开默认视角</span>
       <select id="open-view" class="arc-select" onchange="setOpenView(this.value)">
         <option value="all">六路全景</option>
@@ -5822,10 +5822,10 @@ function renderClip() {
         if (cg !== compositeGen || !vid.isConnected || !vid._composite) return;
         if (vid.readyState < 1 && !compositeFallback) {
           compositeFallback = true;
-          try { toast('服务端合成 8 秒没有画面, 已退回六路原生'); } catch (e) {}
+          try { toast('服务端合成 20 秒没有画面, 已退回六路原生'); } catch (e) {}
           renderClip();
         }
-      }, 8000);
+      }, 20000);
     }
     vid.muted = true; vid.defaultMuted = true; vid.preload = 'metadata';
     /* 每格加载状态: 转码/缓冲时显示提示, 避免黑屏让人以为坏了 */
