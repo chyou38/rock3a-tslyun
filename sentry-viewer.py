@@ -6441,7 +6441,41 @@ let liveQ = localStorage.getItem(LIVE_Q_STORE_KEY) || '';
 let liveFolder = '', liveTimer = null, liveBusy = false, liveLoading = false, liveSyncTimer = null, liveEv = null;
 let liveFailN = 0;   /* 连续检查失败次数: 上行被视频占满时偶发超时, 不立刻吓唬用户 */
 let liveUserPaused = false;   /* 用户主动按过暂停: 多路全景不要自动给他恢复 */
+let liveCompFallback = false; /* 全景合成失败一次后本次浏览就退回六路原生, 不再反复试 */
 function liveQv() { return liveQ || curQ || 'orig'; }
+function liveCompositeUrl(list, q) {
+  return '/api/composite/stream?' + list.map(v => 'p=' + encodeURIComponent(v.url)).join('&') + '&q=' + encodeURIComponent(q);
+}
+/* 全景 = 服务端合成一条流: 盒子只跑一个 ffmpeg 进程, 浏览器只拉一路, 不用 6 路抢上行 */
+function liveCompositePlay(list, ev) {
+  const vid = document.getElementById('lv-video');
+  const stage = document.getElementById('lvstage');
+  clearLiveGrid();
+  vid.style.display = '';
+  if (stage) stage.style.display = '';
+  /* 占位底图: 第一路缩略图模糊垫底, 与单路一致 */
+  const cbg = document.getElementById('lvcoverbg');
+  const turl = list[0].url.replace('/media/', '/thumb/');
+  if (cbg && cbg.getAttribute('src') !== turl) cbg.src = turl;
+  let failed = false;
+  const fail = () => {
+    if (failed) return;
+    failed = true;
+    liveCompFallback = true;
+    try { toast('全景合成无画面, 已退回六路原生'); } catch (e) {}
+    if (liveEv) renderLive(liveEv);
+  };
+  vid.addEventListener('loadedmetadata', () => {
+    try { vid.currentTime = 0.05; } catch (e) {}
+    if (OPEN_AUTOPLAY) vid.play().catch(() => {});
+    layoutLive(); lvCoverSync();
+  }, { once: true });
+  vid.addEventListener('error', fail, { once: true });
+  vid._lvBase = ''; vid._lvSwapped = true;   /* 合成流不做 20 秒档替换 */
+  vid.src = liveCompositeUrl(list, lvGridQ());
+  try { vid.load(); } catch (e) {}
+  setTimeout(() => { if (!vid.isConnected) return; if (vid.readyState < 1) fail(); }, 9000);
+}
 function lvUrl(u, full, qOverride) {
   const q = qOverride || liveQv();
   /* live=1: 服务端据此把实时浏览在看的文件提到转码优先级第一档 (与哨兵告警并列) */
@@ -6603,12 +6637,14 @@ function lvCycleQ() {
 }
 function setLiveQ(v) {
   liveQ = v;
+  liveCompFallback = false;
   localStorage.setItem(LIVE_Q_STORE_KEY, v);
   lvQSync();
   if (liveEv) renderLive(liveEv);
 }
 function latestLiveEv() { const arr = (data && data.RecentClips) || []; return arr[0] || null; }
 function openLive() {
+  liveCompFallback = false;
   closeOvFull();   /* 行车记录等全屏播放浮层开着时切实时浏览: 先收掉, 免得盖住实时浏览且无法返回 */
   try { localStorage.setItem('tsf_cat', '__live__'); } catch (e) {}
   document.getElementById('livep').classList.add('open');
@@ -6665,7 +6701,7 @@ function renderLive(ev) {
     const b = document.createElement('button');
     b.className = 'lvbtn' + (cam === liveCam ? ' on' : '');
     b.textContent = label;
-    b.onclick = () => { liveCam = cam; localStorage.setItem('tsflivecam', liveCam); renderLive(ev); };
+    b.onclick = () => { liveCam = cam; liveCompFallback = false; localStorage.setItem('tsflivecam', liveCam); renderLive(ev); };
     row.appendChild(b);
   };
   /* 顺序固定: 六路全景 / 四路全景 / 左前翼 / 前视 / 右前翼 / 左B柱 / 后视 / 右B柱 */
@@ -6676,10 +6712,16 @@ function renderLive(ev) {
   const grid = document.getElementById('lv-grid');
   const stage = document.getElementById('lvstage');
   if (liveCam === '__all' || liveCam === '__quad') {
-    vid.style.display = 'none';
-    if (stage) { stage.style.display = 'none'; stage.classList.remove('playing'); }
-    try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (err) {}
-    buildLiveGrid(liveCam === '__quad' ? quadVids : vids);
+    const list = (liveCam === '__quad' ? quadVids : vids);
+    /* 全景优先走服务端合成: 一条流顶 6 路, 上行从 6 份降到 1 份 */
+    if (!liveCompFallback && list.length >= 2) {
+      liveCompositePlay(list, ev);
+    } else {
+      vid.style.display = 'none';
+      if (stage) { stage.style.display = 'none'; stage.classList.remove('playing'); }
+      try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (err) {}
+      buildLiveGrid(list);
+    }
   } else {
     clearLiveGrid();
     lvQSync();
