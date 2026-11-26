@@ -9148,7 +9148,9 @@ async function refreshFiles(dir) {
     j = await (await fetch('/api/browse?dir=' + encodeURIComponent(curDir))).json();
     statusEl.style.display = 'none';
     if (!j.ok) { toast('❌ ' + (j.msg || '目录不可访问')); return; }
-    nav.style.display = 'block';
+    /* 归档区不再提供手动文件管理: 事件目录由归档/清理逻辑统一管,
+       手动移动/改名会破坏同一事件的片段配对, 这里直接整块不显示 */
+    nav.style.display = 'none';
   }
   curDir = area === 'usb' ? j.dir : j.dir;
   document.getElementById('dest-dir').value = curDir;
