@@ -2420,12 +2420,13 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
         <b style="font-size:12.5px">新建存储方案 <span class="storage-danger">(会清空所选硬盘)</span></b>
         <div class="storage-form-row">
           <span>选择硬盘</span>
-          <select id="alloc-device" class="storage-select" onchange="storageAllocCalc()"></select>
+          <select id="alloc-device" class="storage-select" onchange="allocSizeTouched=false;storageAllocCalc()"></select>
         </div>
-        <div class="storage-slider-row">
-          <span>虚拟U盘占比</span>
-          <input id="alloc-percent" class="storage-range" type="range" min="10" max="90" value="50" oninput="storageAllocCalc()">
-          <span id="alloc-percent-text" class="storage-percent">50%</span>
+        <div class="storage-form-row">
+          <span>虚拟U盘容量</span>
+          <input id="alloc-size" class="storage-select" type="number" min="4" step="1" inputmode="numeric" value="" oninput="allocSizeTouched=true;storageAllocCalc()" style="width:96px">
+          <span class="storage-percent">G</span>
+          <span id="alloc-size-max" class="storage-meta"></span>
         </div>
         <div id="alloc-calc" class="hint storage-calc"></div>
         <button class="storage-init" onclick="storageInit()">格式化并创建虚拟U盘</button>
@@ -8847,32 +8848,35 @@ async function refreshStorage() {
     if (body) body.hidden = false;
   }
 }
+let allocSizeTouched = false;
 function storageAllocCalc() {
-  const pctEl = document.getElementById('alloc-percent');
-  const pctText = document.getElementById('alloc-percent-text');
+  const sizeEl = document.getElementById('alloc-size');
   const devEl = document.getElementById('alloc-device');
   const out = document.getElementById('alloc-calc');
-  if (!pctEl || !pctText || !devEl || !out) return;
-  const pct = +pctEl.value;
-  pctText.textContent = pct + '%';
+  const maxEl = document.getElementById('alloc-size-max');
+  if (!sizeEl || !devEl || !out) return;
   const dev = devEl.value, info = storageFindDisk(dev);
   if (!info) { out.textContent = '请选择要分配的 USB 硬盘'; storageInitButtonOk(false); return; }
   const total = info.size_bytes / 1073741824;
-  const v = Math.floor(total * pct / 100), a = Math.floor(total) - v;
+  const maxV = Math.floor(total) - 4;
+  if (maxEl) maxEl.textContent = '可填 4 - ' + maxV + 'G，剩下留给归档区';
+  if (!allocSizeTouched || !sizeEl.value) sizeEl.value = Math.floor(total / 2);
+  const v = Math.floor(+sizeEl.value || 0), a = Math.floor(total) - v;
   const sizeOk = total >= 8 && v >= 4 && a >= 4;
   out.innerHTML = '虚拟U盘: <b>' + v + 'G</b> · 归档区: <b>' + a + 'G</b> (整块硬盘约 ' + total.toFixed(1) + 'G)' +
-    (sizeOk ? '' : '<br><span style="color:var(--amber)">硬盘太小：整块盘至少 8G，且虚拟盘与归档区各需 4G 以上</span>');
+    (sizeOk ? '' : '<br><span style="color:var(--amber)">' +
+      (total < 8 ? '整块盘至少 8G' : '虚拟盘与归档区各需 4G 以上（虚拟盘最多 ' + maxV + 'G）') + '</span>');
   storageInitButtonOk(sizeOk);
 }
 async function storageInit() {
   if (storageBusy) return;
   const dev = document.getElementById('alloc-device').value;
-  const pct = +document.getElementById('alloc-percent').value;
+  const sizeG = Math.floor(+document.getElementById('alloc-size').value || 0);
   const info = storageFindDisk(dev);
   if (!info) { toast('请选择硬盘'); return; }
   const total = info.size_bytes / 1073741824;
-  const v = Math.floor(total * pct / 100), a = Math.floor(total) - v;
-  if (total < 8 || v < 4 || a < 4) { toast('❌ 硬盘太小：整块盘至少 8G，且虚拟盘与归档区各需 4G 以上'); return; }
+  const v = sizeG, a = Math.floor(total) - v;
+  if (total < 8 || v < 4 || a < 4) { toast('❌ 虚拟盘与归档区各需 4G 以上，虚拟盘最多 ' + (Math.floor(total) - 4) + 'G'); return; }
   if (storageData && storageData.host_connected) { toast('❌ OTG 已连接主机, 请先拔出数据线'); return; }
   if (!confirm('第一遍确认：此操作会清空整块硬盘 ' + dev + '，包括全部分区与归档区（所有录像不可恢复）。\n确定要继续吗？')) return;
   const serial = storageSerial(info);
@@ -8884,7 +8888,7 @@ async function storageInit() {
   if (btn) btn.disabled = true;
   toast('⏳ 初始化已提交, 正在后台执行...');
   try {
-    const j = await (await fetch('/api/storage/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({device: dev, percent: pct, confirm: c}) })).json();
+    const j = await (await fetch('/api/storage/init', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({device: dev, size_g: v, confirm: c}) })).json();
     if (!j.ok) {
       toast('❌ ' + j.msg);
       storageBusy = false;
@@ -10982,7 +10986,7 @@ def storage_use(device):
     return True, "switched"
 
 
-def storage_init(device, percent, confirm):
+def storage_init(device, percent, confirm, size_g=None):
     d = _find_usb_disk(device)
     if not d:
         return False, "只允许初始化 USB 硬盘"
@@ -10991,18 +10995,24 @@ def storage_init(device, percent, confirm):
     expected = d.get("serial") or os.path.basename(d["disk"])
     if not confirm or confirm != expected:
         return False, "序列号不匹配, 请输入页面显示的序列号"
-    try:
-        percent = int(percent)
-    except (TypeError, ValueError):
-        return False, "虚拟U盘比例无效"
-    if percent < 10 or percent > 90:
-        return False, "虚拟U盘比例需在 10% - 90% 之间"
     total = int(d.get("size_bytes") or 0)
     gib = 1024 ** 3
-    virtual_gb = int(total * percent / 100 // gib)
-    archive_gb = int(total // gib) - virtual_gb
+    total_gb = int(total // gib)
+    try:
+        if size_g not in (None, ""):
+            virtual_gb = int(float(size_g))
+        else:                                   # 兼容旧客户端: 仍按百分比
+            percent = int(percent)
+            if percent < 10 or percent > 90:
+                return False, "虚拟U盘容量无效"
+            virtual_gb = int(total * percent / 100 // gib)
+    except (TypeError, ValueError):
+        return False, "虚拟U盘容量无效"
+    archive_gb = total_gb - virtual_gb
     if virtual_gb < 4 or archive_gb < 4:
-        return False, "磁盘太小, 虚拟盘和归档区都至少需要 4G (整块盘建议 ≥8G)"
+        return False, "虚拟U盘与归档区各需 4G 以上 (整块盘 %dG, 虚拟盘最多 %dG)" % (total_gb, total_gb - 4)
+    if virtual_gb > total_gb - 4:
+        return False, "虚拟U盘容量超出范围 (最多 %dG)" % (total_gb - 4)
     try:
         global _init_proc
         if _init_proc is not None and _init_proc.poll() is None:
@@ -19011,8 +19021,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             device = body.get("device") if isinstance(body, dict) else None
             percent = body.get("percent") if isinstance(body, dict) else None
+            size_g = body.get("size_g") if isinstance(body, dict) else None
             confirm = body.get("confirm") if isinstance(body, dict) else None
-            ok, msg = storage_init(device, percent, confirm)
+            ok, msg = storage_init(device, percent, confirm, size_g)
             if ok and msg.startswith("initialized:"):
                 _tag, vg, ag = msg.split(":")
                 msg = "已初始化: 虚拟U盘 %sG / 归档区 %sG, 页面即将刷新" % (vg, ag)
