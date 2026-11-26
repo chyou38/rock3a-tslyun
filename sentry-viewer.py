@@ -1241,12 +1241,11 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 /* 二级播放页(body.ovfull)的 980px 限宽和浅色底会压过全屏样式: 全屏时一并解除, 否则画面缩在中间一条 */
 body.ovfull .ovplay.fs-on { background:#000; padding:0; overflow:hidden; }
 body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
-/* 整屏播放页(body.ovfull)本身就是"全屏"形态: 浅色主题的 8px/12px 内边距会在顶部亮出一条浅色细条
-   (实测用户截图顶部那条浅色带恒为 17 物理像素 ≈ 8 CSS 像素, 正好等于这里 padding-top:8px),
-   所以整屏页一律黑底 + 零补白 + 全宽, 不再给画面留浅色边。 */
-body.ovfull { background:#000 !important; }
-body.ovfull .ovplay { padding:0 !important; margin:0 !important; max-width:none !important; background:#000 !important; }
-body.ovfull .ovplay .ovtop { margin:0 !important; padding:8px 10px 8px !important; background:#000 !important; }
+/* 整屏播放页(body.ovfull)只是把播放器铺满视口, 不是"全屏模式": 底色必须跟主题走,
+   所以这里只去掉 12px 左右补白和顶部 8px 补白(那条 17 物理像素的浅色带就来自 padding-top:8px),
+   不把整块压黑 —— 压黑会让浅色主题的中间页面凭空多出一大块黑底, 很难看。 */
+body.ovfull .ovplay { padding:0 !important; margin:0 !important; max-width:none !important; }
+body.ovfull .ovplay .ovtop { margin:0 !important; padding:8px 10px 8px !important; }
 body.ovfull .ovplay .ovstage { max-width:none !important; margin:0 !important; }
 body.ovfull .ovplay .ovbar, body.ovfull .ovplay .ovtools,
 body.ovfull .ovplay .ovcams, body.ovfull .ovplay .ovclips,
@@ -1280,6 +1279,8 @@ html:has(.ovplay.fs-on), body:has(.ovplay.fs-on) { background:#000 !important; }
 .ovplay.fs-on #ovfsmask { display:block; position:absolute; left:0; right:0; top:0; height:26px;
   background:#000 !important; z-index:60; pointer-events:none; }
 .ovplay.fs-on .tpanel { top:26px !important; }
+/* 全屏时搬进播放器的遥测 HUD: 原来挂着的 .tpanel 默认 display:none, 这里强制显示 */
+.ovplay.fs-on .tpanel.ovfs-hud { display:block !important; }
 /* 全屏时把页面其它顶层块整体隐藏, 杜绝任何页面元素(header/列表/浮层)漏进画面 */
 body.fs-solo > *:not(#ovplay):not(script):not(style) { display:none !important; }
 /* 详细数据(加速度等)不再在行车数据行里展示, 节点保留给渲染逻辑写入 */
@@ -4149,6 +4150,20 @@ function ovCycleQ() {
   const list = ['360p', '480p', '720p', '1080p', 'orig'];
   ovSetQuality(list[(list.indexOf(ovQ) + 1) % list.length]);
 }
+/* 让播放框跟视频本身同比例: 合成宽幅视频在 16:9 框里会上下出现大片黑边 */
+function ovFitStage() {
+  const st = document.getElementById('ovstage'), g = document.getElementById('ovgrid');
+  if (!st || !g) return;
+  const wide = g.classList.contains('comp') || g.classList.contains('one');
+  const v = g.querySelector('video');
+  if (wide) {
+    if (v && v.videoWidth && v.videoHeight) {
+      st.style.setProperty('aspect-ratio', v.videoWidth + ' / ' + v.videoHeight);
+    }
+  } else {
+    st.style.removeProperty('aspect-ratio');
+  }
+}
 function ovBuildGrid(ev, ix) {
   const g = document.getElementById('ovgrid');
   if (!g) return;
@@ -4164,6 +4179,8 @@ function ovBuildGrid(ev, ix) {
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
   g.classList.toggle('comp', compOn);
+  /* 画面比例跟着视频本身走: 合成流是 2.37:1 宽幅, 撑 16:9 会上下留黑边 */
+  ovFitStage();
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
   let cells = [...g.querySelectorAll('.ovcell')];
   while (cells.length < 6) {
@@ -4178,6 +4195,7 @@ function ovBuildGrid(ev, ix) {
     cov.appendChild(cbg);
     cell.appendChild(cov);
     ['playing','waiting','emptied','pause','ended'].forEach(en => vid.addEventListener(en, ovCoverSync));
+    vid.addEventListener('loadedmetadata', ovFitStage);
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
@@ -4539,6 +4557,27 @@ function ovFsCycle(el, props, on) {
   if (!el) return;
   props.forEach(k => el.style.setProperty(k, on ? 'initial' : '', 'important'));
 }
+/* 遥测面板(#tpanel)原本挂在 #player 里, 而全屏时 #player 被整体隐藏, 所以全屏里"悬浮的遥测数据"
+   整块消失。进全屏把它搬进 #ovplay 顶部, 退出再放回原来的位置。 */
+function ovFsHud(on) {
+  const pl = document.getElementById('ovplay'), tp = document.getElementById('tpanel');
+  if (!pl || !tp) return;
+  if (on) {
+    if (tp.parentElement !== pl) {
+      tp._ovHome = tp.parentElement; tp._ovNext = tp.nextSibling;
+      try { pl.insertBefore(tp, pl.firstChild); } catch (e) {}
+    }
+    tp.classList.add('ovfs-hud');
+  } else {
+    tp.classList.remove('ovfs-hud');
+    const home = tp._ovHome;
+    if (home) {
+      try { home.insertBefore(tp, (tp._ovNext && tp._ovNext.parentNode === home) ? tp._ovNext : null); }
+      catch (e) { try { home.appendChild(tp); } catch (e2) {} }
+    }
+    tp._ovHome = null; tp._ovNext = null;
+  }
+}
 function ovFsLock(on, portrait) {
   const pl = document.getElementById('ovplay');
   const st = document.getElementById('ovstage');
@@ -4585,6 +4624,7 @@ function ovFsLock(on, portrait) {
       st.style.setProperty('border', '0', 'important');
       st.style.setProperty('border-radius', '0px', 'important');
     }
+    ovFsHud(true);
     document.body.classList.add('fs-black', 'fs-solo');
     document.documentElement.style.setProperty('background', '#000', 'important');
     document.body.style.setProperty('background', '#000', 'important');
@@ -4601,6 +4641,7 @@ function ovFsLock(on, portrait) {
   } else {
     ovFsCycle(pl, OV_FS_PL, false);
     ovFsCycle(st, OV_FS_ST, false);
+    ovFsHud(false);
     document.body.classList.remove('fs-black', 'fs-solo');
     document.documentElement.style.removeProperty('background');
     document.body.style.removeProperty('background');
