@@ -3585,6 +3585,7 @@ let ovLastProgT = 0;            // 上一次观察到的主路进度
 let ovLastDowngradeAt = 0;      // 上次自动降档时间, 防短时间连环降档
 let ovNoProgReloads = 0;        // 360p 仍无进度时的重载次数
 let ovQFail = [];               // 本片段加载失败过的档位, 自动降档不再回头试
+let ovNoFrameAt = 0;            // 主路一直没有画面的起始时刻(选高档转不出来时自动降档)
 let ovAutoLock = false;    // 播完一段自动接下一段, 防抖
 let ovTL = { n: 0, dur: 0 };   // 事件总时间轴: 段数 + 单段时长 (播放条显示整条总长)
 let ovLADone = -1;             // 已触发"提前预转码下一段"的段序号, 每段只触发一次
@@ -4338,6 +4339,23 @@ function ovSyncOn() {
         }
       } else {
         ovResetNoProg();
+      }
+      /* 选了高档但一直没画面(1080p 还没转好/原画太大): 等 10 秒就按阶梯自动降档,
+         和"卡住没进度"是两件事: 这里连第一帧都没有 */
+      if (ovWantPlay && !ovSwapping && ovPendingSeek == null && !ovAutoLock && !main.videoWidth) {
+        if (!ovNoFrameAt) ovNoFrameAt = now;
+        else if (now - ovNoFrameAt >= 10000 && now - ovLastDowngradeAt > 3000) {
+          const nq0 = ovNextLowerQ(ovQ);
+          if (nq0 && ovQFail.indexOf(ovQ) < 0) {
+            ovQFail.push(ovQ);
+            ovLastDowngradeAt = now; ovNoFrameAt = 0;
+            ovBadge(ovQLabel(ovQ) + ' 迟迟没有画面, 自动降 ' + ovQLabel(nq0), true);
+            try { toast(ovQLabel(ovQ) + ' 没转好, 已自动切到 ' + ovQLabel(nq0)); } catch (e) {}
+            ovSetQuality(nq0, { persist: false, auto: true, keepFail: true });
+          } else ovNoFrameAt = now;
+        }
+      } else {
+        ovNoFrameAt = 0;
       }
     }
     /* 播完这一分钟: 自动接下一段 (画面、遥测、进度条一起换), 不用再点片段按钮。
