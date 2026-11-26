@@ -8808,18 +8808,17 @@ async function refreshStorage() {
   if (summary) summary.textContent = config ? ('虚拟U盘 ' + fmtSz(j.img_size)) : '未配置虚拟U盘';
   const firsthint = document.getElementById('storage-firsthint');
   if (firsthint) firsthint.innerHTML = config
-    ? '当前虚拟U盘已配置。更换或重建会清空所选硬盘；日常使用不需要动这里。'
-    : '<b style="color:var(--amber)">还没有创建虚拟U盘。</b> 插入 USB 硬盘（≥8G），选择硬盘、拖动占比、输入序列号即可创建；盘上有数据请先备份。';
+    ? ''
+    : '<b style="color:var(--amber)">还没有创建虚拟U盘。</b> 插入 USB 硬盘（≥8G），选择硬盘、填虚拟U盘容量、输入序列号即可创建；盘上有数据请先备份。';
   st.innerHTML = '存储盘: ' + (!config ? '<span class="storage-warn">未选择 · 请在下方创建</span>' : (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>')) + '<br>' +
     'OTG 连接: ' + otgBadge(j) +
     ' <span class="storage-meta">(' + escH(j.host_connected && j.speed_text ? j.speed_text : 'no') + ')</span><br>' +
-    '车机U盘: ' + (j.lun_backed
-      ? '已装载 · 车机可直接读写'
-      : (j.otg_kind === 'ejected'
+    (j.lun_backed ? '' : ('车机U盘: ' + (j.otg_kind === 'ejected'
         ? '<span class="storage-warn">空 · 已被车机弹出, 重新插拔数据线恢复</span>'
-        : '<span class="storage-meta">未导出到车机</span>')) + '<br>' +
+        : '<span class="storage-meta">未导出到车机</span>') + '<br>')) +
     '虚拟U盘容量: ' + (!config ? '<span class="storage-warn">未创建</span>' : fmtSz(j.img_size) + ' (实际占用 ' + fmtSz(j.img_used) + ')') + '<br>' +
-    'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b> · 卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
+    'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b><br>' +
+    '卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
   let h = '';
   for (const d of j.disks || []) {
     h += '<div class="storage-disk">' + USB_ICON + ' ' + escH(d.brand || 'USB硬盘') + ' · ' + escH(d.size) +
