@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.1.1"
+APP_VERSION = "3.1.2"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -11165,7 +11165,7 @@ def storage_format(device, confirm):
 
 
 def storage_use(device):
-    d, p = _find_usb_part(device)
+    _d, p = _find_usb_part(device)
     if not p:
         return False, "只允许使用 USB 硬盘的分区"
     if _current_storage_source() == device:
@@ -13186,7 +13186,7 @@ def roll_box():
             left.sort()
             total = sum(sz for _, _, _, sz in left)
             budget = BOX_MAX_GB * (1 << 30)
-            for dt, e, p, sz in left:
+            for _dt, e, p, sz in left:
                 if total <= budget:
                     break
                 shutil.rmtree(p, ignore_errors=True)
@@ -13233,7 +13233,7 @@ def roll_archive_capacity():
     evs.sort()
     n = 0
     freed = 0
-    for dt, cat, e, p, sz in evs:
+    for _dt, cat, e, p, sz in evs:
         if (quota - used) * 100.0 / quota >= target:
             break
         shutil.rmtree(p, ignore_errors=True)
@@ -13278,7 +13278,7 @@ def emergency_cleanup():
     evs.sort()
     n = 0
     freed = 0
-    for dt, cat, e, p, sz in evs:
+    for _dt, cat, e, p, sz in evs:
         if free_mb(ARCHIVE) >= FREE_TARGET_MB:
             break
         shutil.rmtree(p, ignore_errors=True)
@@ -14198,12 +14198,12 @@ def _make_push_video(fp, off, quality="480p", dur=30):
                 r = subprocess.run(car_cpu_prefix() + cmd, capture_output=True, timeout=300, env=env)
                 if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     break
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as ex:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise RuntimeError("转码超时 (>5 分钟)")
+        raise RuntimeError("转码超时 (>5 分钟)") from ex
     if r is None or r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
         try:
             os.unlink(tmp)
@@ -14224,8 +14224,8 @@ def _transcode_push_upload(src, quality="480p"):
     h, kbps = VID_Q.get(quality) or VID_Q["480p"]
     try:
         st = os.stat(src)
-    except OSError:
-        raise RuntimeError("上传的片段不存在")
+    except OSError as ex:
+        raise RuntimeError("上传的片段不存在") from ex
     key = hashlib.md5(("%d|%d|%s" % (st.st_size, int(st.st_mtime), quality)).encode()).hexdigest()[:16]
     out = os.path.join(RES_DIR, "push-manual-%s.mp4" % key)
     if os.path.isfile(out) and os.path.getsize(out) > 0:
@@ -14258,12 +14258,12 @@ def _transcode_push_upload(src, quality="480p"):
                 r = subprocess.run(car_cpu_prefix() + cmd, capture_output=True, timeout=900)
                 if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                     break
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as ex:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise RuntimeError("转码超时 (>15 分钟)")
+        raise RuntimeError("转码超时 (>15 分钟)") from ex
     if r is None or r.returncode != 0 or not os.path.isfile(tmp) or os.path.getsize(tmp) == 0:
         try:
             os.unlink(tmp)
@@ -15431,14 +15431,14 @@ def prewarm_loop():
             # 播放一开始就掐掉这条后台预缓冲转码, 把 CPU 全部让给正在看的视频
             job_cancel = threading.Event()
 
-            def _watch_play():
-                while not job_cancel.is_set():
+            def _watch_play(cancel=job_cancel):
+                while not cancel.is_set():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
                             or play_hold_active()
                             or (car_writing() and not sentry_writing_only())):  # USBGUARD
-                        job_cancel.set()
+                        cancel.set()
                         return
                     time.sleep(0.5)
 
@@ -15532,14 +15532,14 @@ def night_hw_loop():
             NIGHT_HW["busy"] = True
             job_cancel = threading.Event()
 
-            def _watch_idle():
-                while not job_cancel.is_set():
+            def _watch_idle(cancel=job_cancel):
+                while not cancel.is_set():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
                             or play_hold_active() or PREWARM.get("busy")
                             or (car_writing() and not sentry_writing_only())):  # USBGUARD
-                        job_cancel.set()
+                        cancel.set()
                         return
                     time.sleep(0.5)
 
@@ -16400,7 +16400,7 @@ def lib_cleanup(force=False):
             vids.append((os.path.getmtime(p), os.path.getsize(p), p, mp))
         total = sum(v[1] for v in vids)
         if total > LIB_MAX:
-            for mt, sz, p, mp in sorted(vids):
+            for _mt, sz, p, mp in sorted(vids):
                 if total <= LIB_MAX:
                     break
                 for x in (p, mp):
@@ -16481,7 +16481,7 @@ def _ffrun(cmd, timeout=900):
     except OSError:
         pass
     try:
-        out, err = p.communicate(timeout=timeout)
+        _out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         try:
             p.kill()
@@ -16611,7 +16611,7 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                 bidx = list(range(bstart, min(n, bstart + ds_batch)))
                 res = {}
 
-                def _runner(k, ii):
+                def _runner(k, ii, res=res):
                     res[k] = _ds_one(ii)
 
                 ths = []
@@ -16621,13 +16621,13 @@ def _export_worker(job_id, paths, out_path, total, wm, q="720p"):
                     ths.append(th)
                 for th in ths:
                     th.join()
-                for k, ii in sorted(res.items()):
+                for k, _ii in sorted(res.items()):
                     idx, code, err = res[k]
                     sp = os.path.join(tmpdir, "c%d.mp4" % idx)
                     if code != 0 or not os.path.isfile(sp):
                         fail(err or ("第 %d 路降采样失败" % (idx + 1)))
                         return
-                for k in bidx:
+                for _k in bidx:
                     done_n += 1
                 setpct(min(70, done_n / float(n) * 70))
             small = [os.path.join(tmpdir, "c%d.mp4" % i) for i in range(n)]

@@ -534,7 +534,7 @@ def sentry_rank(exfat, cur):
     然后前视, 其余最后 —— 保证推送封面能最早抽到帧。"""
     ranks = {}
     meta_cache = {}
-    for (cat, ev, name), e in cur.items():
+    for (cat, ev, name), _e in cur.items():
         if cat not in ("SentryClips", "SavedClips"):
             continue
         if name == "event.json":
@@ -588,7 +588,7 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
     rm = int(os.environ.get("TSF_RECENT_ROLL_MIN") or roll_min())
     if rm > 0:
         newest = None
-        for (cat, ev, name) in cur:
+        for (cat, ev, _name) in cur:
             if cat == "RecentClips":
                 d = ev_dt(ev)
                 if d and (newest is None or d > newest):
@@ -705,7 +705,7 @@ def probe_sig(exfat):
                     evs.append(e)
             evs.sort(key=lambda e: e.name)
             for ed in evs[-2:]:
-                for prefix, e in iter_media(exfat, ed):
+                for _prefix, e in iter_media(exfat, ed):
                     ev_name = ed.name
                     out["%s/%s/%s" % (cat, ev_name, e.name)] = (e.size, e.mtime)
     except Exception as e:
