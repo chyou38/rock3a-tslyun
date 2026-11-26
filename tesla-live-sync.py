@@ -579,8 +579,10 @@ def roll_min():
     return max(60, min(v, 10080))
 
 
-def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None):
-    """跑一轮; 返回 (新增文件数, 字节数)"""
+def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None, progress=None):
+    """跑一轮; 返回 (新增文件数, 字节数)
+    progress(done, total, done_bytes, total_bytes, force) 用于网页展示「已归档百分比」:
+    total 是本轮扫描到的有效片段, done 是其中已在归档区(或刚搬完)的片段。"""
     cur = scan(exfat, cats, newest_events)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
@@ -612,6 +614,11 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None)
         items.sort(key=lambda kv: (ranks.get(kv[0], 9), kv[0][2]))
     copied = 0
     bytes_ = 0
+    total = 0
+    done = 0
+    total_bytes = 0
+    done_bytes = 0
+    ready = []
     for (cat, ev, name), e in items:
         if "%s/%s" % (cat, ev) in pruned:
             continue            # 已被盒子侧定期清理, 不再重抄
@@ -622,7 +629,11 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None)
         key = "%s/%s/%s" % (cat, ev, name)
         sig = [e.size, e.vdl, e.mtime]
         dest = safe_dest(cat, ev, name)
+        total += 1
+        total_bytes += e.size
         if same_file(dest, e.size):
+            done += 1
+            done_bytes += e.size
             continue
         # 需要连续两轮签名一致才认为写完
         if pending.get(key) != sig:
@@ -630,15 +641,25 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None)
             if not quiet:
                 log("发现新片段(待确认): %s (%d bytes)" % (key, e.size))
             continue
+        ready.append((key, e, dest, sig))
+    if progress:
+        progress(done, total, done_bytes, total_bytes, True)
+    for (key, e, dest, sig) in ready:
         try:
             n = copy_entry(exfat, e, dest, hold=hold)
             copied += 1
             bytes_ += n
+            done += 1
+            done_bytes += n
             _mark_hot(dest)
             log("已同步 %s (%d KB)" % (key, n // 1024))
+            if progress:
+                progress(done, total, done_bytes, total_bytes, False)
         except Exception as ex:
             log("同步失败 %s: %s" % (key, ex))
             new_pending[key] = sig
+    if progress:
+        progress(done, total, done_bytes, total_bytes, True)
     state[pending_key] = new_pending
     save_state(state)
     return copied, bytes_
@@ -858,13 +879,28 @@ def archive_interval_min():
     return max(1, min(v, 1440))
 
 
-def write_sched(last, running, copied=0, msg=""):
+def write_sched(last, running, copied=0, msg="", progress=None):
     try:
+        old = {}
+        try:
+            with open(ARCHIVE_SCHED_FILE, encoding="utf-8") as f:
+                old = json.load(f)
+        except Exception:
+            old = {}
+        rec = {"last": last, "running": running, "copied": copied,
+               "msg": msg, "interval_min": archive_interval_min(),
+               "ts": time.time()}
+        if progress:
+            rec.update(progress)
+        elif last:
+            # 哨兵优先通道/顺延等小状态沿用上一轮的整体归档百分比, 不要冲成 0;
+            # last=0 表示服务刚起还没跑过完整一轮, 旧百分比不能带过来
+            for k in ("done", "total", "pct", "done_bytes", "total_bytes"):
+                if k in old:
+                    rec[k] = old[k]
         tmp = ARCHIVE_SCHED_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"last": last, "running": running, "copied": copied,
-                       "msg": msg, "interval_min": archive_interval_min(),
-                       "ts": time.time()}, f)
+            json.dump(rec, f)
         os.replace(tmp, ARCHIVE_SCHED_FILE)
     except OSError:
         pass
@@ -921,6 +957,23 @@ def main():
     # 一旦 SentryClips/SavedClips 出现变化就置位, 主线程立刻小步搬运。
     threading.Thread(target=probe_loop, daemon=True).start()
     write_sched(0, False, msg="等待首轮归档")
+    prog_mark = {"t": 0.0}
+
+    def on_progress(done, total, done_bytes, total_bytes, force=False):
+        now = time.time()
+        if not force and now - prog_mark["t"] < 1.5:
+            return
+        prog_mark["t"] = now
+        pct = None
+        if total_bytes > 0:
+            # 向下取整: 差一个片段也不要提前显示 100%
+            pct = max(0, min(100, int(done_bytes * 100.0 / total_bytes)))
+        elif total > 0:
+            pct = max(0, min(100, int(done * 100.0 / total)))
+        write_sched(last_run, True, msg="归档中", progress={
+            "done": done, "total": total, "pct": pct,
+            "done_bytes": done_bytes, "total_bytes": total_bytes})
+
     while True:
         time.sleep(1)
         now = time.time()
@@ -979,7 +1032,7 @@ def main():
                 log("镜像不可读: %s" % ex)
                 continue
             write_sched(last_run, True, msg="归档中")
-            n, b = do_sync(exfat, state)
+            n, b = do_sync(exfat, state, progress=on_progress)
             last_run = time.time()
             if trig:
                 try:

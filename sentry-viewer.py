@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.0.3"
+APP_VERSION = "3.0.4"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -5092,7 +5092,7 @@ async function refreshLive() {
   const dot = document.getElementById('livedot'), txt = document.getElementById('livetxt');
   if (live.running) {
     dot.style.background = '#4cc38a';
-    if (sch && sch.running) txt.textContent = t('归档中') + '…';
+    if (sch && sch.running) txt.textContent = t('归档中') + ((typeof sch.pct === 'number') ? ' ' + sch.pct + '%' : '…');
     else if (sch && sch.car_writing && (sch.queued || sch.next_in <= 0)) txt.textContent = t('车机写入中') + ' · ' + t('归档顺延');
     else if (sch && sch.queued) txt.textContent = t('立即归档排队中');
     else if (sch) txt.textContent = t('定时归档') + ' · ' + t('每') + (sch.interval_min || 10) + t('分钟');
@@ -5776,11 +5776,13 @@ async function loadArchiveSched() {
     const st = document.getElementById('arc-sync-state');
     if (st) {
       let t;
-      if (j.running) t = '归档中…';
-      else if (j.car_writing && (j.queued || j.next_in <= 0)) t = '车机写入中 · 空闲后归档';
-      else if (j.queued) t = '已排队 · 车机空闲后马上归档';
-      else if (j.last) t = '上次 ' + new Date(j.last * 1000).toLocaleTimeString() + ' · 约 ' + Math.max(1, Math.ceil((j.next_in || 0) / 60)) + ' 分钟后下一轮';
-      else t = '待首轮归档';
+      const pct = (typeof j.pct === 'number') ? Math.max(0, Math.min(100, Math.round(j.pct))) : null;
+      const pctTxt = pct !== null ? ('已归档 ' + pct + '%') : '';
+      if (j.running) t = pctTxt ? ('归档中 · ' + pctTxt) : '归档中…';
+      else if (j.car_writing && (j.queued || j.next_in <= 0)) t = (pctTxt ? pctTxt + ' · ' : '') + '车机写入中 · 空闲后归档';
+      else if (j.queued) t = (pctTxt ? pctTxt + ' · ' : '') + '已排队 · 车机空闲后马上归档';
+      else if (j.last) t = (pctTxt ? pctTxt + ' · ' : '') + '上次 ' + new Date(j.last * 1000).toLocaleTimeString() + ' · 约 ' + Math.max(1, Math.ceil((j.next_in || 0) / 60)) + ' 分钟后下一轮';
+      else t = pctTxt ? (pctTxt + ' · 待首轮归档') : '待首轮归档';
       st.textContent = t;
     }
   } catch (e) {}
@@ -18330,7 +18332,11 @@ class Handler(BaseHTTPRequestHandler):
                         "next_in": max(0, int(last + iv * 60 - time.time())) if last else 0,
                         "car_writing": car_writing(),
                         "queued": os.path.exists(ARCHIVE_NOW_FLAG),
-                        "copied": st.get("copied", 0), "msg": st.get("msg", "")})
+                        "copied": st.get("copied", 0), "msg": st.get("msg", ""),
+                        "done": int(st.get("done") or 0), "total": int(st.get("total") or 0),
+                        "pct": (None if st.get("pct") is None else int(st.get("pct") or 0)),
+                        "done_bytes": int(st.get("done_bytes") or 0),
+                        "total_bytes": int(st.get("total_bytes") or 0)})
         elif path == "/api/brand/logo":
             data, ct = brand_logo_bytes()
             self.send_response(200)
