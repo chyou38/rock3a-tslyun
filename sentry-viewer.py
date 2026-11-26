@@ -1368,7 +1368,8 @@ body.ovmode.allmode #filters { display:none; }
 .tpanel.plain .tp-fold,
 .tpanel.plain .tp-rows,
 .tpanel.plain .tp-tr { display:none; }
-body.ovfull #tpanel.plain { display:none !important; }   /* 二级播放页只隐藏 pure 地点条, 有 SEI 的驾驶遥测照常显示 */   /* 二级播放页不再显示遥测/地点横条, 信息都在视频详情里 */
+body.ovfull #tpanel.plain { display:none !important; }   /* 无 SEI 时不显示空条 */
+body.ovfull #tpanel .tp-place { display:none !important; }   /* 播放页只留驾驶遥测, 地点/坐标不在这里重复 */   /* 二级播放页只隐藏 pure 地点条, 有 SEI 的驾驶遥测照常显示 */   /* 二级播放页不再显示遥测/地点横条, 信息都在视频详情里 */
 .infocard.plain .ic-time { display:none; }
 .infocard.plain .ic-badge { margin-left:0; }
 .tp-top { display:flex; justify-content:space-between; align-items:center; }
