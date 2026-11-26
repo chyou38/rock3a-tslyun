@@ -5019,19 +5019,23 @@ function storColor(pct) {
   return '#2f6ee0';
 }
 
-/* 实时同步状态 + 新片段自动出现 */
+/* 归档同步状态胶囊 (定时归档, 非实时) + 新片段自动出现 */
 async function refreshLive() {
   let live = null;
   try { live = await (await fetch('/api/live')).json(); } catch (e) { return; }
+  let sch = null;
+  try { sch = await (await fetch('/api/archive_sched', {cache: 'no-store'})).json(); } catch (e) {}
   const dot = document.getElementById('livedot'), txt = document.getElementById('livetxt');
   if (live.running) {
     dot.style.background = '#4cc38a';
-    if (live.pending > 0) txt.textContent = `${t('实时同步中')} · ${live.pending} ${t('待确认')}`;
-    else if (live.ago !== null && live.ago !== undefined) txt.textContent = `${t('实时同步中')} · ${live.ago}s`;
-    else txt.textContent = t('实时同步中');
+    if (sch && sch.running) txt.textContent = t('归档中') + '…';
+    else if (sch && sch.car_writing && (sch.queued || sch.next_in <= 0)) txt.textContent = t('车机写入中') + ' · ' + t('归档顺延');
+    else if (sch && sch.queued) txt.textContent = t('立即归档排队中');
+    else if (sch) txt.textContent = t('定时归档') + ' · ' + t('每') + (sch.interval_min || 10) + t('分钟');
+    else txt.textContent = t('定时归档');
   } else {
     dot.style.background = '#e8443f';
-    txt.textContent = t('同步服务未运行');
+    txt.textContent = t('归档服务未运行');
   }
   // 存储卡: 默认只显示虚拟U盘, 点右下角小箭头再展开归档区/总占用
   const sw = document.getElementById('storwrap');  const dk = live.disk;
