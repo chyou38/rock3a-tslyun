@@ -364,6 +364,22 @@ def _mark_hot(dest):
         pass
 
 
+def touch_write_cat():
+    """只刷新 write-cat.json 的 ts(保留原有分类标志)。
+    哨兵优先通道一次要搬几十~几百 MB, 期间主循环被占住、探测更新不了,
+    这里每搬 1MB 续一次心跳, 免得 30 秒后盒子误判"哨兵写入已结束"而锁盘。"""
+    try:
+        with open(WRITE_CAT_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        j["ts"] = time.time()
+        tmp = WRITE_CAT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(j, f)
+        os.replace(tmp, WRITE_CAT_FILE)
+    except (OSError, ValueError):
+        pass
+
+
 def copy_entry(exfat, entry, dest_path, hold=True):
     """把镜像里的文件写到归档区, 返回写入字节数。
     hold=True: 车机写入期间暂停搬运(车机第一优先), 车机空闲再续。
@@ -386,6 +402,8 @@ def copy_entry(exfat, entry, dest_path, hold=True):
                 elif _car_writing():
                     # 哨兵优先通道: 只让一小步, 不把整轮归档挂起
                     time.sleep(0.15)
+                if not hold:
+                    touch_write_cat()
                 pace_t = time.time()
                 pace_bytes = 0
         f.flush()
@@ -432,8 +450,9 @@ def save_state(st):
         pass
 
 
-def scan(exfat, cats=None):
-    """返回 {(分类, 事件名, 文件名): Entry}"""
+def scan(exfat, cats=None, newest_events=None):
+    """返回 {(分类, 事件名, 文件名): Entry}
+    newest_events: 每个分类只扫最新 N 个事件目录(哨兵优先通道用, 避免每秒重扫全部历史)。"""
     found = {}
     try:
         root = exfat.list_dir(exfat.root_cluster)
@@ -463,10 +482,19 @@ def scan(exfat, cats=None):
                 group = m.group(1) if m else "_misc"
                 found[(cat, group, e.name)] = e
         else:
-            for prefix, e in iter_media(exfat, catdir):
-                if not prefix:
-                    continue
-                found[(cat, prefix[0], e.name)] = e
+            evs = []
+            try:
+                for e in exfat.list_dir(catdir.cluster, catdir.size):
+                    if e.is_dir and DIR_RE.match(e.name or ""):
+                        evs.append(e)
+            except Exception:
+                continue
+            evs.sort(key=lambda e: e.name)
+            if newest_events:
+                evs = evs[-int(newest_events):]
+            for ed in evs:
+                for prefix, e in iter_media(exfat, ed, (ed.name,)):
+                    found[(cat, prefix[0], e.name)] = e
     return found
 
 
@@ -550,9 +578,9 @@ def roll_min():
     return max(60, min(v, 10080))
 
 
-def do_sync(exfat, state, quiet=False, cats=None, hold=True):
+def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None):
     """跑一轮; 返回 (新增文件数, 字节数)"""
-    cur = scan(exfat, cats)
+    cur = scan(exfat, cats, newest_events)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
     cut = None
@@ -817,12 +845,19 @@ def main():
             if lk is None:
                 continue                    # U 盘正被占用, 下一轮再试
             try:
-                n, b = do_sync(exfat, state, cats=("SentryClips", "SavedClips"), hold=False)
+                n, b = do_sync(exfat, state, cats=("SentryClips", "SavedClips"),
+                               hold=False, newest_events=2)
                 urgent = False
                 if n:
                     log("哨兵优先同步: %d 个片段, %.1f MB" % (n, b / 1048576))
                     write_sched(last_run, False, copied=n,
                                 msg="哨兵优先同步 %d 个片段" % n)
+                else:
+                    # 第一轮只记 pending(等连续两轮签名一致), 若本轮没搬成,
+                    # 保持 urgent, 下一轮立刻再确认一次, 别等到定时归档。
+                    pend = state.get("__pending__", {})
+                    if any(k.startswith(("SentryClips/", "SavedClips/")) for k in pend):
+                        urgent = True
             except Exception as e:
                 log("哨兵优先同步失败: %s" % e)
             finally:
