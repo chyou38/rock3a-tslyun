@@ -9,6 +9,9 @@ INTERVAL=10
 # CmaFree 在 RK3568 上长期 0-1MB 属正常波动, 默认不再推飞书告警
 # 需要恢复时: 在 tsf-watch.service 里设 Environment=TSF_WATCH_ALERT_CMA=1
 ALERT_CMA=${TSF_WATCH_ALERT_CMA:-0}
+# 服务停服(部署重启的几秒空窗)默认不推飞书, 只记一行 note;
+# 需要恢复: tsf-watch.service 里设 Environment=TSF_WATCH_ALERT_SVC=1
+ALERT_SVC=${TSF_WATCH_ALERT_SVC:-0}
 
 alert() {
     echo "[$(date '+%m-%d %H:%M:%S')] ALERT $*" >> "$LOG"
@@ -26,7 +29,7 @@ rotate() {
 run() {
     echo $$ > "$PIDF"
     note "watch start (interval=${INTERVAL}s)"
-    last_reset=-1; last_null=-1; last_lun=""; last_state=""; last_mem=0
+    last_reset=-1; last_null=-1; last_lun=""; last_state=""; last_mem=0; last_bad="x"
     while :; do
         rotate
         ts=$(date '+%H:%M:%S')
@@ -56,10 +59,18 @@ run() {
         [ "$ma" -lt 150 ] && alert "MemAvailable low: ${ma}MB"
         [ "$ALERT_CMA" = 1 ] && [ "$cf" -lt 2 ] && [ "$last_mem" -ge 2 ] && alert "CmaFree low: ${cf}MB"
         last_mem=$cf
-        # services
+        # services: 只在状态变化时记一行; 默认不推飞书(部署重启的短暂停服不该打扰)
+        svcbad=""
         for s in sentry-viewer tesla-gadget tesla-live; do
-            systemctl is-active --quiet "$s" 2>/dev/null || alert "service $s NOT active"
+            systemctl is-active --quiet "$s" 2>/dev/null || svcbad="$svcbad $s"
         done
+        if [ "$svcbad" != "$last_bad" ]; then
+            if [ -n "$svcbad" ]; then
+                if [ "$ALERT_SVC" = 1 ]; then alert "service$svcbad NOT active"
+                else note "service$svcbad NOT active (alert off)"; fi
+            else note "service all active"; fi
+            last_bad="$svcbad"
+        fi
         # OOM / panic in kernel ring
         no=$(dmesg 2>/dev/null | grep -c -iE 'out of memory|oom-kill|kernel panic')
         [ "$no" -gt 0 ] && alert "kernel OOM/panic lines: $no"
