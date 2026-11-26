@@ -63,6 +63,10 @@ AUDIO_Q = os.path.join(ARCHIVE, "boombox-queue")
 AUDIO_DONE = os.path.join(ARCHIVE, "boombox-done")
 FILES_DIR = os.path.join(ARCHIVE, "files")
 PORT = int(os.environ.get("TSF_PORT", "80"))
+# Go 只读体检工具: 独立二进制, 不影响主服务; 未安装时接口会返回明确失败项
+DOCTOR_BIN = os.environ.get("TSF_DOCTOR_BIN", "/opt/tesla-sentry/bin/tsf-doctor")
+_DOCTOR_CACHE = {"at": 0.0, "data": None}
+_DOCTOR_LOCK = threading.Lock()
 CATS = ["SentryClips", "SavedClips", "RecentClips"]
 # ===== 多语言表 (由 tools/i18n_*.json 生成, key 为中文原文) =====
 LANG_NAMES = [("zh", "中文"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
@@ -186,7 +190,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.1.2"
+APP_VERSION = "3.2.2"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1637,6 +1641,22 @@ select.ninput { cursor:pointer; }
 .updbtns .mini.logout { background:transparent; border:1px solid var(--accent); color:var(--accent); }
 .updbtns .mini.primary { background:var(--accent); color:#fff; }
 .updbtns .mini:disabled { opacity:.45; cursor:default; }
+/* 系统体检 */
+.doctorbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:8px 0 8px; }
+.doctorbar .mini { flex:0 0 auto; padding:8px 16px; border-radius:9px; background:var(--accent); border:none; color:#fff; font-size:12.5px; cursor:pointer; }
+.doctorbar .mini:disabled { opacity:.45; cursor:default; }
+.doctor-state { font-size:11.5px; color:var(--muted2); line-height:1.5; }
+.doctor-box { background:var(--panel2); border:1px solid var(--line2); border-radius:10px; padding:7px 11px; margin:4px 0 2px; }
+.doctor-row { display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-top:1px dashed var(--line); font-size:12.5px; line-height:1.45; }
+.doctor-row:first-child { border-top:0; padding-top:2px; }
+.doctor-dot { width:8px; height:8px; border-radius:50%; margin-top:5px; flex:0 0 auto; background:var(--muted2); }
+.doctor-dot.pass { background:#4cc38a; }
+.doctor-dot.warn { background:#e6a23c; }
+.doctor-dot.fail { background:#e8443f; }
+.doctor-main { min-width:0; }
+.doctor-title { font-weight:600; color:var(--text); }
+.doctor-detail { color:var(--muted2); font-size:11.5px; word-break:break-word; margin-top:1px; }
+.doctor-group { color:var(--muted2); font-size:10.5px; font-weight:400; margin-left:6px; }
 #gear { position:relative; }
 #gear.hasupd::after { content:''; position:absolute; top:4px; right:4px; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--headbg); }
 .upbtn { display:block; width:100%; padding:10px; border:1px dashed var(--line2); border-radius:10px; color:var(--muted); text-align:center; cursor:pointer; font-size:13px; margin-bottom:12px; background:var(--panel2); }
@@ -2302,6 +2322,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <button class="stab" id="st-car" onclick="stab('car')"><svg class="ic"><use href="#i-brush"/></svg>车辆个性化</button>
     <button class="stab" id="st-files" onclick="stab('files')"><svg class="ic"><use href="#i-usb"/></svg>虚拟磁盘</button>
     <button class="stab" id="st-net" onclick="stab('net')"><svg class="ic"><use href="#i-globe"/></svg>网络设置</button>
+    <button class="stab" id="st-doctor" onclick="stab('doctor')"><svg class="ic"><use href="#i-refresh"/></svg>系统体检</button>
     <button class="stab" id="st-settings" onclick="stab('settings')"><svg class="ic"><use href="#i-gear"/></svg>设置</button>
   </div>
   <div id="tab-net" style="display:none">
@@ -2621,6 +2642,15 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <label class="nrow"><span>解码异常（MPP buffer NULL）</span><input type="checkbox" id="watch-mpp" onchange="watchSave('watch_mpp',this.checked)"></label>
     <label class="nrow"><span>U盘被弹空（LUN EMPTY）</span><input type="checkbox" id="watch-lun" onchange="watchSave('watch_lun',this.checked)"></label>
     <label class="nrow"><span>内核 OOM / panic</span><input type="checkbox" id="watch-oom" onchange="watchSave('watch_oom',this.checked)"></label>
+  </div>
+  <div id="tab-doctor" style="display:none">
+    <div class="stabsec">系统体检</div>
+    <div class="hint">只读检查服务、接口、媒体、存储与归档；不重启服务、不修改配置。</div>
+    <div class="doctorbar">
+      <button class="mini" id="doctor-run" onclick="doctorRun(true)">开始体检</button>
+      <span class="doctor-state" id="doctor-state">尚未检查</span>
+    </div>
+    <div id="doctor-box" class="doctor-box" style="display:none"></div>
   </div>
   <div id="tab-auth" style="display:none">
     <b style="font-size:13px">图标与名称</b>
@@ -7809,8 +7839,8 @@ function doLogout() {
 let storageTimer = null;
 function stab(which) {
   /* 一个页签可以带多块内容: 车辆个性化=锁车语音+涂装, 设置=风扇+杂项 */
-  const GROUPS = { car: ['audio', 'wraps'], settings: ['fan', 'debug', 'skin', 'lang', 'update'] };
-  const ALL = ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'];
+  const GROUPS = { car: ['audio', 'wraps'], settings: ['fan', 'debug', 'skin', 'lang', 'update'], doctor: ['doctor'] };
+  const ALL = ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'doctor', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'];
   const show = GROUPS[which] || [which];
   ALL.forEach(k => {
     const t = document.getElementById('tab-' + k);
@@ -7829,6 +7859,7 @@ function stab(which) {
     renderLangGrid();
     otaCheck(false); autoLoad();
   }
+  if (which === 'doctor') { if (!doctorLoaded) doctorRun(false); }
   if (which === 'net') { netLoad(); netTimer = setInterval(netTick, 5000); }
   if (which === 'notify') ntLoad();
   if (which === 'auth') { pwLoad(); refreshBrand(); }
@@ -7840,6 +7871,61 @@ function stab(which) {
   if (which === 'skin') applyStyle(savedStyle());
   if (which === 'debug') dbgLoad();
   if (which === 'update') { otaCheck(false); autoLoad(); }
+}
+
+/* ---------- 系统体检 (Go tsf-doctor 只读接口) ---------- */
+let doctorBusy = false;
+let doctorLoaded = false;
+function doctorGroupName(g) {
+  return ({system: '系统', api: '接口', media: '媒体', archive: '归档', doctor: '工具'})[g] || g || '';
+}
+function doctorRender(j) {
+  const box = document.getElementById('doctor-box');
+  const state = document.getElementById('doctor-state');
+  if (!box || !state) return;
+  const s = j.summary || {};
+  const fail = +(s.fail || 0), warn = +(s.warn || 0), pass = +(s.pass || 0);
+  let head = fail ? '发现 ' + fail + ' 个故障' : (warn ? '有 ' + warn + ' 个注意项' : '全部通过');
+  let meta = pass + ' 通过 · ' + warn + ' 注意 · ' + fail + ' 故障';
+  if (j.at) meta += ' · ' + j.at;
+  if (j.cached) meta += ' · 缓存';
+  if (j.busy) meta += ' · 上一次结果';
+  state.textContent = head + ' · ' + meta;
+  const rows = (j.checks || []).map(c => {
+    const lv = (c.level === 'pass' || c.level === 'warn' || c.level === 'fail') ? c.level : 'info';
+    return '<div class="doctor-row"><span class="doctor-dot ' + lv + '"></span>' +
+      '<div class="doctor-main"><div class="doctor-title">' + esc(c.title || c.id) +
+      '<span class="doctor-group">' + esc(doctorGroupName(c.group)) + '</span></div>' +
+      '<div class="doctor-detail">' + esc(c.detail || '') + '</div></div></div>';
+  }).join('');
+  box.innerHTML = rows || '<div class="hint" style="margin:2px 0">没有检查项</div>';
+  box.style.display = '';
+}
+async function doctorRun(force) {
+  if (doctorBusy) return;
+  const btn = document.getElementById('doctor-run');
+  const state = document.getElementById('doctor-state');
+  const box = document.getElementById('doctor-box');
+  if (!btn || !state) return;
+  doctorBusy = true;
+  btn.disabled = true;
+  btn.textContent = '检查中…';
+  state.textContent = '正在读取服务、接口与媒体…';
+  try {
+    const r = await fetch('/api/doctor' + (force ? '?refresh=1' : ''), {cache: 'no-store', credentials: 'same-origin'});
+    let j = null;
+    try { j = await r.json(); } catch (e) {}
+    if (!j) throw new Error('HTTP ' + r.status);
+    doctorRender(j);
+    doctorLoaded = true;
+  } catch (e) {
+    state.textContent = '体检失败: ' + (e && e.message ? e.message : '请求失败');
+    if (box) box.style.display = 'none';
+  } finally {
+    doctorBusy = false;
+    btn.disabled = false;
+    btn.textContent = '开始体检';
+  }
 }
 
 /* ---------- 风扇设置 ---------- */
@@ -13363,6 +13449,71 @@ def health_logger():
         time.sleep(60)
 
 
+def _doctor_error(msg):
+    """体检工具缺失/超时/输出异常时的固定结构, 让前端仍能显示原因。"""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "ok": False, "status": "fail", "tool": "tsf-doctor", "version": "",
+        "app_version": APP_VERSION, "at": now, "ms": 0, "cached": False,
+        "checks": [{"id": "doctor.binary", "group": "doctor", "title": "体检工具",
+                    "level": "fail", "detail": msg}],
+        "summary": {"pass": 0, "warn": 0, "fail": 1, "info": 0},
+    }
+
+
+def doctor_report(force=False):
+    """运行 Go 只读体检并缓存 30 秒。异常只影响本次报告, 不抛到 HTTP 线程。"""
+    global _DOCTOR_CACHE
+    now = time.time()
+    if not force:
+        with _DOCTOR_LOCK:
+            cached = _DOCTOR_CACHE.get("data")
+            if cached and now - float(_DOCTOR_CACHE.get("at") or 0) < 30:
+                out = dict(cached)
+                out["cached"] = True
+                return out
+    if not _DOCTOR_LOCK.acquire(blocking=False):
+        cached = _DOCTOR_CACHE.get("data")
+        if cached:
+            out = dict(cached)
+            out["cached"] = True
+            out["busy"] = True
+            return out
+        return _doctor_error("体检正在执行，请稍后重试")
+    try:
+        env = os.environ.copy()
+        # 走本机回环 + 临时会话 Cookie, 兼容只有哈希密码、没有明文密码的认证配置
+        if AUTH_ON:
+            env["TSF_DOCTOR_COOKIE"] = "tsf_sess=" + sess_token(int(time.time()) + 300)
+        env.pop("TSF_DOCTOR_USER", None)
+        env.pop("TSF_DOCTOR_PASS", None)
+        cmd = [DOCTOR_BIN, "-base", "http://127.0.0.1:%d" % PORT,
+               "-archive", ARCHIVE, "-timeout", "8s"]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=env)
+        raw = (p.stdout or "").strip()
+        if not raw:
+            err = (p.stderr or "").strip()[-300:] or ("exit=%d" % p.returncode)
+            return _doctor_error("体检工具无输出: " + err)
+        try:
+            data = json.loads(raw)
+        except Exception as ex:
+            return _doctor_error("体检输出不是 JSON: %s (%s)" % (str(ex)[:120], raw[:160]))
+        if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
+            return _doctor_error("体检输出结构异常")
+        data["app_version"] = APP_VERSION
+        data["cached"] = False
+        _DOCTOR_CACHE = {"at": time.time(), "data": data}
+        return data
+    except FileNotFoundError:
+        return _doctor_error("未安装体检工具: " + DOCTOR_BIN)
+    except subprocess.TimeoutExpired:
+        return _doctor_error("体检超时（20 秒）")
+    except Exception as ex:
+        return _doctor_error("体检执行失败: " + str(ex)[:160])
+    finally:
+        _DOCTOR_LOCK.release()
+
+
 def disk_guard():
     while True:
         if not storage_ready():
@@ -18181,6 +18332,10 @@ class Handler(BaseHTTPRequestHandler):
             html = html.replace("<head>", "<head>" + _HEAD_BOOT, 1)
             self._send(200, html.encode())
             return
+        elif path == "/api/doctor":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            force = q.get("refresh", ["0"])[0] in ("1", "true", "yes")
+            self._json(doctor_report(force))
         elif path == "/api/fan":
             self._json(fan_state())
         elif path == "/api/net":
