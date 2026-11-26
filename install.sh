@@ -232,7 +232,7 @@ TSF_USB_LOCK=/tmp/tsf-usb.lock
 # ---- 转码 / 作品库 ----
 # 单路硬转 / 多路合成导出都走 ffmpeg-rockchip; 3 并发是 RK3568 单硬编实例的平衡点
 TSF_VPU_TRANSCODE_ON=1
-TSF_TR_CODES=3
+TSF_TR_CODES=2
 # 作品库(网页「我的作品」): 合成/导出成品落这里; 保留天数在网页里改(1~180 天, 默认 7)
 TSF_LIB=$LIB_DIR
 LIB_TTL_DAYS_DEFAULT=7
@@ -358,6 +358,11 @@ EnvironmentFile=-$CONF
 ExecStart=$PYTHON $TSF_DIR/sentry-viewer.py
 Restart=always
 RestartSec=5
+# 车机写入第一优先: 网页/转码只用 0-2 核并降优先级, 最后一核留给 OTG/gadget 中断
+CPUAffinity=0-2
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -371,6 +376,10 @@ EnvironmentFile=-$CONF
 ExecStart=$PYTHON $TSF_DIR/tesla-live-sync.py
 Restart=always
 RestartSec=5
+# 在线同步读镜像与车机写入同一块盘: 最低 CPU 优先级 + idle IO, 车机写入期间整轮让路
+CPUAffinity=0-2
+Nice=19
+IOSchedulingClass=idle
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -409,9 +418,12 @@ mkdir -p /etc/cron.d
 cat > /etc/cron.d/tesla-sentry <<EOF
 */2 * * * * root /bin/sh $TSF_DIR/usb-selfheal.sh >/dev/null 2>&1
 EOF
+# OTG 中断独占最后一核: 播放/转码打满 0-2 核时 dwc3 中断不被饿死, 车机写 U 盘不掉盘
+install -Dm755 "$SRC_DIR/scripts/teslabox-usb-irq.sh" /usr/local/sbin/teslabox-usb-irq.sh
+cp "$SRC_DIR/systemd/teslabox-usb-irq.service" /etc/systemd/system/teslabox-usb-irq.service
 systemctl daemon-reload
 systemctl enable tesla-gadget.service sentry-viewer.service tesla-live.service \
-    pwm-fan-control.service tsf-ap-policy.timer >/dev/null 2>&1
+    pwm-fan-control.service tsf-ap-policy.timer teslabox-usb-irq.service >/dev/null 2>&1
 if [ -d /etc/NetworkManager ] && command -v nmcli >/dev/null 2>&1 \
         && systemctl is-active --quiet NetworkManager; then
     systemctl enable wpa_supplicant@wlp1s0.service tsf-wifi-dhcp.service \

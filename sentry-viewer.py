@@ -14686,8 +14686,9 @@ def prewarm_loop():
                 playing = bool(PLAYBACK_SESSIONS)
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
+            # USBGUARD: 车机正在写 U 盘时后台预缓冲一律让路(归档与镜像同一块盘)
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
-                    or play_hold_active() or usb_sync_busy()):
+                    or play_hold_active() or usb_sync_busy() or car_writing()):
                 time.sleep(15)
                 continue
             with _PREWARM_PICK_LOCK:
@@ -14721,7 +14722,8 @@ def prewarm_loop():
                 while not job_cancel.is_set():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
-                    if playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or play_hold_active():
+                    if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
+                            or play_hold_active() or car_writing()):  # USBGUARD
                         job_cancel.set()
                         return
                     time.sleep(0.5)
@@ -14782,9 +14784,10 @@ def night_hw_loop():
                 playing = bool(PLAYBACK_SESSIONS)
             with _VARIANT_JOBS_LOCK:
                 full_busy = any(k[2] == 0 for k in _VARIANT_JOBS)
+            # USBGUARD: 车机正在写 U 盘时硬解补档一律让路
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
                     or play_hold_active() or PREWARM_PENDING or PREWARM.get("busy")
-                    or usb_sync_busy()):
+                    or usb_sync_busy() or car_writing()):
                 time.sleep(30)
                 continue
             with _PREWARM_PICK_LOCK:
@@ -14820,7 +14823,8 @@ def night_hw_loop():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
-                            or play_hold_active() or PREWARM.get("busy")):
+                            or play_hold_active() or PREWARM.get("busy")
+                            or car_writing()):  # USBGUARD
                         job_cancel.set()
                         return
                     time.sleep(0.5)

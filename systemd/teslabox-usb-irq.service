@@ -1,0 +1,11 @@
+[Unit]
+Description=Pin DWC3 USB IRQ to the last CPU core (car OTG first priority)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/teslabox-usb-irq.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

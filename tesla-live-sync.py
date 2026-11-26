@@ -57,6 +57,7 @@ MNT = os.environ.get("TSF_MNT", "/tmp/teslamnt")
 LOG = os.environ.get("TSF_LIVE_LOG", "/root/tesla-live.log")
 STATE = os.environ.get("TSF_LIVE_STATE", "/root/.tesla-live-state.json")
 INTERVAL = int(os.environ.get("TSF_LIVE_INTERVAL", "15"))
+CAR_WRITE_HOLD = float(os.environ.get("TSF_LIVE_CAR_HOLD", "30"))
 # 与网页 U盘管理 / 定时归档 / U盘自愈共用的跨进程锁 (那边持排他, 这里持共享)
 USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
 # 归档滚动窗口(分钟), 与 sentry-viewer.py 的 TSF_RECENT_ROLL_MIN 保持一致;
@@ -542,6 +543,27 @@ def dump(exfat):
             print("   %s %-40s size=%d" % ("DIR " if it.is_dir else "FILE", it.name, it.size))
 
 
+_CAR_WRITE = {"mtime": None, "changed": 0.0}
+
+
+def car_busy():
+    """车机最近 CAR_WRITE_HOLD 秒内写过镜像 -> True。
+    在线同步会读同一个镜像文件, 车机写入期间必须让路, 避免抢 U 盘 I/O 触发主机 reset。"""
+    global _CAR_WRITE
+    try:
+        mt = os.stat(IMG).st_mtime_ns
+    except OSError:
+        return False
+    now = time.time()
+    if _CAR_WRITE["mtime"] is None:
+        _CAR_WRITE["mtime"] = mt
+        _CAR_WRITE["changed"] = now
+    elif mt != _CAR_WRITE["mtime"]:
+        _CAR_WRITE["mtime"] = mt
+        _CAR_WRITE["changed"] = now
+    return (now - _CAR_WRITE["changed"]) < CAR_WRITE_HOLD
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dump", action="store_true")
@@ -581,7 +603,15 @@ def main():
         return 0
 
     lock_miss = 0
+    last_car_log = 0.0
     while True:
+        if car_busy():
+            now = time.time()
+            if now - last_car_log >= 60:
+                log("车机正在写 U 盘, 暂停本轮在线同步 (给 OTG 让路)")
+                last_car_log = now
+            time.sleep(args.interval)
+            continue
         lk = usb_shared_lock()
         if lk is None:
             # 网页正在管理U盘 / 定时归档正在挂载: 跳过本轮。
