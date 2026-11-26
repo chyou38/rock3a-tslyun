@@ -64,6 +64,8 @@ TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
 SETTINGS_FILE = os.environ.get("TSF_SETTINGS", os.path.join(TSF_DIR, "settings.json"))
 ARCHIVE_SCHED_FILE = os.path.join(TSF_DIR, "archive-sched.json")
 ARCHIVE_NOW_FLAG = os.path.join(TSF_DIR, "archive-now.flag")
+# 最近一轮目录探测结果: 哪个分类在写 (供页面区分"行车中"与"哨兵写入")
+WRITE_CAT_FILE = os.path.join(TSF_DIR, "write-cat.json")
 
 # 与网页 U盘管理 / 定时归档 / U盘自愈共用的跨进程锁 (那边持排他, 这里持共享)
 USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
@@ -660,6 +662,35 @@ def probe_sig(exfat):
 _CAR_WRITE = {"mtime": None, "changed": 0.0}
 
 
+def _cat_changed(sig, old, cat):
+    """某分类下是否有文件新增/变大/变时间 (old 为上一轮签名)。"""
+    pre = cat + "/"
+    if old is None:
+        return False
+    for k, v in sig.items():
+        if k.startswith(pre) and old.get(k) != v:
+            return True
+    for k in old:
+        if k.startswith(pre) and k not in sig:
+            return True
+    return False
+
+
+def publish_write_cat(sig, old):
+    """把"哪一类正在写"落到文件, 页面据此区分行车记录(行车中)与哨兵/手动保存。"""
+    flags = {"recent": _cat_changed(sig, old, "RecentClips"),
+             "sentry": _cat_changed(sig, old, "SentryClips"),
+             "saved": _cat_changed(sig, old, "SavedClips"),
+             "ts": time.time()}
+    try:
+        tmp = WRITE_CAT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(flags, f)
+        os.replace(tmp, WRITE_CAT_FILE)
+    except OSError:
+        pass
+
+
 def car_busy():
     """车机最近 CAR_WRITE_HOLD 秒内写过镜像 -> True。
     在线同步会读同一个镜像文件, 车机写入期间必须让路, 避免抢 U 盘 I/O 触发主机 reset。"""
@@ -766,10 +797,13 @@ def main():
                     exfat = ExFat(IMG)
                 sig = probe_sig(exfat)
                 if last_sig is None:
-                    last_sig = sig          # 启动第一轮只记基线, 不补推历史
-                elif sig != last_sig:
+                    publish_write_cat(sig, None)   # 启动第一轮只记基线, 不补推历史
                     last_sig = sig
-                    urgent = True
+                else:
+                    publish_write_cat(sig, last_sig)
+                    if sig != last_sig:
+                        urgent = True
+                    last_sig = sig
             except Exception as e:
                 log("哨兵探测失败: %s" % e)
         if urgent:

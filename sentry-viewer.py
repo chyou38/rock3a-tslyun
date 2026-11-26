@@ -636,6 +636,8 @@ def ota_rollback():
 # 设置存在 settings.json (与 auth.conf 同目录), 默认开启: 每 5 分钟看一次有没有新版本,
 # 有就等"没人在看视频/没有导出任务"的窗口自动升级 (升级只重启本服务, 约 5 秒)
 SETTINGS_FILE = os.environ.get("TSF_SETTINGS", "/opt/tesla-sentry/settings.json")
+# 同步服务每 8 秒写入: 哪个分类正在写 (RecentClips=行车中, SentryClips/SavedClips=哨兵/手动保存)
+WRITE_CAT_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "write-cat.json")
 AUTO_UPD = {"last_check": 0, "last_result": "", "last_apply": 0, "next_try": 0}
 
 # ---- 标题栏标识 (logo + 名称): 默认内置这张图, 设置里可换成自己的 ----
@@ -5704,6 +5706,7 @@ async function loadPrewarmPolicy() {
     const st = document.getElementById('pw-policy-state');
     if (st) {
       if (j.on === false) st.textContent = '已关闭';
+      else if (j.sentry_writing) st.textContent = '暂停中 · 哨兵写入中';
       else if (j.car_writing) st.textContent = '暂停中 · 车机写入中';
       else if (j.paused) st.textContent = '暂停中 · 约 ' + Math.max(1, Math.ceil((j.remain || 0) / 60)) + ' 分钟后恢复';
       else if (j.busy || j.night_busy || j.jobs > 0) st.textContent = '运行中 · 转码中';
@@ -9104,6 +9107,7 @@ async function loadDriveLock() {
     if (st) {
       if (!j.on) { st.className = 'ust-pill off'; st.textContent = '已关闭'; }
       else if (j.locked) { st.className = 'ust-pill lock'; st.textContent = '行车中 · 已锁定'; }
+      else if (j.sentry_writing) { st.className = 'ust-pill ok'; st.textContent = '哨兵写入中 · 未锁定'; }
       else { st.className = 'ust-pill ok'; st.textContent = '已开启 · 车机空闲'; }
     }
   } catch (e) {}
@@ -9655,8 +9659,9 @@ def usb_attach():
     with usb_lock:
         if usb_attached and os.path.ismount(MNT):
             return True, "already"
-        # 行车锁: 车机正在写镜像(行车中)时禁止读取虚拟U盘, 停车后自动解锁
-        if drive_lock_on() and car_writing():
+        # 行车锁: 车机正在写镜像(行车中)时禁止读取虚拟U盘, 停车后自动解锁;
+        # 哨兵告警/手动保存写入不算行车中, 不锁 (否则停车时看不了U盘管理)。
+        if drive_lock_on() and car_writing() and not sentry_writing_only():
             return False, "行车锁：车机正在写入U盘（行车中），暂不能读取虚拟U盘；停车后自动解锁，归档区可正常回放"
         # 先拿跨进程锁再动 UDC: 归档/自愈正在操作镜像时直接让开, 不抢 loop 与挂载点。
         # 在线同步只短暂持共享锁, 等它放开即可, 避免用户偶发"点不动 U盘管理"。
@@ -12274,6 +12279,19 @@ def car_writing():
     return v
 
 
+def sentry_writing_only():
+    """车机在写, 但写的是哨兵告警/手动保存(而不是行车记录) -> True。
+    哨兵事件发生在停车状态, 不该被当成"行车中"锁住虚拟U盘; 行车记录在涨才算行车中。"""
+    try:
+        with open(WRITE_CAT_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        if time.time() - float(j.get("ts") or 0) > 30:
+            return False
+        return bool(j.get("sentry") or j.get("saved")) and not bool(j.get("recent"))
+    except (OSError, ValueError):
+        return False
+
+
 def car_cpu_prefix():
     """车机写入时把 ffmpeg 钉在 0-2 核(留一核给 OTG), 空闲时返回空=全额 4 核。"""
     return ["taskset", "-c", "0-2"] if car_writing() else []
@@ -12282,7 +12300,7 @@ def car_cpu_prefix():
 # ---------------- 行车锁 (虚拟U盘读取保护) ----------------
 # 行车中(车机正在写镜像)禁止连接/读取虚拟U盘镜像, 避免与车机抢读写导致 OTG 掉盘;
 # 归档区是独立副本, 回放/实时预览不受影响。开关在网页「车机U盘」页, 默认开。
-DRIVE_LOCK = {"on": True, "locked": False, "car_writing": False, "since": 0.0}
+DRIVE_LOCK = {"on": True, "locked": False, "car_writing": False, "sentry_writing": False, "since": 0.0}
 
 
 def drive_lock_on():
@@ -12296,11 +12314,13 @@ def drive_watch_loop():
         try:
             cw = car_writing()
             on = drive_lock_on()
-            locked = on and cw
+            sentry_only = cw and sentry_writing_only()
+            locked = on and cw and not sentry_only   # 哨兵写入不算行车中, 不锁
             if locked and not DRIVE_LOCK["locked"]:
                 DRIVE_LOCK["since"] = time.time()
             DRIVE_LOCK["on"] = on
             DRIVE_LOCK["car_writing"] = cw
+            DRIVE_LOCK["sentry_writing"] = sentry_only
             DRIVE_LOCK["locked"] = locked
             if locked and usb_attached and os.path.ismount(MNT):
                 print("drive-watch: 车机写入中, 自动恢复车机导出 (行车锁)")
@@ -17944,7 +17964,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(live_status())
         elif path == "/api/drive_lock":
             self._json({"on": drive_lock_on(), "locked": DRIVE_LOCK["locked"],
-                        "car_writing": car_writing(), "attached": bool(usb_attached),
+                        "car_writing": car_writing(),
+                        "sentry_writing": sentry_writing_only(),
+                        "attached": bool(usb_attached),
                         "car_age": round(usb_img_age(), 1)})
         elif path == "/api/auth/info":
             self._json({"user": AUTH_USER, "on": AUTH_ON})
@@ -18177,6 +18199,7 @@ class Handler(BaseHTTPRequestHandler):
                         "preview_low_water_pct": preview_low_water_pct(),
                         "paused": play_hold_active(), "remain": int(remain),
                         "on": PREWARM["on"], "car_writing": car_writing(),
+                        "sentry_writing": sentry_writing_only(),
                         "busy": PREWARM["busy"],
                         "jobs": len(_VARIANT_JOBS), "done": PREWARM["done"],
                         "last": PREWARM["last"], "qs": PREWARM_QS,
