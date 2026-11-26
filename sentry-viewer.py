@@ -4150,20 +4150,6 @@ function ovCycleQ() {
   const list = ['360p', '480p', '720p', '1080p', 'orig'];
   ovSetQuality(list[(list.indexOf(ovQ) + 1) % list.length]);
 }
-/* 让播放框跟视频本身同比例: 合成宽幅视频在 16:9 框里会上下出现大片黑边 */
-function ovFitStage() {
-  const st = document.getElementById('ovstage'), g = document.getElementById('ovgrid');
-  if (!st || !g) return;
-  const wide = g.classList.contains('comp') || g.classList.contains('one');
-  const v = g.querySelector('video');
-  if (wide) {
-    if (v && v.videoWidth && v.videoHeight) {
-      st.style.setProperty('aspect-ratio', v.videoWidth + ' / ' + v.videoHeight);
-    }
-  } else {
-    st.style.removeProperty('aspect-ratio');
-  }
-}
 function ovBuildGrid(ev, ix) {
   const g = document.getElementById('ovgrid');
   if (!g) return;
@@ -4179,8 +4165,6 @@ function ovBuildGrid(ev, ix) {
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
   g.classList.toggle('comp', compOn);
-  /* 画面比例跟着视频本身走: 合成流是 2.37:1 宽幅, 撑 16:9 会上下留黑边 */
-  ovFitStage();
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
   let cells = [...g.querySelectorAll('.ovcell')];
   while (cells.length < 6) {
@@ -4195,7 +4179,6 @@ function ovBuildGrid(ev, ix) {
     cov.appendChild(cbg);
     cell.appendChild(cov);
     ['playing','waiting','emptied','pause','ended'].forEach(en => vid.addEventListener(en, ovCoverSync));
-    vid.addEventListener('loadedmetadata', ovFitStage);
     const lb = document.createElement('span'); lb.className = 'ovcam';
     cell.appendChild(lb);
     g.appendChild(cell); cells.push(cell);
