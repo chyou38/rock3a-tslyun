@@ -187,18 +187,6 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
 APP_VERSION = "3.0.2"
-
-
-def _build_stamp():
-    """当前程序的构建指纹(文件 mtime+size), 前端据此判断"手机上跑的是不是旧页面"。"""
-    try:
-        st = os.stat(os.path.abspath(__file__))
-        return "%d-%d" % (int(st.st_mtime), st.st_size)
-    except Exception:
-        return "0-0"
-
-
-BUILD_STAMP = _build_stamp()
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -979,8 +967,7 @@ def auto_update_loop():
 
 HTML = r"""<!DOCTYPE html>
 <html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta id="ovtheme" name="theme-color" content="#0e1216">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TSL哨兵云盘</title>
 <style id="base">
 :root {
@@ -1221,17 +1208,8 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 .ovstage video { display:block; width:100%; height:100%; object-fit:contain; background:#000; }
 /* 全屏: 整个播放器(画面+控制条)进全屏, 画面占满上方, 播放/进度/倍速/视角控制条留在底部 */
 .ovplay.fs-on { max-width:none; width:100%; height:100%; margin:0; padding:0; position:relative; display:block !important; background:#000; }
-.ovplay.fs-on .ovtop { display:none !important; }
-/* 全屏顶部不允许漏出浅色底/滚动条: 信息条一律压暗或隐藏, 进度条钉死在底部 */
-.ovplay.fs-on, .ovplay.fs-on * { scrollbar-width:none; }
-.ovplay.fs-on::-webkit-scrollbar, .ovplay.fs-on *::-webkit-scrollbar { display:none; width:0; height:0; }
-.ovplay.fs-on .ovbar { top:auto !important; bottom:0 !important; }
-.ovplay.fs-on .tpanel { background:linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,0)) !important; border:0 !important; }
+.ovplay.fs-on .ovtop { display:none; }
 .ovplay.fs-on .ovstage { position:absolute; inset:0; width:100%; height:100%; aspect-ratio:auto; border-radius:0; border:0; }
-/* 全屏画面居中 + 四周留黑边统一: 浅色主题的格子/舞台底会在 contain 留边处漏成白/灰条, 一律压黑并居中 */
-.ovplay.fs-on .ovstage, .ovplay.fs-on .ovgrid, .ovplay.fs-on .ovcell,
-.ovplay.fs-on .ovstage video { background:#000 !important; }
-.ovplay.fs-on .ovgrid { height:100%; align-content:center; justify-content:center; }
 .ovplay.fs-on .ovbar { position:absolute; left:0; right:0; bottom:0; z-index:10; margin:0; padding:14px 16px 14px; background:linear-gradient(to top, #000000d9, #00000000); transition:opacity .3s ease; }
 .ovplay.fs-on.bar-hide .ovbar { opacity:0; pointer-events:none; }
 .ovplay.fs-on .ovbar .t { color:#fff; }
@@ -1241,48 +1219,6 @@ body.ovmode .ovplay { display:block; position:-webkit-sticky; position:sticky; t
 /* 二级播放页(body.ovfull)的 980px 限宽和浅色底会压过全屏样式: 全屏时一并解除, 否则画面缩在中间一条 */
 body.ovfull .ovplay.fs-on { background:#000; padding:0; overflow:hidden; }
 body.ovfull .ovplay.fs-on .ovstage { max-width:none; margin:0; }
-/* 整屏播放页(body.ovfull)只是把播放器铺满视口, 不是"全屏模式": 底色必须跟主题走,
-   所以这里只去掉 12px 左右补白和顶部 8px 补白(那条 17 物理像素的浅色带就来自 padding-top:8px),
-   不把整块压黑 —— 压黑会让浅色主题的中间页面凭空多出一大块黑底, 很难看。 */
-body.ovfull .ovplay { padding:0 !important; margin:0 !important; max-width:none !important; }
-body.ovfull .ovplay .ovtop { margin:0 !important; padding:8px 10px 8px !important; }
-body.ovfull .ovplay .ovstage { max-width:none !important; margin:0 !important; }
-body.ovfull .ovplay .ovbar, body.ovfull .ovplay .ovtools,
-body.ovfull .ovplay .ovcams, body.ovfull .ovplay .ovclips,
-body.ovfull .ovplay .ovinfo { max-width:none !important; margin-left:0 !important; margin-right:0 !important; }
-/* 合成(单格 3×2 拼图)整幅可见并居中; 原生单路/六格继续 cover 铺满 */
-.ovgrid.comp video, .ovplay.fs-on .ovgrid.one video { object-fit:contain !important; }
-/* 关键权重冲突: body.ovmode .ovplay(吸顶, 浅色底, padding-top:6px) 在文件里更靠后, 同权重压过
-   .ovplay.fs-on 与 body.ovfull .ovplay → 全屏时播放器仍 sticky、不铺满视口, 顶部露出 --bg 浅色条、
-   画面也不居中。这里用 (0,3,1)+(0,4,1) 的 !important 规则钉死全屏几何, 彻底绕开这组权重打架。 */
-body.ovmode .ovplay.fs-on, body.ovfull .ovplay.fs-on,
-.ovplay.fs-on { position:fixed !important; inset:0 !important; width:auto !important; height:auto !important;
-  max-width:none !important; max-height:none !important; margin:0 !important; padding:0 !important;
-  background:#000 !important; overflow:hidden !important; border-radius:0 !important; box-shadow:none !important; }
-/* 竖屏无横屏锁时(fs-portrait)仍要旋转成横屏: 放在上面那条规则之后, 同权重靠后生效 */
-.ovplay.fs-on.fs-portrait { inset:auto !important; top:50% !important; left:50% !important;
-  width:100vh !important; height:100vw !important; transform:translate(-50%,-50%) rotate(90deg) !important; }
-body.ovmode .ovplay.fs-on .ovstage, body.ovfull .ovplay.fs-on .ovstage,
-.ovplay.fs-on .ovstage { position:absolute !important; inset:0 !important; width:auto !important; height:auto !important;
-  max-width:none !important; margin:0 !important; padding:0 !important; aspect-ratio:auto !important;
-  border:0 !important; border-radius:0 !important; }
-/* 合成流是 3×2 拼图, 用 contain 才能整幅可见且自动居中; 原生六格继续 cover 铺满 */
-.ovplay.fs-on .ovgrid.one video { object-fit:contain !important; }
-.ovplay.fs-on .ovgrid { place-items:stretch; }
-/* 全屏时禁止页面底色从任何缝隙漏出来 */
-body.fs-black, body.fs-black::before { background:#000 !important; }
-/* 纯 CSS 兜底(JS 未执行时也压黑整页, 免得顶部露出浅色条) */
-html:has(.ovplay.fs-on), body:has(.ovplay.fs-on) { background:#000 !important; }
-/* 全屏顶部硬遮罩: 实测用户全屏截图顶部总有一条浅色矩形(约 1263×17, 与画面左边缘对齐),
-   该元素来源未能 100% 定位(已排除 ovtop/tpanel/ovbar/滚动条), 用一条纯黑遮罩条钉死盖掉 */
-#ovfsmask { display:none; }
-.ovplay.fs-on #ovfsmask { display:block; position:absolute; left:0; right:0; top:0; height:26px;
-  background:#000 !important; z-index:60; pointer-events:none; }
-.ovplay.fs-on .tpanel { top:26px !important; }
-/* 全屏时搬进播放器的遥测 HUD: 原来挂着的 .tpanel 默认 display:none, 这里强制显示 */
-.ovplay.fs-on .tpanel.ovfs-hud { display:block !important; }
-/* 全屏时把页面其它顶层块整体隐藏, 杜绝任何页面元素(header/列表/浮层)漏进画面 */
-body.fs-solo > *:not(#ovplay):not(script):not(style) { display:none !important; }
 /* 详细数据(加速度等)不再在行车数据行里展示, 节点保留给渲染逻辑写入 */
 #tp-rows[hidden], #tp-fold[hidden] { display:none !important; }
 /* 横屏锁失败(如 iOS)时, 竖屏全屏把整个播放器旋转 90° 模拟横屏 */
@@ -2036,7 +1972,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 </style><script>
 /* 版本自检: 服务端升级后, 若当前页面仍是旧版本就自动重载 (看片时不打断, 最多 2 次防死循环) */
 (function () {
-  var MY = "__APP_VER__", MYB = "__BUILD__";
+  var MY = "__APP_VER__";
   function chk() {
     if (document.querySelector('.player.open')) return;
     var k = 'tsf_ver_chk', o = {};
@@ -2046,9 +1982,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     fetch('/api/ver?t=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        /* build 是文件指纹, 每次部署都会变 → 手机上开着旧页面也能自动刷新到最新代码 */
-        var stale = (j && j.build && j.build !== MYB) || (j && j.v && j.v !== MY);
-        if (stale) {
+        if (j && j.v && j.v !== MY) {
           o.n = (o.n || 0) + 1;
           try { sessionStorage.setItem(k, JSON.stringify(o)); } catch (e) {}
           location.reload();
@@ -2092,7 +2026,6 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
 <nav class="tabs" id="tabs"></nav><button id="libbtn" title="我的作品" onclick="openLib()"><svg class="ic"><use href="#i-folder"/></svg></button><button id="theme" title="主题: 自动/浅色/深色" onclick="cycleTheme()"><svg class="ic"><use href="#i-theme"/></svg></button><button id="gear" title="设置"><svg class="ic"><use href="#i-gear"/></svg></button></header>
 <!-- 存储与系统状态卡已移入 个性化→设置→更新上方 (常驻展开) -->
 <div class="ovplay" id="ovplay">
-  <div id="ovfsmask" aria-hidden="true"></div>
   <div class="ovtop">
     <button class="ovback" id="ovback" onclick="closeOvFull()">‹ 返回</button>
     <span class="ovk" id="ovcat">哨兵总览</span>
@@ -4164,7 +4097,6 @@ function ovBuildGrid(ev, ix) {
   }
   g.classList.toggle('one', vids.length === 1);
   g.classList.toggle('quad', vids.length === 4);
-  g.classList.toggle('comp', compOn);
   /* 固定 6 格复用: 第一次建节点, 之后只换 src 和标签 */
   let cells = [...g.querySelectorAll('.ovcell')];
   while (cells.length < 6) {
@@ -4467,186 +4399,32 @@ function ovRate() {
   ovRateTo(rates[(rates.indexOf(ovRateVal) + 1) % rates.length] || 1);
 }
 function ovFull() {
-  const fs0 = document.fullscreenElement || document.webkitFullscreenElement;
-  if (fs0) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
-  const plEl = document.getElementById('ovplay');
-  /* 已经在兜底全屏里: 再点一次就是退出 */
-  if (plEl && plEl.classList.contains('fs-on')) { ovFsPseudoOff(); return; }
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fs) { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} return; }
   const pl = document.getElementById('ovplay');
   if (!pl) return;
-  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) { const p2 = screen.orientation.lock('landscape'); if (p2 && p2.catch) p2.catch(() => {}); } } catch (e) {} };
-  /* ① 整个播放器(画面 + 悬浮遥测 + 控制条)进原生全屏: 真整屏, 浏览器工具栏一起收起,
-     而且我们的 HUD/进度条都还在。不再单独把 video 推进原生全屏 —— 那样页面全没了,
-     遥测 HUD 也跟着消失, 而且不同浏览器(Edge)会自己画一条浅色条。 */
-  if (pl.requestFullscreen || pl.webkitRequestFullscreen) {
-    try {
-      const p = (pl.requestFullscreen || pl.webkitRequestFullscreen).call(pl);
-      if (p && p.then) { p.then(lockLand).catch(() => ovFsPseudo()); return; }
-      lockLand(); return;
-    } catch (e) {}
-  }
-  /* ② 容器全屏不支持时, 单条流(合成/单视角)还能退回视频原生全屏 */
-  const compVid = document.querySelector('#ovgrid.comp video');
-  const live = [...document.querySelectorAll('#ovgrid video')].filter(v => v.offsetParent !== null);
-  const solo = compVid || (live.length === 1 ? live[0] : null);
-  if (solo) {
-    solo.setAttribute('playsinline', '');
-    try {
-      if (solo.webkitEnterFullscreen) { solo.webkitEnterFullscreen(); return; }
-      if (solo.requestFullscreen) { solo.requestFullscreen().catch(() => ovFsPseudo()); return; }
-      if (solo.webkitRequestFullscreen) { solo.webkitRequestFullscreen(); return; }
-    } catch (e) {}
-  }
-  /* ③ 浏览器/WebView 根本不给全屏 API: 退回整页铺满(inset:0 黑底), 不再做"页面里放大的窗口" */
-  ovFsPseudo();
-}
-/* 无全屏 API 时的兜底: 整页铺满 + 压黑 + 竖屏旋转, 视觉上等同全屏(只是浏览器工具栏还在) */
-function ovFsPseudo() {
-  const pl = document.getElementById('ovplay');
-  if (!pl) return;
-  try { if (screen.orientation && screen.orientation.lock) { const p = screen.orientation.lock('landscape'); if (p && p.catch) p.catch(() => {}); } } catch (e) {}
-  pl.classList.add('fs-on');
-  ovFsLock(true);
-  ovFsShowBar();
-  setTimeout(() => {
-    const portrait = window.innerHeight > window.innerWidth;
-    pl.classList.toggle('fs-portrait', portrait);
-    ovFsLock(true, portrait);
-  }, 300);
-}
-/* 退出兜底全屏 */
-function ovFsPseudoOff() {
-  const pl = document.getElementById('ovplay');
-  if (!pl) return;
-  pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
-  ovFsLock(false);
-  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
+  const lockLand = () => { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} };
+  try {
+    if (pl.requestFullscreen) pl.requestFullscreen().then(lockLand).catch(() => {});
+    else if (pl.webkitRequestFullscreen) { pl.webkitRequestFullscreen(); lockLand(); }
+  } catch (e) {}
 }
 /* 全屏退出解锁方向; 横屏锁不支持时(如 iOS)竖屏全屏旋转播放器模拟横屏; 控制条始终留在底部 */
 let ovFsHideTimer = null;
-/* 全屏几何硬锁: 直接给元素打内联 !important, 优先级高于一切样式表的权重打架
-   (body.ovmode/.ovfull 的 sticky + 浅色底会压过 fs-on 规则, 造成画面不居中 + 顶部白条) */
-const OV_FS_PL = ['position', 'inset', 'top', 'left', 'width', 'height', 'max-width', 'max-height', 'margin', 'padding',
-                  'background', 'overflow', 'border-radius', 'box-shadow', 'transform', 'z-index'];
-const OV_FS_ST = ['position', 'inset', 'width', 'height', 'max-width', 'margin', 'padding', 'aspect-ratio',
-                  'border', 'border-radius'];
-function ovFsCycle(el, props, on) {
-  if (!el) return;
-  props.forEach(k => el.style.setProperty(k, on ? 'initial' : '', 'important'));
-}
-/* 遥测面板(#tpanel)原本挂在 #player 里, 而全屏时 #player 被整体隐藏, 所以全屏里"悬浮的遥测数据"
-   整块消失。进全屏把它搬进 #ovplay 顶部, 退出再放回原来的位置。 */
-function ovFsHud(on) {
-  const pl = document.getElementById('ovplay'), tp = document.getElementById('tpanel');
-  if (!pl || !tp) return;
-  if (on) {
-    if (tp.parentElement !== pl) {
-      tp._ovHome = tp.parentElement; tp._ovNext = tp.nextSibling;
-      try { pl.insertBefore(tp, pl.firstChild); } catch (e) {}
-    }
-    tp.classList.add('ovfs-hud');
-  } else {
-    tp.classList.remove('ovfs-hud');
-    const home = tp._ovHome;
-    if (home) {
-      try { home.insertBefore(tp, (tp._ovNext && tp._ovNext.parentNode === home) ? tp._ovNext : null); }
-      catch (e) { try { home.appendChild(tp); } catch (e2) {} }
-    }
-    tp._ovHome = null; tp._ovNext = null;
-  }
-}
-function ovFsLock(on, portrait) {
-  const pl = document.getElementById('ovplay');
-  const st = document.getElementById('ovstage');
-  if (on && pl && pl.parentElement === document.body && document.body.lastElementChild !== pl) {
-    /* 挪到 body 最后一个子节点: 绝对压在页面所有元素之上, 谁也盖不住画面 */
-    try { document.body.appendChild(pl); } catch (e) {}
-  }
-  if (on) {
-    if (pl) {
-      pl.style.setProperty('position', 'fixed', 'important');
-      if (portrait) {
-        pl.style.setProperty('inset', 'auto', 'important');
-        pl.style.setProperty('top', '50%', 'important');
-        pl.style.setProperty('left', '50%', 'important');
-        pl.style.setProperty('width', '100vh', 'important');
-        pl.style.setProperty('height', '100vw', 'important');
-        pl.style.setProperty('transform', 'translate(-50%,-50%) rotate(90deg)', 'important');
-      } else {
-        /* 只设 inset:0; 千万别再把 top/left 覆盖成 auto, 否则 inset 被拆成 right/bottom → 塌到右下角 */
-        pl.style.setProperty('inset', '0px', 'important');
-        pl.style.setProperty('width', 'auto', 'important');
-        pl.style.setProperty('height', 'auto', 'important');
-        pl.style.setProperty('transform', 'none', 'important');
-      }
-      pl.style.setProperty('max-width', 'none', 'important');
-      pl.style.setProperty('max-height', 'none', 'important');
-      pl.style.setProperty('margin', '0px', 'important');
-      pl.style.setProperty('padding', '0px', 'important');
-      pl.style.setProperty('background', '#000', 'important');
-      pl.style.setProperty('overflow', 'hidden', 'important');
-      pl.style.setProperty('border-radius', '0px', 'important');
-      pl.style.setProperty('box-shadow', 'none', 'important');
-      pl.style.setProperty('z-index', '2147483000', 'important');
-    }
-    if (st) {
-      st.style.setProperty('position', 'absolute', 'important');
-      st.style.setProperty('inset', '0px', 'important');
-      st.style.setProperty('width', 'auto', 'important');
-      st.style.setProperty('height', 'auto', 'important');
-      st.style.setProperty('max-width', 'none', 'important');
-      st.style.setProperty('margin', '0px', 'important');
-      st.style.setProperty('padding', '0px', 'important');
-      st.style.setProperty('aspect-ratio', 'auto', 'important');
-      st.style.setProperty('border', '0', 'important');
-      st.style.setProperty('border-radius', '0px', 'important');
-    }
-    ovFsHud(true);
-    document.body.classList.add('fs-black', 'fs-solo');
-    document.documentElement.style.setProperty('background', '#000', 'important');
-    document.body.style.setProperty('background', '#000', 'important');
-    /* 浏览器状态栏/工具栏底色也跟着黑, 断掉"顶部一条浅色"的另一条来源 */
-    const tm = document.getElementById('ovtheme');
-    if (tm) { if (!tm.dataset.orig) tm.dataset.orig = tm.content; tm.content = '#000000'; }
-    try { window.scrollTo(0, 0); } catch (e) {}
-    /* 合成(单格 3×2 拼图)整幅可见并居中; 原生六格保持 cover 铺满 */
-    const g = pl && pl.querySelector('.ovgrid');
-    if (g && g.classList.contains('one')) {
-      const v = g.querySelector('video');
-      if (v) v.style.setProperty('object-fit', 'contain', 'important');
-    }
-  } else {
-    ovFsCycle(pl, OV_FS_PL, false);
-    ovFsCycle(st, OV_FS_ST, false);
-    ovFsHud(false);
-    document.body.classList.remove('fs-black', 'fs-solo');
-    document.documentElement.style.removeProperty('background');
-    document.body.style.removeProperty('background');
-    const tm = document.getElementById('ovtheme');
-    if (tm && tm.dataset.orig) tm.content = tm.dataset.orig;
-    const g = pl && pl.querySelector('.ovgrid');
-    if (g) [...g.querySelectorAll('video')].forEach(v => v.style.removeProperty('object-fit'));
-  }
-}
 function ovFsChange() {
   const fs = document.fullscreenElement || document.webkitFullscreenElement;
   const pl = document.getElementById('ovplay');
   if (!fs) {
     try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     if (pl) pl.classList.remove('fs-on', 'fs-portrait', 'bar-hide');
-    ovFsLock(false);
     if (ovFsHideTimer) { clearTimeout(ovFsHideTimer); ovFsHideTimer = null; }
     return;
   }
-  /* 视频元素自己进了原生全屏: 屏幕只有这条视频, 不去动播放器容器 */
-  if (fs && fs.tagName === 'VIDEO') return;
   if (pl) pl.classList.add('fs-on');
-  ovFsLock(true);
   ovFsShowBar();
   setTimeout(() => {
     const portrait = window.innerHeight > window.innerWidth;
     if (pl) pl.classList.toggle('fs-portrait', portrait);
-    ovFsLock(true, portrait);
   }, 320);
 }
 document.addEventListener('fullscreenchange', ovFsChange);
@@ -16992,8 +16770,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/ver":
             # 版本探针: 前端刷新时对比, 服务端升级了就自动重载, 不用手动清缓存
-            # v = 语义版本(不变), build = 文件 mtime+size(每次部署都会变, 前端靠它判断旧页面)
-            body = json.dumps({"v": APP_VERSION, "build": BUILD_STAMP}).encode()
+            body = json.dumps({"v": APP_VERSION}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -17007,14 +16784,11 @@ class Handler(BaseHTTPRequestHandler):
             html = (HTML.replace("__CAT_NAMES__", json.dumps(CAT_NAMES, ensure_ascii=False))
                     .replace("__I18N__", I18N_JS).replace("__LANGS__", LANG_JS)
                     .replace("__APP_VER__", APP_VERSION)
-                    .replace("__BUILD__", BUILD_STAMP)
                     .replace("__PREVIEW_SEC__", str(preview_seconds())))
             self._send(200, html.encode())
             return
         elif path == "/api/fan":
             self._json(fan_state())
-        elif path == "/api/ver":
-            self._json({"ver": BUILD_STAMP, "app": APP_VERSION})
         elif path == "/api/net":
             self._json(net_state())
         elif path == "/api/stitch/status":
