@@ -4486,7 +4486,7 @@ function ovHoldFrame(cell) {
   const v = cell.querySelector('video');
   const img = cell.querySelector('.ovfreeze');
   if (!v || !img) return;
-  if (!v.videoWidth || v.readyState < 2) { if (cell.classList.contains('hold')) return; }
+  if (!v.videoWidth || v.readyState < 2) return;   /* 还没有画面就什么都不冻, 免得冻出破图 */
   try {
     const cv = document.createElement('canvas');
     cv.width = v.videoWidth; cv.height = v.videoHeight;
