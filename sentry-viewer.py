@@ -17081,6 +17081,46 @@ button:active{background:#0ea472}
 # 只服务"连续播放"的第一版: 不支持任意拖动, 不做 HLS/CarPlay, 不碰单路和导出。
 COMPOSITE_LOCK = threading.Lock()
 COMPOSITE_STATE = {"proc": None, "started": 0.0}
+# 合成结果缓存在 eMMC (不碰车机写的那块 U 盘): 同一片段/同一画质第二次看直接给文件,
+# 省掉 6 路解码+合成, 首帧从 ~2.5s 降到几十毫秒, 也能正常拖动进度。
+COMP_CACHE_DIR = "/opt/tesla-sentry/.compcache"
+COMP_CACHE_MAX = 60 * 1024 * 1024     # 只留最近几段, 超了删最旧的
+
+
+def _comp_cache_key(paths, qv):
+    h = hashlib.sha1()
+    for fp in paths:
+        try:
+            st = os.stat(fp)
+            h.update(("%s|%d|%d|" % (fp, st.st_size, st.st_mtime)).encode())
+        except OSError:
+            h.update(fp.encode())
+    h.update(("|%s|%d" % (qv, len(paths))).encode())
+    return h.hexdigest()[:24]
+
+
+def _comp_cache_cleanup():
+    try:
+        items = []
+        for fn in os.listdir(COMP_CACHE_DIR):
+            fp = os.path.join(COMP_CACHE_DIR, fn)
+            if not fn.endswith(".mp4"):
+                continue
+            try:
+                items.append((os.path.getmtime(fp), os.path.getsize(fp), fp))
+            except OSError:
+                pass
+        total = sum(sz for _, sz, _ in items)
+        for _, sz, fp in sorted(items):
+            if total <= COMP_CACHE_MAX:
+                break
+            try:
+                os.unlink(fp)
+                total -= sz
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def _composite_dims(qv):
@@ -17136,6 +17176,7 @@ def _composite_cmd(paths, qv):
         if not src:
             src = fp
         cmd += ["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime",
+                "-probesize", "32768", "-analyzeduration", "0",
                 "-i", src]
     fc = []
     for i in range(len(paths)):
@@ -17437,6 +17478,34 @@ class Handler(BaseHTTPRequestHandler):
         qv = (qs.get("q") or ["360p"])[0]
         if qv not in ("360p", "480p", "720p", "1080p", "orig"):
             qv = "360p"
+        # 命中缓存: 直接按 Range 发文件, 不起 ffmpeg
+        cacheable = qv in ("360p", "480p", "720p") and len(paths) >= 2
+        cfile = ""
+        if cacheable:
+            try:
+                os.makedirs(COMP_CACHE_DIR, exist_ok=True)
+                cfile = os.path.join(COMP_CACHE_DIR, _comp_cache_key(paths, qv) + ".mp4")
+            except OSError:
+                cfile = ""
+            if cfile and os.path.isfile(cfile) and os.path.getsize(cfile) > 1024:
+                try:
+                    os.utime(cfile, None)
+                except OSError:
+                    pass
+                serve_file(self, cfile, inline=True)
+                return
+        cpart = ""
+
+        def _cache_open():
+            nonlocal cpart
+            if not cfile:
+                return None
+            cpart = cfile + "." + str(os.getpid()) + ".part"
+            try:
+                return open(cpart, "wb")
+            except OSError:
+                cpart = ""
+                return None
         with COMPOSITE_LOCK:
             old = COMPOSITE_STATE.get("proc")
             if old and old.poll() is None:
@@ -17462,6 +17531,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             COMPOSITE_STATE["proc"] = proc
             COMPOSITE_STATE["started"] = time.time()
+        cache_done = False
+        cfp = None
         try:
             # 首块最多等 30s: 硬件被占/ffmpeg 卡死时不能把请求线程永远挂住
             r0, _, _ = select.select([proc.stdout], [], [], 30)
@@ -17486,6 +17557,12 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             self.wfile.write(first)
             self.wfile.flush()
+            cfp = _cache_open()          # 边发边写缓存, 下次直接发文件
+            if cfp:
+                try:
+                    cfp.write(first)
+                except OSError:
+                    pass
             while True:
                 # 60s 没有任何输出视为合成卡死: 断开让前端走回退, 不留挂死线程
                 r, _, _ = select.select([proc.stdout], [], [], 60)
@@ -17496,6 +17573,12 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+                if cfp:
+                    try:
+                        cfp.write(chunk)
+                    except OSError:
+                        pass
+            cache_done = True
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
@@ -17525,6 +17608,23 @@ class Handler(BaseHTTPRequestHandler):
                 os.unlink(logpath)
             except OSError:
                 pass
+            if cfp:
+                try:
+                    cfp.close()
+                except Exception:
+                    pass
+            if cpart:
+                if cache_done:
+                    try:
+                        os.replace(cpart, cfile)
+                        _comp_cache_cleanup()
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        os.unlink(cpart)   # 中途断开/失败: 半截文件不能当缓存用
+                    except OSError:
+                        pass
             with COMPOSITE_LOCK:
                 if COMPOSITE_STATE.get("proc") is proc:
                     COMPOSITE_STATE["proc"] = None
