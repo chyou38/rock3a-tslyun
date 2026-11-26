@@ -8806,27 +8806,24 @@ async function refreshStorage() {
   st.innerHTML = '存储盘: ' + (!config ? '<span class="storage-warn">未选择 · 请在下方创建</span>' : (j.storage_ready ? '<span class="storage-ok">已挂载</span>' : '<span class="storage-warn">未挂载 · 当前仅可管理存储，不会写入系统盘</span>')) + '<br>' +
     'OTG 连接: ' + otgBadge(j) +
     ' <span class="storage-meta">(' + escH(j.host_connected && j.speed_text ? j.speed_text : 'no') + ')</span><br>' +
-    '车机U盘(LUN): ' + (j.lun_backed
-      ? '已装载 <b>' + escH(j.lun_name || '镜像') + '</b> · 车机可直接读写'
+    '车机U盘: ' + (j.lun_backed
+      ? '已装载 · 车机可直接读写'
       : (j.otg_kind === 'ejected'
         ? '<span class="storage-warn">空 · 已被车机弹出, 重新插拔数据线恢复</span>'
         : '<span class="storage-meta">未导出到车机</span>')) + '<br>' +
     '虚拟U盘容量: ' + (!config ? '<span class="storage-warn">未创建</span>' : fmtSz(j.img_size) + ' (实际占用 ' + fmtSz(j.img_used) + ')') + '<br>' +
-    '镜像: <span class="storage-meta">' + escH(j.img) + '</span><br>' +
-    '当前存储: ' + escH(j.source || (config ? '未知' : '未配置')) + ' · 归档: <span class="storage-meta">' + escH(j.archive) + '</span><br>' +
     'USB 序列号: <b>' + escH(j.gadget_serial || '无') + '</b> · 卷序列号: <b>' + escH(j.volume_serial || '无') + '</b>';
   let h = '';
   for (const d of j.disks || []) {
-    h += '<div class="storage-disk">💾 ' + escH(d.disk) + ' ' + escH(d.size) + ' ' + escH(d.model) +
+    h += '<div class="storage-disk">💾 ' + escH(d.brand || 'USB硬盘') + ' ' + escH(d.size) +
       (d.link ? ' · ' + escH(d.link) : '') + ' · 序列号: <b>' + escH(storageSerial(d)) + '</b></div>';
     for (const p of d.parts) {
       const cur = p.dev === j.source;
       h += '<div class="storage-part">' +
-        '<span class="storage-part-name">' + escH(p.dev) + ' ' + escH(p.size) + ' ' + escH(p.fstype || '无文件系统') + '</span>' +
+        '<span class="storage-part-name">' + escH(p.size) + (p.fstype ? ' · ' + escH(p.fstype) : '') + '</span>' +
         (cur ? '<span class="storage-current">当前使用</span>' :
           '<button class="storage-use" onclick="storageUse(\'' + p.dev + '\')">使用此盘</button>' +
-          '<button class="storage-format" onclick="storageFormat(\'' + p.dev + '\')"' + (linked ? ' disabled' : '') + '>格式化</button>') +
-        (p.mount ? '<span class="storage-mount">' + escH(p.mount) + '</span>' : '') + '</div>';
+          '<button class="storage-format" onclick="storageFormat(\'' + p.dev + '\')"' + (linked ? ' disabled' : '') + '>格式化</button>') + '</div>';
     }
   }
   box.innerHTML = h || '<div class="hint">未检测到 USB 硬盘。请插入硬盘后点「刷新」。</div>';
@@ -8835,7 +8832,7 @@ async function refreshStorage() {
   for (const d of j.disks || []) {
     const op = document.createElement('option');
     op.value = d.disk;
-    op.textContent = d.disk + ' · ' + d.size + ' · ' + (d.model || 'USB硬盘') + ' · 序列号 ' + storageSerial(d);
+    op.textContent = (d.brand || 'USB硬盘') + ' · ' + d.size + ' · 序列号 ' + storageSerial(d);
     sel.appendChild(op);
   }
   if (old) sel.value = old;
@@ -10781,7 +10778,7 @@ def _usb_link_speed(disk_path):
 
 def _usb_disks():
     try:
-        r = _run_cmd(["lsblk", "-b", "-J", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,TRAN,MODEL,LABEL"])
+        r = _run_cmd(["lsblk", "-b", "-J", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,TRAN,MODEL,VENDOR,LABEL"])
         data = json.loads(r.stdout or "{}")
     except Exception:
         return []
@@ -10801,6 +10798,7 @@ def _usb_disks():
         disk_bytes = int(d.get("size") or 0)
         disk_path = d.get("path") or "/dev/" + d.get("name", "")
         disks.append({"disk": disk_path,
+                      "brand": (d.get("vendor") or "").strip() or (d.get("model") or "").strip(),
                       "model": (d.get("model") or "").strip(),
                       "size": _human_bytes(disk_bytes), "size_bytes": disk_bytes,
                       "serial": _disk_serial(disk_path),
