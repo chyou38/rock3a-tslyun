@@ -388,7 +388,6 @@ def copy_entry(exfat, entry, dest_path, hold=True):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
     written = 0
-    pace_t = time.time()
     pace_bytes = 0
     with open(tmp, "wb") as f:
         for chunk in exfat.read_file(entry):
@@ -405,7 +404,6 @@ def copy_entry(exfat, entry, dest_path, hold=True):
                     time.sleep(0.15)
                 if not hold:
                     touch_write_cat()
-                pace_t = time.time()
                 pace_bytes = 0
         f.flush()
         os.fsync(f.fileno())
@@ -854,7 +852,6 @@ def probe_loop():
 def car_busy():
     """车机最近 CAR_WRITE_HOLD 秒内写过镜像 -> True。
     在线同步会读同一个镜像文件, 车机写入期间必须让路, 避免抢 U 盘 I/O 触发主机 reset。"""
-    global _CAR_WRITE
     try:
         mt = os.stat(IMG).st_mtime_ns
     except OSError:

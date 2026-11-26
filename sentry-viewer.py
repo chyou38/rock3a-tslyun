@@ -186,7 +186,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.1.1"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -877,42 +877,50 @@ def brand_save_logo(data):
     if not data:
         return False, "空文件"
     tmp = "/tmp/brand-in-%d" % int(time.time() * 1000)
+    tmp_out = "/tmp/brand-out-%d.png" % int(time.time() * 1000)
     ff = os.environ.get("TSF_FFMPEG") or "ffmpeg"
     try:
         with open(tmp, "wb") as f:
             f.write(data)
         os.makedirs(BRAND_DIR, exist_ok=True)
-        brand_clear_files()
         out = os.path.join(BRAND_DIR, "logo.png")
         vf = ("scale=256:256:force_original_aspect_ratio=decrease,"
               "pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000,format=rgba")
         try:
             r = subprocess.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", tmp,
-                                "-vf", vf, "-frames:v", "1", out],
+                                "-vf", vf, "-frames:v", "1", tmp_out],
                                capture_output=True, timeout=40)
         except (OSError, subprocess.SubprocessError):
             r = None
-        if (not r or r.returncode != 0 or not os.path.isfile(out)
-                or os.path.getsize(out) < 200):
+        if (not r or r.returncode != 0 or not os.path.isfile(tmp_out)
+                or os.path.getsize(tmp_out) < 200):
             # ffmpeg 转不了就退一步: 只接受浏览器原生能显示的真 PNG/JPG/WEBP
             if data[:8] == b"\x89PNG\r\n\x1a\n":
-                with open(out, "wb") as f:
+                with open(tmp_out, "wb") as f:
                     f.write(data)
             else:
-                try:
-                    os.remove(out)
-                except OSError:
-                    pass
                 return False, "这张图转不了(常见于 iPhone 的 HEIC), 请在相册里先导出为 JPG/PNG 再上传"
+        # 新图验证通过后再原子替换; 失败上传不会先删掉旧图标
+        os.replace(tmp_out, out)
+        try:
+            for f in os.listdir(BRAND_DIR):
+                if f != "logo.png":
+                    try:
+                        os.remove(os.path.join(BRAND_DIR, f))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
         save_settings({"brand_logo": "logo.png"})
         return True, "图标已更新"
     except OSError as ex:
         return False, "写入失败: %s" % str(ex)[:80]
     finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        for p in (tmp, tmp_out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 def _update_window_ok():
@@ -9391,6 +9399,7 @@ def amap_key():
 GEO_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/geo"
 GEO_LOCK = threading.Lock()
 GEO_BUSY = set()
+GEO_SEM = threading.Semaphore(4)       # 最多 4 个高德反查线程, 防事件多时线程/请求暴涨
 
 
 def geo_short(a):
@@ -9494,6 +9503,10 @@ def amap_enrich(meta):
         if ck in GEO_BUSY:
             return meta
         GEO_BUSY.add(ck)
+    if not GEO_SEM.acquire(False):
+        with GEO_LOCK:
+            GEO_BUSY.discard(ck)
+        return meta
 
     def run():
         try:
@@ -9501,6 +9514,7 @@ def amap_enrich(meta):
         finally:
             with GEO_LOCK:
                 GEO_BUSY.discard(ck)
+            GEO_SEM.release()
 
     threading.Thread(target=run, daemon=True).start()
     return meta
@@ -9516,13 +9530,13 @@ def list_events(force=False):
         base = os.path.join(ARCHIVE, cat)
         events = []
         if os.path.isdir(base):
-            for name in sorted(os.listdir(base), reverse=True):
+            for name in sorted(_safe_listdir(base), reverse=True):
                 d = os.path.join(base, name)
                 if not os.path.isdir(d):
                     continue
                 vids = []
                 total = 0
-                for f in sorted(os.listdir(d)):
+                for f in sorted(_safe_listdir(d)):
                     if f.lower().endswith(".mp4"):
                         cam = f.rsplit("-", 1)[-1][:-4] if "-" in f else f
                         vids.append({"url": f"/media/{cat}/{name}/{f}", "cam": cam, "f": f})
@@ -9530,6 +9544,9 @@ def list_events(force=False):
                             total += os.path.getsize(os.path.join(d, f))
                         except OSError:
                             pass
+                if not vids:
+                    # 同步端先建目录、再写 .part; 还没有 .mp4 的目录不是可播放事件
+                    continue
                 meta = {}
                 ej = os.path.join(d, "event.json")
                 if os.path.isfile(ej):
@@ -9600,6 +9617,19 @@ def safe_archive_path(p):
     if not rp.startswith(os.path.realpath(ARCHIVE) + "/") or not os.path.isfile(rp):
         return None
     return rp
+
+
+def safe_media_path(cat, name, fn):
+    """媒体 URL /media/<分类>/<事件>/<文件> 的归档路径校验"""
+    return safe_archive_path(os.path.join("/archive", cat, name, fn))
+
+
+def _safe_listdir(p):
+    """目录可能被清理线程并发删除; 返回空列表而不是让请求抛 500"""
+    try:
+        return os.listdir(p)
+    except OSError:
+        return []
 
 
 # ---------- 车机U盘(镜像)临时管理 ----------
@@ -10491,8 +10521,8 @@ def net_wifi_auto(ssid, auto):
             return _wpa_apply(n, store)
         return True, "ok"
     cfg = _netplan_cfg()
-    wf = _wifi_apply_store_aps(n, cfg, store) if n else None
     if n:
+        _wifi_apply_store_aps(n, cfg, store)
         ok, msg = _netplan_apply(cfg)
         if not ok:
             return ok, msg
@@ -10892,6 +10922,20 @@ def _current_storage_source():
         return ""
 
 
+def _source_is_on_disk(device, source):
+    """判断当前存储来源分区是否位于待初始化整块盘上, 防止格式化正在使用的盘。"""
+    if not device or not source:
+        return False
+    device = os.path.realpath(device)
+    source = os.path.realpath(source)
+    if source == device:
+        return True
+    if source.startswith(device):
+        rest = source[len(device):]
+        return bool(rest) and (rest[0].isdigit() or rest[0] == "p")
+    return False
+
+
 def _human_bytes(n):
     try:
         n = float(n)
@@ -11079,11 +11123,9 @@ def storage_status():
     except OSError:
         gadget_serial = ""
     try:
-        with open(IMG, "rb") as f:
-            img_configured = f.read(8)[3:8] == b"EXFAT"
-            img_configured = bool(_img_vbr())
-            vbr = _img_vbr()
-            volume_serial = ("%08X" % int.from_bytes(vbr[100:104], "little")) if len(vbr) >= 512 else ""
+        vbr = _img_vbr()
+        img_configured = bool(vbr)
+        volume_serial = ("%08X" % int.from_bytes(vbr[100:104], "little")) if len(vbr) >= 512 else ""
     except OSError:
         volume_serial = ""
     return {"ok": True, "storage_ready": storage_ready(), "storage_mount": STORAGE_MNT,
@@ -11150,6 +11192,8 @@ def storage_init(device, percent, confirm, size_g=None):
     d = _find_usb_disk(device)
     if not d:
         return False, "只允许初始化 USB 硬盘"
+    if _source_is_on_disk(device, _current_storage_source()):
+        return False, "当前正在使用的存储盘不能重新初始化, 请先换到其他盘"
     if _otg_info()["connected"]:
         return False, "OTG 仍连接主机, 请先拔出电脑/车机数据线再初始化"
     expected = d.get("serial") or os.path.basename(d["disk"])
@@ -11183,7 +11227,7 @@ def storage_init(device, percent, confirm, size_g=None):
                                       stdout=_init_log, stderr=subprocess.STDOUT)
     except Exception as e:
         return False, str(e)
-    return True, "started:%d:%d" % (virtual_gb, archive_gb)
+    return True, "initialized:%d:%d" % (virtual_gb, archive_gb)
 
 
 INIT_PROGRESS = "/tmp/tsf-init.progress"
@@ -11513,20 +11557,24 @@ def live_latest():
     片段由 tesla-live-sync.py 在后台持续只读同步进归档 (不打断车机), 延时约 1~2 分钟。"""
     base = os.path.join(ARCHIVE, "RecentClips")
     try:
-        cands = sorted((n for n in os.listdir(base)
+        cands = sorted((n for n in _safe_listdir(base)
                         if re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", n)
                         and os.path.isdir(os.path.join(base, n))), reverse=True)
     except OSError:
         return "", 0.0
-    if not cands:
-        return "", 0.0
-    newest = 0.0
-    try:
-        for f in os.listdir(os.path.join(base, cands[0])):
-            newest = max(newest, os.path.getmtime(os.path.join(base, cands[0], f)))
-    except OSError:
-        pass
-    return cands[0], newest
+    for name in cands:
+        d = os.path.join(base, name)
+        files = _safe_listdir(d)
+        if not any(f.lower().endswith(".mp4") for f in files):
+            continue
+        newest = 0.0
+        for f in files:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(d, f)))
+            except OSError:
+                pass
+        return name, newest
+    return "", 0.0
 
 
 def usb_real(p):
@@ -12379,7 +12427,7 @@ def sentry_writing_only():
             return True
         # driving=False 是同步侧用 SEI 遥测判定出的"停车哨兵录像"; None 表示未判定/不确定
         return bool(j.get("recent")) and j.get("driving") is False
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, AttributeError):
         return False
 
 
@@ -12391,7 +12439,7 @@ def parked_recording():
         if time.time() - float(j.get("ts") or 0) > 30:
             return False
         return bool(j.get("recent")) and j.get("driving") is False and not bool(j.get("sentry") or j.get("saved"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError, AttributeError):
         return False
 
 
@@ -13049,7 +13097,7 @@ def roll_recent():
     if keep_min <= 0 or not os.path.isdir(rd):
         return 0
     evs = []
-    for e in os.listdir(rd):
+    for e in _safe_listdir(rd):
         dt = _ev_dt(e)
         if dt:                       # 非时间戳命名的目录一律不动
             evs.append((dt, e))
@@ -13062,8 +13110,14 @@ def roll_recent():
     for dt, e in evs:
         if dt < cutoff:
             p = os.path.join(rd, e)
+            try:
+                if time.time() - os.path.getmtime(p) < 3600:
+                    continue          # 同步可能仍在写这个事件
+            except OSError:
+                continue
             shutil.rmtree(p, ignore_errors=True)
             if not os.path.isdir(p):
+                _tombstone("RecentClips", e)
                 n += 1
     if n:
         _invalidate_storage_caches()
@@ -13100,7 +13154,7 @@ def roll_box():
         if not os.path.isdir(base):
             continue
         evs = []
-        for e in os.listdir(base):
+        for e in _safe_listdir(base):
             dt = _ev_dt(e)
             if dt:                       # 非时间戳命名的目录一律不动
                 evs.append((dt, e))
@@ -13165,7 +13219,7 @@ def roll_archive_capacity():
         base = os.path.join(ARCHIVE, cat)
         if not os.path.isdir(base):
             continue
-        for e in os.listdir(base):
+        for e in _safe_listdir(base):
             dt = _ev_dt(e)
             if not dt:
                 continue
@@ -13210,7 +13264,7 @@ def emergency_cleanup():
         base = os.path.join(ARCHIVE, cat)
         if not os.path.isdir(base):
             continue
-        for e in os.listdir(base):
+        for e in _safe_listdir(base):
             dt = _ev_dt(e)
             if not dt:
                 continue
@@ -14339,7 +14393,6 @@ def _feishu_media_card(m, img_key=None, size=0):
     """作品库成品的说明卡: 和旧「手动保存」卡片长一样(时间/位置/片段/按钮), 再加时长大小。
     只发 media 消息时飞书里是条没缩略图、没文字的裸视频, 认不出是哪个, 所以配一张说明卡。"""
     raw_cams = [str(c) for c in (m.get("cams") or [])]
-    cams = ", ".join(CAM_CN.get(c, c) for c in raw_cams) or "—"
     dur = float(m.get("dur") or 0)
     mb = float(size or m.get("size") or 0) / 1048576.0
     # 位置/时间沿用事件 event.json, 和旧「手动保存」卡片显示的一致
@@ -15575,6 +15628,7 @@ def archive_cleanup(days=None):
                     continue
                 deleted += 1
                 freed += sz
+                _tombstone(cat, name)
         ARCH_CLEAN.update({"last": int(time.time()), "deleted": deleted, "freed": freed,
                            "msg": "删除 %d 个事件，释放 %.2f GB" % (deleted, freed / 1073741824.0)})
         if deleted:
@@ -16962,7 +17016,6 @@ def _strip_emulation(b):
 def _mp4_video_samples(fp, max_samples=4000):
     """解析 moov, 返回 [(offset, size), ...] 与 lenSize; 失败返回 None"""
     with open(fp, "rb") as f:
-        d = f.read(4096)
         f.seek(0, 2)
         fsize = f.tell()
 
@@ -17050,7 +17103,6 @@ def _mp4_video_samples(fp, max_samples=4000):
     n = struct.unpack(">I", moov[a + 8:a + 12])[0]
     if uniform:
         sizes = [uniform] * n
-        buf = b""
     else:
         take = min(n, max_samples * 2)
         sizes = list(struct.unpack(">%dI" % take, moov[a + 12:a + 12 + 4 * take]))
@@ -17761,9 +17813,14 @@ class Handler(BaseHTTPRequestHandler):
         """只回头部: iOS/安卓下载器在真正下载前常先 HEAD 探大小, 不支持会退化成"边播边存"的残缺文件"""
         def hdr_only(code, extra=None):
             self.send_response(code)
-            for k, v in (extra or []):
+            extra = list(extra or [])
+            has_length = False
+            for k, v in extra:
                 self.send_header(k, v)
-            self.send_header("Content-Length", "0")
+                if k.lower() == "content-length":
+                    has_length = True
+            if not has_length:
+                self.send_header("Content-Length", "0")
             self.end_headers()
 
         if not self._gate():
@@ -17793,12 +17850,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         m = re.match(r"^/media/([\w-]+)/([\w\-. ]+)/([\w\-. ]+)$", path)
         if m:
-            fp = os.path.normpath(os.path.join(ARCHIVE, m.group(1), m.group(2), m.group(3)))
-            if not fp.startswith(ARCHIVE) or not os.path.isfile(fp):
+            fp = safe_media_path(m.group(1), m.group(2), m.group(3))
+            if not fp:
                 hdr_only(404)
                 return
+            out = fp
+            qv = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q", [""])[0]
+            if qv in RES_SCALE:
+                # HEAD 只探大小, 不阻塞等转码: 目标档优先, 否则已缓存的低档, 最后原画
+                out = _variant_play(fp, qv)
+                if not out:
+                    for fq in (("720p", "480p", "360p") if qv == "1080p" else (
+                               ("480p", "360p") if qv == "720p" else (("360p",) if qv == "480p" else ()))):
+                        out = _variant_play(fp, fq)
+                        if out:
+                            break
+                if not out:
+                    out = fp
             try:
-                size = str(os.path.getsize(fp))
+                size = str(os.path.getsize(out))
             except OSError:
                 hdr_only(404)
                 return
@@ -18694,8 +18764,8 @@ class Handler(BaseHTTPRequestHandler):
             if not m:
                 self._send(404, b"not found")
                 return
-            fp = os.path.normpath(os.path.join(ARCHIVE, m.group(1), m.group(2), m.group(3)))
-            if not fp.startswith(ARCHIVE) or not os.path.isfile(fp):
+            fp = safe_media_path(m.group(1), m.group(2), m.group(3))
+            if not fp:
                 self._send(404, b"not found")
                 return
             # 清晰度: ?q=360p/480p/720p 返回缓存副本; ?preview=10 优先取前10秒预缓冲。
@@ -18868,20 +18938,19 @@ class Handler(BaseHTTPRequestHandler):
                     self.connection.settimeout(5)
                 except OSError:
                     pass
-                peer_dead = False
                 with open(fp, "rb") as f:
                     f.seek(start)
                     remain = length
-                    deadline = time.time() + 60
+                    idle_deadline = time.time() + 60
                     while remain > 0:
                         try:
                             r, _, _ = select.select([self.connection], [], [], 0)
                             if r:
                                 if not self.connection.recv(1, socket.MSG_PEEK):
-                                    peer_dead = True     # 对端 FIN
+                                    # 对端 FIN
                                     break
                         except (ConnectionResetError, OSError):
-                            peer_dead = True
+                            # 对端已断开
                             break
                         chunk = f.read(min(65536, remain))
                         if not chunk:
@@ -18889,11 +18958,12 @@ class Handler(BaseHTTPRequestHandler):
                         try:
                             self.wfile.write(chunk)
                         except (BrokenPipeError, ConnectionResetError, socket.timeout, TimeoutError, OSError):
-                            peer_dead = True
+                            # 对端已断开
                             break
                         remain -= len(chunk)
-                        if time.time() > deadline:
-                            break     # 链路太慢, 交还线程给别的请求
+                        if time.time() > idle_deadline:
+                            break     # 60 秒没有成功写入才算卡死; 慢但持续的链路不截断
+                        idle_deadline = time.time() + 60
             except (BrokenPipeError, ConnectionResetError):
                 pass
             finally:
@@ -18917,7 +18987,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found")
             return
         try:
-            st = os.stat(fp)
+            os.stat(fp)
         except OSError:
             self._send(404, b"not found")
             return
@@ -19423,13 +19493,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not base.lower().endswith(FONT_EXTS):
                     base = FONT_NAME
                 dst = os.path.join(FONT_DIR, base)
-                with open(dst + ".part", "wb") as f:
+                part = dst + ".part"
+                with open(part, "wb") as f:
                     f.write(data)
-                os.replace(dst + ".part", dst)
-                if not _font_valid(dst):
-                    os.unlink(dst)
+                if not _font_valid(part):
+                    try:
+                        os.unlink(part)
+                    except OSError:
+                        pass
                     self._json({"ok": False, "msg": "这不是有效的字体文件"}, 400)
                     return
+                os.replace(part, dst)
                 _font_reset()
                 self._json({"ok": True, "msg": "字体已安装 (%.1fMB)" % (len(data) / 1048576.0)})
             except OSError as ex:
@@ -19629,7 +19703,7 @@ class Handler(BaseHTTPRequestHandler):
             size_g = body.get("size_g") if isinstance(body, dict) else None
             confirm = body.get("confirm") if isinstance(body, dict) else None
             ok, msg = storage_init(device, percent, confirm, size_g)
-            if ok and msg.startswith("initialized:"):
+            if ok and (msg.startswith("initialized:") or msg.startswith("started:")):
                 _tag, vg, ag = msg.split(":")
                 msg = "已初始化: 虚拟U盘 %sG / 归档区 %sG, 页面即将刷新" % (vg, ag)
             self._json({"ok": ok, "msg": msg}, 200 if ok else 400)
