@@ -653,8 +653,15 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
     done = 0
     total_bytes = 0
     done_bytes = 0
+    processed = 0
+    cmp_cache = state.setdefault("__cmp__", {})
     ready = []
     for (cat, ev, name), e in items:
+        processed += 1
+        # 大批量首轮建立基线时也要分段落盘, 避免中途重启后整轮重扫。
+        if processed % CHECKPOINT_EVERY == 0:
+            state[pending_key] = new_pending
+            save_state(state)
         if "%s/%s" % (cat, ev) in pruned:
             continue            # 已被盒子侧定期清理, 不再重抄
         if cut is not None and cat == "RecentClips":
@@ -668,9 +675,21 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
         total_bytes += e.size
         if same_file(dest, e.size):
             # 同尺寸不代表同内容: 车机复用事件名/簇覆盖写时, 归档区留着旧字节。
-            # 签名里带 mtime, 只有归档副本与当前签名不同才逐字节复核, 未变过的文件不重复读。
-            if state.get("__cmp__", {}).get(key) == sig or same_content(dest, e, exfat):
-                state.setdefault("__cmp__", {})[key] = sig
+            # 首次观察只建立签名基线, 不读取旧归档内容; 之后只有签名变化才逐字节复核。
+            prev = cmp_cache.get(key)
+            if prev == sig:
+                done += 1
+                done_bytes += e.size
+                continue
+            if prev is None:
+                # 旧状态文件没有 __cmp__ 时不能把所有历史归档全读一遍,
+                # 否则 59GB 首轮会打满 U 盘 I/O; 先记基线, 后续签名变化再复核。
+                cmp_cache[key] = sig
+                done += 1
+                done_bytes += e.size
+                continue
+            if same_content(dest, e, exfat):
+                cmp_cache[key] = sig
                 done += 1
                 done_bytes += e.size
                 continue
@@ -691,6 +710,7 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
             done += 1
             done_bytes += n
             _mark_hot(dest)
+            cmp_cache[key] = sig
             log("已同步 %s (%d KB)" % (key, n // 1024))
             if progress:
                 progress(done, total, done_bytes, total_bytes, False)
@@ -758,6 +778,8 @@ _CAR_WRITE = {"mtime": None, "changed": 0.0}
 
 # 状态文件写入失败的限频时间戳 (save_state 使用), 0=从未失败
 _STATE_FAIL_TS = 0.0
+# 长循环中每处理多少个条目保存一次状态 (断点续跑)
+CHECKPOINT_EVERY = 200
 
 
 def _cat_changed(sig, old, cat):
@@ -1041,6 +1063,10 @@ def main():
         time.sleep(1)
         now = time.time()
         if PROBE_URGENT.is_set():
+            # 哨兵优先通道也不得抢车机写盘: 等车机空闲后再搬。
+            if car_busy():
+                time.sleep(2)
+                continue
             PROBE_URGENT.clear()
             lk = usb_shared_lock()
             if lk is None:

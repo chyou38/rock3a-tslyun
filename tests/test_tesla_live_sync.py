@@ -54,9 +54,12 @@ class CarBusyTests(unittest.TestCase):
 
 
 class _FakeEntry:
-    def __init__(self, data):
+    def __init__(self, data, name="clip.mp4", mtime=12345):
         self.data = data
         self.size = len(data)
+        self.vdl = self.size
+        self.mtime = mtime
+        self.name = name
 
 
 class _FakeExFat:
@@ -108,6 +111,49 @@ class SameFileTests(unittest.TestCase):
         entry = _FakeEntry(self.old)
         exfat = _FakeExFat(self.old)
         self.assertFalse(live_sync.same_content(str(self.dest) + ".absent", entry, exfat))
+
+
+class FirstRunSyncTests(unittest.TestCase):
+    """旧归档首轮不能被逐字节全扫; 首次只建签名基线, 长循环要分段落盘。"""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.dest = Path(self.tempdir.name) / "clip.mp4"
+        self.old = b"\x00A" * 64
+        self.new = b"\x00B" * 64
+        self.dest.write_bytes(self.old)
+        self.state_path = Path(self.tempdir.name) / "live-state.json"
+        self.key = ("SentryClips", "2026-11-27_15-00-00", "clip.mp4")
+        self.entry = _FakeEntry(self.new)
+        self.scan_result = {self.key: self.entry}
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def run_sync(self):
+        with patch.object(live_sync, "STATE", str(self.state_path)), \
+                patch.object(live_sync, "scan", return_value=self.scan_result), \
+                patch.object(live_sync, "safe_dest", return_value=str(self.dest)), \
+                patch.object(live_sync, "load_pruned", return_value=set()):
+            return live_sync.do_sync(object(), {}, quiet=True)
+
+    def test_first_run_seeds_signature_without_content_compare(self):
+        # 旧实现会在 __cmp__ 为空时调用 same_content; 这里一旦调用就让测试失败。
+        with patch.object(live_sync, "same_content",
+                          side_effect=AssertionError("首轮不应读取旧归档内容")):
+            copied, _ = self.run_sync()
+        self.assertEqual(copied, 0)
+        state = __import__("json").loads(self.state_path.read_text())
+        self.assertEqual(state["__cmp__"]["/".join(self.key)],
+                         [self.entry.size, self.entry.vdl, self.entry.mtime])
+
+    def test_long_sync_saves_checkpoints(self):
+        # 每处理 1 个条目就保存, 至少应有“检查点 + 结束”两次写入。
+        with patch.object(live_sync, "CHECKPOINT_EVERY", 1), \
+                patch.object(live_sync, "same_content", return_value=True), \
+                patch.object(live_sync, "save_state", wraps=live_sync.save_state) as save_mock:
+            self.run_sync()
+        self.assertGreaterEqual(save_mock.call_count, 2)
 
 
 if __name__ == "__main__":
