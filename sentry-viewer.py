@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.26"
+APP_VERSION = "3.2.27"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -9493,7 +9493,7 @@ function usbStatusHtml(attached, msg) {
     '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
-  if (DRIVE_LOCK_STATE.locked) { toast('🔒 行车锁：车机正在写入U盘，停车后自动解锁；归档区可正常回放'); return; }
+  if (DRIVE_LOCK_STATE.locked) { toast('🔒 行车锁：车机近3分钟仍在写U盘；若你已停车，可临时关闭行车锁后连接'); return; }
   toast('⏳ 正在连接 (车机读取将断开几秒)...');
   const r = await fetch('/api/usb/attach', { method: 'POST' });
   const j = await r.json();
@@ -9518,7 +9518,10 @@ async function loadDriveLock() {
     const st = document.getElementById('drivelock-state');
     if (st) {
       if (!j.on) { st.className = 'ust-pill off'; st.textContent = '已关闭'; }
-      else if (j.locked) { st.className = 'ust-pill lock'; st.textContent = '行车中 · 已锁定'; }
+      else if (j.locked) {
+        if (j.driving === true) { st.className = 'ust-pill lock'; st.textContent = '行车中 · 已锁定'; }
+        else { st.className = 'ust-pill lock'; st.textContent = '车机写入中 · 保护中（未判定行车/哨兵）'; }
+      }
       else if (j.parked_recording) { st.className = 'ust-pill ok'; st.textContent = '哨兵录像中 · 未锁定'; }
       else if (j.sentry_writing) { st.className = 'ust-pill ok'; st.textContent = '哨兵写入中 · 未锁定'; }
       else { st.className = 'ust-pill ok'; st.textContent = '已开启 · 车机空闲'; }
@@ -13392,6 +13395,18 @@ def car_writing():
     _CAR_WRITE["ts"] = now
     _CAR_WRITE["v"] = v
     return v
+
+
+def write_cat_state():
+    """读取车机写入分类; 超过 30s 视为未知。"""
+    try:
+        with open(WRITE_CAT_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        if time.time() - float(j.get("ts") or 0) > 30:
+            return {}
+        return j if isinstance(j, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 def sentry_writing_only():
@@ -20060,10 +20075,14 @@ class Handler(BaseHTTPRequestHandler):
             _car = car_writing()
             _sentry = sentry_writing_only()
             _lock = car_active_for_usb()
+            _state = write_cat_state()
             self._json({"on": drive_lock_on(), "locked": _lock,
                         "car_writing": _car,
                         "sentry_writing": _sentry,
                         "parked_recording": parked_recording(),
+                        "driving": _state.get("driving"),
+                        "recent": bool(_state.get("recent")),
+                        "sentry": bool(_state.get("sentry") or _state.get("saved")),
                         "attached": bool(usb_attached),
                         "car_age": round(usb_img_age(), 1)})
         elif path == "/api/auth/info":
