@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.13** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.14** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -72,7 +72,7 @@
 | 🌐 内网固定地址 | 安装时尝试启用 Avahi mDNS，在局域网广播 `http://tsl.local`（默认主机名 `tsl`，`--mdns NAME` 可改）；换 IP 不用重新记地址。仅同一局域网有效，标准 mDNS 只支持 `.local` 后缀。 |
 | 🔄 在线升级 | 多源并发竞速 + GitHub API 实时兜底，下载后校验 → 备份 → 原子替换 → 自动重启，出问题一键回滚；设置 → 更新里可勾选**自动更新**（默认开启，检测到新版且没人看视频时自动升）。 |
 | 🎨 个性化 | 标题图标与名称可自定义（默认「TSL哨兵云盘」）、深 / 浅 / 自动主题，4 套界面风格（默认 / Apple / Claude / 像素），10 种界面语言、网页背景换肤、锁车音（`LockChime.wav`）、涂装 `Wraps/`。 |
-| 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、**USB 自愈狗 1 秒级监控，车机 U 盘被弹出或异常断开时立即热挂回，失败再完整恢复**、断电自愈。仓库另带可选的 `scripts/tsf-watch.sh`：每 10 秒心跳、异常写本地 `/opt/tesla-sentry/watch.log`；默认**不推 CmaFree 低水位飞书告警**（该值在 RK3568 上长期 0–1MB 属正常波动），需要恢复时在服务里设 `TSF_WATCH_ALERT_CMA=1`。 |
+| 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、**USB 自愈狗 1 秒级监控，车机 U 盘被弹出或异常断开时立即热挂回，失败再完整恢复；你主动点「连接」管理时自动暂停让路**、断电自愈。仓库另带可选的 `scripts/tsf-watch.sh`：每 10 秒心跳、异常写本地 `/opt/tesla-sentry/watch.log`；默认**不推 CmaFree 低水位飞书告警**（该值在 RK3568 上长期 0–1MB 属正常波动），需要恢复时在服务里设 `TSF_WATCH_ALERT_CMA=1`。 |
 
 ---
 

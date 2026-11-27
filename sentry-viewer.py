@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.13"
+APP_VERSION = "3.2.14"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -9376,7 +9376,7 @@ function usbGuardText(g) {
     return ' · 自愈狗已恢复' + (age ? '（' + age + ' 秒前）' : '');
   }
   if (s === 'fault') return ' · 自愈狗恢复失败';
-  if (s === 'paused') return ' · 自愈狗暂停（管理操作中）';
+  if (s === 'paused') return g && g.manual_hold ? ' · 自愈狗已暂停（你主动连接中）' : ' · 自愈狗暂停（让路中）';
   if (s === 'waiting') return ' · 自愈狗待命';
   if (s === 'disabled') return '';
   return ' · 自愈狗待命';
@@ -9409,7 +9409,7 @@ function usbStatusHtml(attached, msg) {
   }
   return '<div class="usbstrip on"><span class="ust-dot"></span><div class="ust-body">' +
     '<div class="ust-t">已连接 · 车机U盘可读写</div>' +
-    '<div class="ust-s">改动直接写入车机U盘；断开满 5 分钟自动恢复车机导出 · 自愈狗暂停（网页管理中）</div></div>' +
+    '<div class="ust-s">改动直接写入车机U盘；你主动连接期间自愈狗不会动作，断开满 5 分钟自动恢复车机导出</div></div>' +
     '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
@@ -9927,6 +9927,7 @@ USB_LOCK_FILE = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
 
 usb_lock = threading.Lock()
 usb_attached = False
+usb_manual_hold = False   # 用户主动点「连接」期间，自愈狗必须完全让路
 usb_timer = None
 _usb_flock_fd = None
 
@@ -10105,6 +10106,7 @@ def usb_detach():
         _gadget_rebind(True)
         usb_attached = False
         _release_usb_flock()   # 挂载周期结束才释放, 失败路径继续持锁
+        usb_manual_end()       # 主动管理结束, 自愈狗恢复接管
         return True, "detached"
 
 
@@ -10114,6 +10116,24 @@ def usb_detach_safe():
         print("auto detach:", ok, msg)
     except Exception as e:
         print("auto detach error:", e)
+
+
+def usb_manual_begin():
+    """用户点「连接」时先抢占自愈狗，再动 UDC。
+    这样即使自愈狗已经在恢复，也会在拿锁后看到手动标记而放弃；
+    手动连接期间不自动热写回、不逻辑重插、不做介质重插。"""
+    global usb_manual_hold
+    usb_manual_hold = True
+    _usb_guard_kmsg_clear()
+    _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停", error="")
+
+
+def usb_manual_end():
+    """退出网页管理后解除手动让路，下一轮自愈狗再接管。
+    手动连接/断开产生的 USB reset 事件一并丢掉，避免刚恢复车机导出就被误判。"""
+    global usb_manual_hold
+    usb_manual_hold = False
+    _usb_guard_kmsg_clear()
 
 
 def usb_img_age():
@@ -11417,6 +11437,7 @@ USB_GUARD = {
     "attempts": 0,
     "last_attempt": 0.0,
     "last_replug": 0.0,
+    "manual_hold": False,
     "otg_kind": "",
     "last_kind_at": 0.0,
     "host_connected": False,
@@ -11433,6 +11454,7 @@ def _usb_guard_status():
     """给 /api/storage/status 用的快照; 不暴露内部锁对象。"""
     with USB_GUARD_LOCK:
         out = dict(USB_GUARD)
+    out["manual_hold"] = bool(usb_manual_hold)
     now = time.time()
     for k in ("last_ok", "last_event", "last_recovery", "last_attempt",
               "last_replug", "last_kind_at", "check_at", "last_kernel_event"):
@@ -11657,18 +11679,28 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
     now = time.time()
     if not _usb_guard_can_attempt(now):
         return
+    # 用户主动连接优先：先看手动标记，再抢锁；即使狗已经在恢复，也不和用户抢盘。
+    if usb_manual_hold:
+        _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
+        return
     # 和网页「连接」、归档、同步共用同一把进程内锁；拿不到就整轮让路。
     if not usb_lock.acquire(blocking=False):
         _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
         return
     got_flock = False
     try:
+        if usb_manual_hold:
+            _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
+            return
         if usb_attached or os.path.ismount(MNT):
             _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
             return
         got_flock = _acquire_usb_flock()
         if not got_flock:
             _usb_guard_set("paused", "归档/同步占用U盘，自愈狗稍后再试")
+            return
+        if usb_manual_hold:
+            _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
             return
         with USB_GUARD_LOCK:
             USB_GUARD["last_attempt"] = now
@@ -11733,6 +11765,10 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
 def _usb_guard_tick():
     if not USB_GUARD_ENABLED:
         _usb_guard_set("disabled", "TSF_USB_GUARD=0")
+        return
+    if usb_manual_hold:
+        _usb_guard_kmsg_read()          # 手动管理期间只排空内核事件，绝不触发
+        _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
         return
     if usb_attached or os.path.ismount(MNT):
         _usb_guard_kmsg_read()          # 网页管理期间只排空内核事件，不触发
@@ -21236,8 +21272,15 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = fan_apply(body.get("mode", "auto"), body.get("manual", 50))
             self._json({"ok": ok, "msg": "风扇设置已保存, 立即生效" if ok else msg}, 200 if ok else 400)
         elif path == "/api/usb/attach":
-            ok, msg = usb_attach()
-            self._json({"ok": ok, "msg": "车机U盘已连接 (已临时断开车机读取, 5分钟无操作自动恢复)" if ok and msg != "already" else ("已处于管理状态" if ok else msg)})
+            usb_manual_begin()
+            try:
+                ok, msg = usb_attach()
+            except Exception:
+                usb_manual_end()
+                raise
+            if not ok:
+                usb_manual_end()
+            self._json({"ok": ok, "msg": "车机U盘已连接 (已临时断开车机读取, 5分钟无操作自动恢复；你主动连接期间自愈狗暂停)" if ok and msg != "already" else ("已处于管理状态" if ok else msg)})
         elif path == "/api/usb/detach":
             ok, msg = usb_detach()
             self._json({"ok": ok, "msg": "已恢复车机导出" if ok else msg})
