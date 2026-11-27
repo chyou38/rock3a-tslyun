@@ -290,3 +290,67 @@ class SentryThumbPolicyTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertFalse(video.called)
         self.assertNotIn("秒视频", msg)
+
+
+class DriveStateTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.write_cat = Path(self.tempdir.name) / "write-cat.json"
+        self.write_cat.write_text(json.dumps({
+            "recent": False, "sentry": False, "saved": False, "driving": False,
+            "ts": time.time(),
+        }))
+        self.patches = [patch.object(viewer, "WRITE_CAT_FILE", str(self.write_cat))]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tempdir.cleanup()
+
+    def test_stale_write_cat_is_not_sentry_writing_after_usb_disconnect(self):
+        with patch.object(viewer, "car_host_connected", return_value=False), \
+             patch.object(viewer, "car_active_for_background", return_value=True):
+            self.assertFalse(viewer.sentry_writing_only())
+            self.assertFalse(viewer.parked_recording())
+
+    def test_fresh_write_cat_with_active_car_is_sentry_recording(self):
+        with patch.object(viewer, "car_host_connected", return_value=True), \
+             patch.object(viewer, "car_active_for_background", return_value=True):
+            self.assertTrue(viewer.sentry_writing_only())
+            self.assertTrue(viewer.parked_recording())
+
+
+class NotifyVideoGateTests(unittest.TestCase):
+    def test_saved_clips_video_falls_back_to_card_while_car_writes(self):
+        conf = {"enabled": True, "mode": "dm", "app_id": "cli_test", "app_secret": "secret",
+                "receive_id": "ou_test", "receive_id_type": "open_id",
+                "media": "video", "vdur": 30, "quality": "480p"}
+        with patch.object(viewer, "notify_conf", return_value=conf), \
+             patch.object(viewer, "car_active_for_background", return_value=True), \
+             patch.object(viewer, "_trigger_frame", return_value=("/tmp/x.jpg", {})), \
+             patch.object(viewer, "_feishu_upload", return_value="img_key"), \
+             patch.object(viewer, "_feishu_send_dm", return_value=True), \
+             patch.object(viewer, "_feishu_card", return_value={}), \
+             patch.object(viewer, "_make_push_video") as video:
+            ok, msg = viewer.notify_push("SavedClips", "2026-11-27_12-00-00")
+        self.assertTrue(ok)
+        self.assertFalse(video.called)
+        self.assertNotIn("秒视频", msg)
+
+
+class GetVariantGateTests(unittest.TestCase):
+    def test_no_new_transcode_while_car_writes(self):
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(viewer, "_variant_path", return_value=str(Path(d) / "none.mp4")), \
+             patch.object(viewer, "car_active_for_background", return_value=True):
+            self.assertEqual(viewer.get_variant("/tmp/src.mp4", "360p"), "/tmp/src.mp4")
+
+    def test_cached_variant_still_returned_while_car_writes(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "cached.mp4"
+            out.write_bytes(b"x")
+            with patch.object(viewer, "_variant_path", return_value=str(out)), \
+                 patch.object(viewer, "car_active_for_background", return_value=True):
+                self.assertEqual(viewer.get_variant("/tmp/src.mp4", "360p"), str(out))

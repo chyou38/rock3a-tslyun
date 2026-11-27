@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.40"
+APP_VERSION = "3.2.42"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -13462,11 +13462,24 @@ def request_sei_recheck(timeout=5.0):
     return None
 
 
+def car_host_connected():
+    """车机 OTG 主机是否真的连着。连着才是"车机可能在写"; 断开时后台任务可立即恢复。
+    读取失败按未知处理, 回退到 mtime 判据, 不因一次异常误放行。"""
+    try:
+        return bool(_otg_info().get("connected"))
+    except Exception:
+        return True
+
+
 def sentry_writing_only():
     """车机在写, 但写的不是行车记录 -> True。
     两种情形: ① 正在写哨兵告警/手动保存目录; ② RecentClips 在涨, 但最新前视片段
     没有 SEI 遥测 —— 说明是停车状态哨兵在循环录像, 不是人在开车。
-    哨兵事件/停车录像不该被当成"行车中"锁住虚拟U盘。"""
+    哨兵事件/停车录像不该被当成"行车中"锁住虚拟U盘。
+    注意: write-cat 的 ts 由 live-sync 定时刷新, 不代表车机现在还在写;
+    必须先用 car_active_for_background() 确认最近 3 分钟确有车机写入。"""
+    if not car_host_connected() or not car_active_for_background():
+        return False
     try:
         with open(WRITE_CAT_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -13483,6 +13496,8 @@ def sentry_writing_only():
 
 def parked_recording():
     """车机在写, 但同步侧用 SEI 判定这是停车哨兵录像(不是人在开车) -> True"""
+    if not car_host_connected() or not car_active_for_background():
+        return False
     try:
         with open(WRITE_CAT_FILE, encoding="utf-8") as f:
             j = json.load(f)
@@ -13517,7 +13532,7 @@ def car_active_for_usb():
     """车机近 CAR_ACTIVE_SEC 有写入且属于行车记录 -> True。
     停车哨兵/手动保存写入不算行车, 允许临时挂载 U 盘管理。
     状态未知/超时读取不到 write-cat 时按行车处理, 宁可多挡。"""
-    if not drive_lock_on():
+    if not drive_lock_on() or not car_host_connected():
         return False
     car_writing()
     if (time.time() - float(_CAR_WRITE.get("changed") or 0.0)) >= CAR_ACTIVE_SEC:
@@ -13527,7 +13542,10 @@ def car_active_for_usb():
 
 def car_active_for_background():
     """车机近 CAR_ACTIVE_SEC 有写入 -> True。行车/停车哨兵录制期间禁止后台缩略图和预缓冲。
-    该门禁不受行车锁开关影响: 行车锁只控制虚拟U盘读取, 后台任务必须始终让路。"""
+    该门禁不受行车锁开关影响: 行车锁只控制虚拟U盘读取, 后台任务必须始终让路。
+    OTG 主机断开时立即返回 False, 让归档/预缓冲/视频转码马上恢复; 不断开则用 3 分钟窗口。"""
+    if not car_host_connected():
+        return False
     car_writing()
     return (time.time() - float(_CAR_WRITE.get("changed") or 0.0)) < CAR_ACTIVE_SEC
 
@@ -16288,7 +16306,9 @@ def notify_push(cat, name, test=False, force_thumb=None):
         warn = " (未配 app_id/app_secret, 只发文字卡片)"
     # 视频模式: 先把触发摄像头那一路上传成视频消息, 再补一条精简卡片(带查看按钮)
     # 哨兵只解一帧缩略图, 即使配置成 video 也不转码视频。
-    if use_dm and (conf.get("media") or "thumb") == "video" and cat != "SentryClips":
+    # 其它事件在车机写入期间也不转码视频, 回落到缩略图卡片。
+    if (use_dm and (conf.get("media") or "thumb") == "video"
+            and cat != "SentryClips" and not car_active_for_background()):
         try:
             fp, off, _meta = _pick_clip(cat, name)
             if not fp:
@@ -16784,6 +16804,12 @@ def get_variant(fp, qv, slot=True, cancel=None, seconds=0):
         play = _variant_play(fp, qv, seconds)
         if play:
             return play
+    # 已有缓存直接返回; 需要新转码时, 车机写入/归档搬运期间一律回退原文件。
+    # 这是所有转码路径的总闸: 后台预缓冲、FEISHU 视频、用户下载/导出都受它约束。
+    if os.path.isfile(out) and os.path.getsize(out) > 0:
+        return out
+    if car_active_for_background() or usb_sync_busy():
+        return fp
     if not os.path.isfile(FFMPEG_BIN):
         return fp
     if cancel is not None and cancel.is_set():
@@ -17240,7 +17266,7 @@ def prewarm_loop():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
-                            or play_hold_active()
+                            or play_hold_active() or usb_sync_busy()
                             or car_active_for_background()
                             or (car_writing() and not sentry_writing_only())):  # USBGUARD
                         cancel.set()
@@ -17342,7 +17368,7 @@ def night_hw_loop():
                     with PLAYBACK_LOCK:
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
-                            or play_hold_active() or PREWARM.get("busy")
+                            or play_hold_active() or PREWARM.get("busy") or usb_sync_busy()
                             or car_active_for_background()):  # USBGUARD
                         cancel.set()
                         return
