@@ -194,8 +194,8 @@ driving=false
 - `/api/archive_sched`：`car_writing=true`，常规归档暂停，消息“车机未静止（停车哨兵），归档暂停”。
 - `tesla-live`、`sentry-viewer` 均 active。
 - `/api/ver` 已返回 `3.2.37`；`write-cat.json` 的 `sei_ts` 随即时复检更新。
-- 19:26 的 `SentryClips/2026-11-27_19-26-02` 事件已由哨兵自动通道归档：67 个片段、约 1.8GB，分 3 轮完成（19:38–19:41）。
-- v3.2.37 修复了主循环 `state` 被 `write-cat` 覆盖导致 pending 永远无法确认的 bug；`do_sync()` 的持久状态必须使用独立变量名。
+- 19:26 的 `SentryClips/2026-11-27_19-26-02` 事件已由哨兵自动通道归档：67 个片段、约 1.8GB，分 3 轮完成（19:38–19:41）；最终 `__pending__=0`。
+- v3.2.37 修复了主循环 `state` 被 `write-cat` 覆盖导致 pending 永远无法确认的 bug；实测该 bug 在 19:26:57–19:38:28 的 658 秒内几乎每秒重扫 67 个文件。`do_sync()` 的持久状态必须使用独立变量名。
 
 ---
 
