@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.38"
+APP_VERSION = "3.2.39"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -13664,9 +13664,17 @@ def _thumb_touch(out):
         pass
 
 
-def thumb_file(fp, ss_t=1.0, kind="list"):
+def _is_sentry_clip(fp):
+    """路径属于 SentryClips 归档 -> 哨兵缩略图, 不受车机写入让路限制。"""
+    return "/SentryClips/" in str(fp or "").replace("\\", "/")
+
+
+def thumb_file(fp, ss_t=1.0, kind="list", force=False):
     """抽指定秒数那一帧并缓存在数据盘, 返回 jpg 路径; 抽不出来返回 None。
-    列表缩略图 (/thumb) 和飞书推送封面共用; kind=list/trigger 用于统计和清理。"""
+    列表缩略图 (/thumb) 和飞书推送封面共用; kind=list/trigger 用于统计和清理。
+    哨兵(SentryClips)的缩略图不再被车机写入让路: 哨兵录制期间允许解一帧,
+    保证飞书卡片和列表都有图; 仍然只解一帧、走缩略图缓存, 不碰车机 U 盘。
+    force=True 可强制放行其它来源(测试/补图用)。"""
     out = thumb_cache_path(fp, ss_t)
     if not out:
         return None
@@ -13679,7 +13687,7 @@ def thumb_file(fp, ss_t=1.0, kind="list"):
         _thumb_touch(out)
         _thumb_write_meta(out, fp, kind, ss_t)
         return out
-    if car_active_for_background():
+    if car_active_for_background() and not force and not _is_sentry_clip(fp):
         return None
     try:
         os.makedirs(THUMB_DIR, exist_ok=True)
@@ -15293,12 +15301,12 @@ def _pick_clip(cat, name):
     return os.path.join(d, front[0] if front else files[0]), 1.0, meta
 
 
-def _trigger_frame(cat, name):
+def _trigger_frame(cat, name, force=False):
     """触发摄像头那一帧的封面图; 返回 (jpg 路径, meta)"""
     fp, off, meta = _pick_clip(cat, name)
     if not fp:
         return None, meta
-    return thumb_file(fp, off, kind="trigger"), meta
+    return thumb_file(fp, off, kind="trigger", force=force), meta
 
 
 def _post_json(url, payload, timeout=12, headers=None):
@@ -16255,8 +16263,9 @@ def _feishu_send_dm(conf, card):
     return True
 
 
-def notify_push(cat, name, test=False):
-    """推一条到飞书; 返回 (成功?, 提示)"""
+def notify_push(cat, name, test=False, force_thumb=None):
+    """推一条到飞书; 返回 (成功?, 提示)
+    force_thumb=None 时哨兵事件自动强制解封面; 其它事件保持车机写入让路策略。"""
     conf = notify_conf()
     dm = _dm_ready(conf)
     hook = str(conf.get("webhook") or "").strip()
@@ -16267,7 +16276,8 @@ def notify_push(cat, name, test=False):
     warn = ""
     if conf.get("app_id") and conf.get("app_secret"):
         try:
-            jpg, _m = _trigger_frame(cat, name)
+            force = (cat == "SentryClips") if force_thumb is None else bool(force_thumb)
+            jpg, _m = _trigger_frame(cat, name, force=force)
             if jpg:
                 img_key = _feishu_upload(conf, jpg)
             else:
@@ -16349,6 +16359,17 @@ def watch_alert_push(msg):
     return True, "已推送"
 
 
+def _archive_event_pending(cat, name):
+    """归档同步状态里该事件还有 pending 文件 -> 尚未归档完成, 先不推。"""
+    try:
+        with open(LIVE_STATE, encoding="utf-8") as f:
+            pending = (json.load(f) or {}).get("__pending__", {})
+        prefix = cat + "/" + name + "/"
+        return any(str(k).startswith(prefix) for k in pending)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def _ev_ts(name):
     """从事件目录名 YYYY-MM-DD_HH-MM-SS 解析事件真实发生时间; 失败返回 0"""
     try:
@@ -16394,6 +16415,8 @@ def notify_scan():
                 continue
             if retry.get(key, 0) > now:
                 continue            # 网络/飞书暂时失败: 退避后再试, 不永久丢弃
+            if _archive_event_pending(cat, name):
+                continue            # 归档还没完成: 等下一轮, 不抢在归档前推送
             d = os.path.join(base, name)
             newest = 0.0
             try:

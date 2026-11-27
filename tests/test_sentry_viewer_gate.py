@@ -174,10 +174,14 @@ class NotifyRetryTests(unittest.TestCase):
         }))
         self.state = root / "notify-state.json"
         self.state.write_text(json.dumps({"init": 1, "seen": {}}))
+        self.live_state = root / "live-state.json"
+        self.live_state.write_text("{}")
         self.patches = [
             patch.object(viewer, "ARCHIVE", str(self.archive)),
             patch.object(viewer, "NOTIFY_CONF", str(self.conf)),
             patch.object(viewer, "NOTIFY_STATE", str(self.state)),
+            patch.object(viewer, "LIVE_STATE", str(root / "live-state.json")),
+            patch.object(viewer, "LIVE_STATE", str(self.live_state)),
         ]
         for p in self.patches:
             p.start()
@@ -194,6 +198,45 @@ class NotifyRetryTests(unittest.TestCase):
         self.assertEqual(viewer.notify_retry_delay(1), 30)
         self.assertEqual(viewer.notify_retry_delay(6), 900)
         self.assertEqual(viewer.notify_retry_delay(20), 900)
+
+    def test_archive_pending_blocks_until_complete(self):
+        key = "SentryClips/2026-11-27_12-00-00"
+        self.live_state.write_text(json.dumps({
+            "__pending__": {key + "/clip.mp4": [64, 64, int(time.time())]}
+        }))
+        with patch.object(viewer, "notify_push", return_value=(True, "ok")) as push:
+            self.assertEqual(viewer.notify_scan(), 0)
+        push.assert_not_called()
+        st = self.read_state()
+        self.assertNotIn(key, st["seen"])
+
+        self.live_state.write_text("{}")
+        with patch.object(viewer, "notify_push", return_value=(True, "ok")) as push:
+            self.assertEqual(viewer.notify_scan(), 1)
+        push.assert_called_once()
+        self.assertIn(key, self.read_state()["seen"])
+
+    def test_sentry_push_forces_trigger_thumb(self):
+        with patch.object(viewer, "notify_conf", return_value={
+                "enabled": True, "mode": "dm", "app_id": "cli_test", "app_secret": "secret",
+                "receive_id": "ou_test", "receive_id_type": "open_id"}), \
+             patch.object(viewer, "_trigger_frame", return_value=("/tmp/cover.jpg", {})) as frame, \
+             patch.object(viewer, "_feishu_upload", return_value="img_key"), \
+             patch.object(viewer, "_feishu_card", return_value={"card": "x"}), \
+             patch.object(viewer, "_feishu_send_dm", return_value=True):
+            ok, _msg = viewer.notify_push("SentryClips", "2026-11-27_12-00-00")
+        self.assertTrue(ok)
+        self.assertIs(frame.call_args.kwargs.get("force"), True)
+
+    def test_archive_pending_blocks_push(self):
+        key = "SentryClips/2026-11-27_12-00-00"
+        (Path(self.tempdir.name) / "live-state.json").write_text(json.dumps({
+            "__pending__": {key + "/clip.mp4": [64, 64, 1]},
+        }))
+        with patch.object(viewer, "notify_push") as push:
+            self.assertEqual(viewer.notify_scan(), 0)
+            push.assert_not_called()
+        self.assertNotIn(key, self.read_state()["seen"])
 
     def test_network_failure_keeps_pending_then_succeeds(self):
         key = "SentryClips/2026-11-27_12-00-00"
@@ -212,3 +255,23 @@ class NotifyRetryTests(unittest.TestCase):
         self.assertIn(key, st["seen"])
         self.assertNotIn(key, st["try"])
         self.assertNotIn(key, st["retry"])
+
+
+class SentryThumbPolicyTests(unittest.TestCase):
+    def test_sentry_clip_path_detection(self):
+        self.assertTrue(viewer._is_sentry_clip("/archive/SentryClips/2026-11-27_12-00-00/front.mp4"))
+        self.assertFalse(viewer._is_sentry_clip("/archive/RecentClips/2026-11-27_12-00-00/front.mp4"))
+        self.assertFalse(viewer._is_sentry_clip("/archive/SavedClips/2026-11-27_12-00-00/front.mp4"))
+
+    def test_sentry_push_forces_cover_decode(self):
+        conf = {"enabled": True, "mode": "dm", "app_id": "cli_test", "app_secret": "secret",
+                "receive_id": "ou_test", "receive_id_type": "open_id", "media": "thumb"}
+        with patch.object(viewer, "notify_conf", return_value=conf), \
+             patch.object(viewer, "_trigger_frame", return_value=("/tmp/x.jpg", {})) as frame, \
+             patch.object(viewer, "_feishu_upload", return_value="img_key"), \
+             patch.object(viewer, "_feishu_send_dm", return_value=True), \
+             patch.object(viewer, "_feishu_card", return_value={}):
+            ok, msg = viewer.notify_push("SentryClips", "2026-11-27_12-00-00")
+        self.assertTrue(ok)
+        self.assertIn("已推送", msg)
+        self.assertIs(frame.call_args.kwargs.get("force"), True)
