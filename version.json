@@ -1,10 +1,9 @@
 {
-  "version": "3.2.33",
+  "version": "3.2.34",
   "date": "2026-11-27",
   "notes": [
-    "停车哨兵自动归档只认 SEI 探针明确的 driving=false, 且只动 SentryClips 最新 1 个事件",
-    "SavedClips(手动保存) 与 RecentClips(行车记录) 走同一常规归档通道; SentryClips 单独通道, 不混用",
-    "修复 probe_loop 每秒清 PROBE_URGENT 导致自动哨兵归档抢不到事件的竞态",
-    "停车哨兵优先通道每 1MB 复检状态; 真行车/未判定立即停止搬运"
+    "修复哨兵自动通道的重试条件: 只重试 SentryClips pending, 不再被 SavedClips pending 拖入空转",
+    "allow_active 严格限定 cats=(\"SentryClips\",); 手动保存/行车记录不能进入停车哨兵搬运通道",
+    "哨兵自动归档与常规归档分类保持: SentryClips 单独; SavedClips + RecentClips 一起"
   ]
 }

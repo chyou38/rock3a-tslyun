@@ -634,8 +634,8 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
     """跑一轮; 返回 (新增文件数, 字节数)
     progress(done, total, done_bytes, total_bytes, force) 用于网页展示「已归档百分比」:
     total 是本轮扫描到的有效片段, done 是其中已在归档区(或刚搬完)的片段。"""
-    if allow_active and (not cats or "RecentClips" in cats):
-        raise ValueError("allow_active 只允许哨兵/手动保存类别")
+    if allow_active and (not cats or tuple(cats) != ("SentryClips",)):
+        raise ValueError("allow_active 只允许 SentryClips 哨兵通道")
     cur = scan(exfat, cats, newest_events)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
@@ -1232,7 +1232,8 @@ def main():
                     # 第一轮只记 pending(等连续两轮签名一致), 若本轮没搬成,
                     # 下一轮立刻再确认一次, 别等到定时归档。
                     pend = state.get("__pending__", {})
-                    if any(k.startswith(("SentryClips/", "SavedClips/")) for k in pend):
+                    if any(k.startswith("SentryClips/") for k in pend):
+                        # 只重试 SentryClips; 不能因为 SavedClips 有 pending 就让哨兵通道空转。
                         PROBE_URGENT.set()
             except Exception as e:
                 log("哨兵优先同步失败: %s" % e)
