@@ -87,8 +87,18 @@ set -e
 
 if [ "$LIMIT" -gt 0 ]; then
     OUT_DUR=$("$FFPROBE" -v error -show_entries format=duration -of default=nw=1:nk=1 "$DST" 2>/dev/null || echo 0)
-    awk -v d="$OUT_DUR" -v n="$LIMIT" 'BEGIN { exit !(d >= n - 0.6) }' || {
-        echo "预缓冲时长不足: ${OUT_DUR}s < ${LIMIT}s" >&2; exit 5; }
+    # 预缓冲请求的秒数可能大于源片段本身（车机最后一段常见 14s，而 preview_sec=20）。
+    # 此时输出只能到源片结尾，不能按 20s 判失败；以 min(LIMIT, 源时长) 作为验收目标。
+    SRC_DUR=$("$FFPROBE" -v error -show_entries format=duration -of default=nw=1:nk=1 "$SRC" 2>/dev/null || echo 0)
+    awk -v d="$OUT_DUR" -v n="$LIMIT" -v s="$SRC_DUR" '
+        BEGIN {
+            target = n
+            if (s + 0 > 0 && s + 0 < target) target = s + 0
+            exit !(d + 0 >= target - 0.6)
+        }' || {
+        echo "预缓冲时长不足: ${OUT_DUR}s < ${LIMIT}s (源 ${SRC_DUR}s)" >&2
+        exit 5
+    }
 fi
 
 echo "hw: ${PW}x${PH}@${FPS} ${BITRATE}kbps $(du -h "$DST" | cut -f1)"
