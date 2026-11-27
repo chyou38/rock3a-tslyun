@@ -29,6 +29,7 @@ import tempfile
 import sys
 import fcntl
 import glob
+import gzip
 try:
     import yaml
 except ImportError:
@@ -71,9 +72,12 @@ DOCTOR_WATCH_LOG = os.path.join(DOCTOR_LOG_DIR, "watch.log")
 DOCTOR_GADGET_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-gadget.log")
 DOCTOR_SYNC_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-sync.log")
 DOCTOR_HEALTH_LOG = os.path.join(DOCTOR_LOG_DIR, "health.log")
+DOCTOR_HISTORY_LOGS = os.path.join(DOCTOR_LOG_DIR, "doctor-history-logs")
 TSF_SYSD_URL = os.environ.get("TSF_SYSD_URL", "http://127.0.0.1:8099/status")
 _DOCTOR_CACHE = {"at": 0.0, "data": None}
 _DOCTOR_LOCK = threading.Lock()
+_DOCTOR_BOOTLOG_LOCK = threading.Lock()
+_DOCTOR_BOOTLOG = {"key": "", "path": "", "at": 0.0, "building": False, "error": ""}
 CATS = ["SentryClips", "SavedClips", "RecentClips"]
 # ===== 多语言表 (由 tools/i18n_*.json 生成, key 为中文原文) =====
 LANG_NAMES = [("zh", "中文"), ("en", "English"), ("de", "Deutsch"), ("fr", "Français"),
@@ -197,7 +201,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.8"
+APP_VERSION = "3.2.9"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1676,6 +1680,9 @@ select.ninput { cursor:pointer; }
 .doctor-logcheck:first-child { border-top:0; }
 .doctor-logrow { display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-top:1px dashed var(--line); font-size:12px; line-height:1.45; }
 .doctor-logrow:first-child { border-top:0; padding-top:2px; }
+.doctor-logdownload { margin-top:4px; }
+.doctor-logdownload a { color:var(--accent); font-size:10.5px; text-decoration:none; }
+.doctor-logdownload a:hover { text-decoration:underline; }
 .doctor-logmain { min-width:0; }
 .doctor-logtime { font-weight:600; color:var(--text); }
 .doctor-logstatus { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:8px; margin-left:6px; border:1px solid var(--line2); color:var(--muted2); }
@@ -2679,7 +2686,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div id="doctor-box" class="doctor-box" style="display:none"></div>
     <div id="doctor-log" class="doctor-logsec" style="display:none">
-      <div class="doctor-loghead"><span>日志记录 <span class="doctor-logcount" id="doctor-log-count"></span></span><span class="doctor-logtools"><a href="/api/doctor/history/download" download>下载TXT</a><button onclick="doctorLogClear()">清空</button></span></div>
+      <div class="doctor-loghead"><span>日志记录 <span class="doctor-logcount" id="doctor-log-count"></span></span><span class="doctor-logtools"><button onclick="doctorLogClear()">清空</button></span></div>
       <div id="doctor-log-box" class="doctor-box"></div>
     </div>
   </div>
@@ -7969,13 +7976,15 @@ function doctorLogRender(list, emptyText) {
           '<div class="doctor-detail">' + esc(c.detail || '') + '</div></div>';
       }).join('') + '</details>' : '';
     const sysDetail = doctorSysDetail(e.system_logs || {});
+    const dlId = e.id || e.at || '';
+    const dl = dlId ? ('<div class="doctor-logdownload"><a href="/api/doctor/history/entry/download?id=' + encodeURIComponent(dlId) + '" download>下载本条</a></div>') : '';
     return '<div class="doctor-logrow"><span class="doctor-dot ' + cls + '"></span>' +
       '<div class="doctor-logmain"><div><span class="doctor-logtime">' + esc(e.at || '') + '</span>' +
       '<span class="doctor-logstatus ' + cls + '">' + status + '</span></div>' +
       '<div class="doctor-logsum">' + pass + ' 通过 · ' + warn + ' 注意 · ' + fail + ' 故障' +
       (ms ? ' · ' + (ms / 1000).toFixed(1) + 's' : '') + ' · ' + trig + '</div>' +
       (issues ? '<div class="doctor-logissue">' + issues + more + '</div>' : '') +
-      detail + sysDetail + '</div></div>';
+      detail + sysDetail + dl + '</div></div>';
   }).join('');
 }
 function doctorSysDetail(s) {
@@ -13693,6 +13702,155 @@ def _doctor_system_logs():
     }
 
 
+def _doctor_boot_meta():
+    """返回 (boot_id, 本次开机时间戳)。"""
+    boot_id = "unknown"
+    try:
+        with open("/proc/sys/kernel/random/boot_id", "r") as f:
+            boot_id = (f.read().strip() or "unknown")
+    except Exception:
+        pass
+    started = time.time()
+    try:
+        with open("/proc/uptime", "r") as f:
+            started = time.time() - float((f.read().split() or ["0"])[0])
+    except Exception:
+        pass
+    return boot_id, started
+
+
+def _doctor_read_text(path, limit=4 * 1024 * 1024):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def _doctor_since_lines(text, pattern, cutoff):
+    """按行首时间过滤本次开机日志；格式不匹配时退回全文，避免日志被吞。"""
+    out = []
+    try:
+        rx = re.compile(pattern)
+    except Exception:
+        return text.splitlines()
+    for ln in text.splitlines():
+        m = rx.search(ln)
+        if m and m.group(1) >= cutoff:
+            out.append(ln)
+    return out or text.splitlines()
+
+
+def _doctor_bootlog_path(boot_id):
+    key = re.sub(r"[^0-9a-fA-F]", "", str(boot_id or ""))[:64] or "unknown"
+    return os.path.join(DOCTOR_HISTORY_LOGS, "boot-%s.txt.gz" % key), key
+
+
+def _doctor_bootlog_build(boot_id, path, started):
+    """后台生成“本次开机至今”的全量日志，压缩存盘；不阻塞体检接口。"""
+    try:
+        os.makedirs(DOCTOR_HISTORY_LOGS, exist_ok=True)
+        boot_dt = datetime.datetime.fromtimestamp(started)
+        boot_md = boot_dt.strftime("%m-%d %H:%M")
+        boot_ymd = boot_dt.strftime("%Y-%m-%d %H:%M")
+        watch = _doctor_read_text(DOCTOR_WATCH_LOG, 3 * 1024 * 1024)
+        health = _doctor_read_text(DOCTOR_HEALTH_LOG, 3 * 1024 * 1024)
+        gadget = _doctor_read_text(os.path.join(DOCTOR_LOG_DIR, "tesla-gadget.log"), 512 * 1024)
+        sync = _doctor_read_text(os.path.join(DOCTOR_LOG_DIR, "tesla-sync.log"), 512 * 1024)
+        watch_boot = _doctor_since_lines(watch, r"\[(\d\d-\d\d \d\d:\d\d):", boot_md)
+        health_boot = _doctor_since_lines(health, r"^(\d\d-\d\d \d\d:\d\d)", boot_md)
+        gadget_boot = _doctor_since_lines(gadget, r"\[(\d{4}-\d\d-\d\d \d\d:\d\d):", boot_ymd)
+        sync_boot = _doctor_since_lines(sync, r"\[(\d{4}-\d\d-\d\d \d\d:\d\d):", boot_ymd)
+        journal, jerr = "", ""
+        try:
+            r = subprocess.run(
+                ["journalctl", "-b", "-q", "--no-pager",
+                 "-u", "sentry-viewer.service", "-u", "tesla-live.service",
+                 "-u", "tesla-gadget.service", "-u", "tsf-watch.service",
+                 "-u", "tsf-sysd.service"],
+                capture_output=True, text=True, timeout=180)
+            journal = r.stdout or ""
+            if r.returncode != 0:
+                jerr = (r.stderr or "")[-500:]
+        except Exception as e:
+            jerr = str(e)[:500]
+        dmesg = ""
+        try:
+            r = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=30)
+            dmesg = r.stdout or ""
+        except Exception as e:
+            dmesg = "dmesg 读取失败: %s" % str(e)[:300]
+        jlines = journal.splitlines()
+        mpp_count = len([x for x in jlines if "check buffer found NULL pointer" in x])
+        mpp_reason = len([x for x in dmesg.splitlines() if "wait task break by signal" in x])
+        head = [
+            "===== TSL 哨兵 本次开机全量日志 =====",
+            "生成时间: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+            "本次开机: " + boot_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "开机时长: %.1f 小时" % max(0.0, (time.time() - started) / 3600.0),
+            "统计: watch.log %d 行 / health.log %d 行 / 服务 journal %d 行 / dmesg %d 行" % (
+                len(watch_boot), len(health_boot), len(jlines), len(dmesg.splitlines())),
+            "统计: MPP NULL %d 次 / wait task break %d 次" % (mpp_count, mpp_reason),
+            "来源: 本次开机至今；journal 为本次开机全部服务日志，watch/health 已按开机时间过滤",
+        ]
+        if jerr:
+            head.append("journal 读取告警: " + jerr.replace("\n", " "))
+        body = "\n".join(head) + "\n\n"
+        body += "===== watch.log（本次开机） =====\n" + "\n".join(watch_boot) + "\n\n"
+        body += "===== health.log（本次开机） =====\n" + "\n".join(health_boot) + "\n\n"
+        body += "===== tesla-gadget.log（本次开机） =====\n" + "\n".join(gadget_boot) + "\n\n"
+        body += "===== tesla-sync.log（本次开机） =====\n" + "\n".join(sync_boot) + "\n\n"
+        body += "===== 服务 journal（本次开机全量） =====\n" + journal + "\n\n"
+        body += "===== dmesg（本次开机） =====\n" + dmesg + "\n"
+        tmp = path + ".tmp"
+        with gzip.open(tmp, "wb", compresslevel=6) as f:
+            f.write(body.encode("utf-8", "ignore"))
+        os.replace(tmp, path)
+        with _DOCTOR_BOOTLOG_LOCK:
+            _DOCTOR_BOOTLOG.update({"key": boot_id, "path": path, "at": time.time(),
+                                    "building": False, "error": ""})
+    except Exception as e:
+        with _DOCTOR_BOOTLOG_LOCK:
+            _DOCTOR_BOOTLOG.update({"building": False, "error": str(e)[:300]})
+
+
+def _doctor_bootlog_kick(force=False):
+    """确保本次开机日志在后台生成；force=True 时 5 分钟内最多重建一次。"""
+    boot_id, started = _doctor_boot_meta()
+    path, _ = _doctor_bootlog_path(boot_id)
+    with _DOCTOR_BOOTLOG_LOCK:
+        if _DOCTOR_BOOTLOG.get("building"):
+            return path
+        if os.path.exists(path):
+            if not force or (time.time() - os.path.getmtime(path)) < 300:
+                return path
+        _DOCTOR_BOOTLOG.update({"key": boot_id, "path": path, "building": True, "error": ""})
+        t = threading.Thread(target=_doctor_bootlog_build, args=(boot_id, path, started),
+                             daemon=True, name="doctor-bootlog")
+        t.start()
+    return path
+
+
+def _doctor_bootlog_wait(timeout=45):
+    """下载单条记录时等待后台日志生成；已有旧文件则直接用，避免重复扫描 journal。"""
+    path = _doctor_bootlog_kick()
+    deadline = time.time() + max(0, timeout)
+    while time.time() < deadline:
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            break
+        with _DOCTOR_BOOTLOG_LOCK:
+            if not _DOCTOR_BOOTLOG.get("building"):
+                break
+        time.sleep(0.4)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
 def _doctor_log_entry(data, trigger="auto"):
     """把一份体检报告压缩成一行历史记录; 保留全部检查项, 方便回看。"""
     s = data.get("summary") if isinstance(data.get("summary"), dict) else {}
@@ -13724,6 +13882,7 @@ def _doctor_log_entry(data, trigger="auto"):
         ms = 0
     return {
         "at": str(data.get("at") or time.strftime("%Y-%m-%d %H:%M:%S")),
+        "id": time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex(),
         "status": status, "ok": bool(data.get("ok")),
         "pass": passn, "warn": warn, "fail": fail, "info": infon, "ms": ms,
         "app_version": str(data.get("app_version") or APP_VERSION),
@@ -13749,6 +13908,10 @@ def _doctor_history_append(data, trigger="auto"):
                 f.writelines(tail)
     except Exception:
         pass
+    try:
+        _doctor_bootlog_kick(force=(trigger == "manual"))
+    except Exception:
+        pass
 
 
 def _doctor_history_bytes():
@@ -13762,7 +13925,13 @@ def _doctor_history_bytes():
 def _doctor_history_clear():
     try:
         with _DOCTOR_LOCK:
-            os.remove(DOCTOR_HISTORY)
+            try:
+                os.remove(DOCTOR_HISTORY)
+            except FileNotFoundError:
+                pass
+        shutil.rmtree(DOCTOR_HISTORY_LOGS, ignore_errors=True)
+        with _DOCTOR_BOOTLOG_LOCK:
+            _DOCTOR_BOOTLOG.update({"key": "", "path": "", "at": 0.0, "building": False, "error": ""})
         return {"ok": True, "msg": "体检日志已清空"}
     except FileNotFoundError:
         return {"ok": True, "msg": "没有体检日志"}
@@ -13770,16 +13939,17 @@ def _doctor_history_clear():
         return {"ok": False, "msg": "清空失败: " + str(ex)[:120]}
 
 
-def _doctor_history_text():
+def _doctor_history_text(entries=None):
     """把内部 JSONL 转成用户可读的 TXT; 下载不暴露内部结构, 但保留全部细节。"""
-    entries = []
-    for line in _doctor_history_bytes().decode("utf-8", "ignore").splitlines():
-        try:
-            e = json.loads(line)
-            if isinstance(e, dict) and e.get("at"):
-                entries.append(e)
-        except Exception:
-            pass
+    if entries is None:
+        entries = []
+        for line in _doctor_history_bytes().decode("utf-8", "ignore").splitlines():
+            try:
+                e = json.loads(line)
+                if isinstance(e, dict) and e.get("at"):
+                    entries.append(e)
+            except Exception:
+                pass
     status_cn = {"pass": "通过", "warn": "注意", "fail": "故障"}
     trigger_cn = {"manual": "手动", "auto": "自动"}
     out = ["TSL哨兵 系统体检日志", "生成时间: " + time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -13821,7 +13991,7 @@ def _doctor_history_text():
             add_items("OTG/系统事件", otg.get("events"))
         dec = sl.get("decode") if isinstance(sl.get("decode"), dict) else {}
         if dec:
-            out.append("    解码: mpp_null_total=%s wait_break_total=%s (最近8000行)" % (
+            out.append("    解码: mpp_null_total=%s wait_break_total=%s (最近8000行; 单条下载含本次开机全量)" % (
                 dec.get("mpp_null_total", "?"), dec.get("wait_break_total", "?")))
             if dec.get("mpp_null_reason"):
                 out.append("    解码原因: " + str(dec.get("mpp_null_reason"))[:240])
@@ -13848,6 +14018,23 @@ def _doctor_history_text():
         out.append("-" * 78)
         out.append("")
     return "\n".join(out)
+
+
+def _doctor_history_find(ident):
+    """按记录 id 或时间查找一条历史记录；兼容没有 id 的旧记录。"""
+    ident = str(ident or "").strip()
+    if not ident:
+        return None
+    for line in _doctor_history_bytes().decode("utf-8", "ignore").splitlines():
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(e, dict):
+            continue
+        if str(e.get("id") or "") == ident or str(e.get("at") or "") == ident:
+            return e
+    return None
 
 
 def _doctor_history_read(limit=8):
@@ -18762,6 +18949,33 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/doctor/history/download":
             raw = _doctor_history_text().encode("utf-8")
             fname = "tsf-doctor-history-%s.txt" % time.strftime("%Y%m%d-%H%M%S")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % fname)
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+        elif path == "/api/doctor/history/entry/download":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            ident = (q.get("id") or q.get("at") or [""])[0]
+            e = _doctor_history_find(ident)
+            if not e:
+                self._json({"ok": False, "msg": "记录不存在或已清空"}, 404)
+                return
+            try:
+                self.connection.settimeout(90)
+            except Exception:
+                pass
+            boot = _doctor_bootlog_wait(45)
+            body = _doctor_history_text([e])
+            if boot:
+                body += "\n\n===== 本次开机全量日志（开机至今） =====\n\n" + boot
+            else:
+                body += "\n\n[本次开机全量日志仍在生成，请稍后重新下载本条]\n"
+            raw = body.encode("utf-8", "ignore")
+            at = re.sub(r"[^0-9A-Za-z-]", "", str(e.get("at") or "")) or "record"
+            fname = "tsf-doctor-%s.txt" % at
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="%s"' % fname)
