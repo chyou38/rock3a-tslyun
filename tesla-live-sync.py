@@ -59,7 +59,7 @@ LOG = os.environ.get("TSF_LIVE_LOG", "/root/tesla-live.log")
 STATE = os.environ.get("TSF_LIVE_STATE", "/root/.tesla-live-state.json")
 INTERVAL = int(os.environ.get("TSF_LIVE_INTERVAL", "15"))
 CAR_WRITE_HOLD = float(os.environ.get("TSF_LIVE_CAR_HOLD", "30"))
-SENTRY_IDLE_MIN = float(os.environ.get("TSF_SENTRY_IDLE_MIN", "10"))
+SENTRY_IDLE_MIN = float(os.environ.get("TSF_SENTRY_IDLE_MIN", "5"))
 # 归档调度 (2026-11-26): 不再实时搬运, 默认每 10 分钟归档一次, 间隔在网页
 # 「个性化 → 虚拟硬盘 → 归档区」自定义; 「立即归档」写触发文件, 车机空闲后马上执行。
 TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
@@ -915,7 +915,7 @@ def probe_loop():
             st = os.stat(IMG)
             age = max(0.0, time.time() - st.st_mtime)
             # 行车/停车哨兵只要还在写盘: 只做 stat, 绝不打开镜像、不列目录、不读 SEI。
-            # 连续静止 SENTRY_IDLE_MIN 分钟后才恢复探测; 探测本身也在车机空闲时才做。
+            # 连续静止 SENTRY_IDLE_MIN 分钟后才恢复探测; 特斯拉约 1 分钟写一次, 用 5 分钟滚动窗口。
             if age < SENTRY_IDLE_MIN * 60:
                 if x is not None:
                     try:

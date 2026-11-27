@@ -65,7 +65,7 @@ class DrivingGateTests(unittest.TestCase):
         self.settings.write_text('{"drive_lock": true}')
         self.write_cat = root / "write-cat.json"
         self.idle = live_sync.SENTRY_IDLE_MIN
-        live_sync.SENTRY_IDLE_MIN = 10
+        live_sync.SENTRY_IDLE_MIN = 5
         live_sync._CAR_WRITE.update(mtime=None, changed=0.0)
         self.patches = [
             patch.object(live_sync, "IMG", str(self.image)),
@@ -108,9 +108,14 @@ class DrivingGateTests(unittest.TestCase):
         self.set_state(driving=False, recent=True)
         self.assertFalse(live_sync.sync_allowed())
 
-    def test_only_after_ten_minutes_idle_allows(self):
+    def test_only_after_five_minutes_idle_allows(self):
         self.set_image_age(700)
         self.set_state(driving=False, recent=False)
+        self.assertTrue(live_sync.sync_allowed())
+        self.set_image_age(290)
+        self.assertFalse(live_sync.sync_allowed())
+        self.set_image_age(310)
+        live_sync._CAR_WRITE.update(mtime=None, changed=0.0)
         self.assertTrue(live_sync.sync_allowed())
         self.set_image_age(60)
         self.assertFalse(live_sync.sync_allowed())
