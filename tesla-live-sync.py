@@ -72,6 +72,8 @@ ARCHIVE_SCHED_FILE = os.path.join(TSF_DIR, "archive-sched.json")
 ARCHIVE_NOW_FLAG = os.path.join(TSF_DIR, "archive-now.flag")
 # 最近一轮目录探测结果: 哪个分类在写 (供页面区分"行车中"与"哨兵写入")
 WRITE_CAT_FILE = os.path.join(TSF_DIR, "write-cat.json")
+# 网页点「连接车机U盘」前写入本文件, 要求 SEI 探针立即复检一次 (不等 60 秒周期)
+SEI_REQ_FILE = os.path.join(TSF_DIR, "sei-probe.req")
 
 # 与网页 U盘管理 / 定时归档 / U盘自愈共用的跨进程锁 (那边持排他, 这里持共享)
 USB_LOCK = os.environ.get("TSF_USB_LOCK", "/tmp/tsf-usb.lock")
@@ -822,11 +824,15 @@ _DRIVE_HINT = {"key": None, "val": None}
 _REC_CACHE = {"ts": 0.0, "entry": None}
 
 
-def _newest_recent_front(exfat, refresh=20.0):
+def _newest_recent_front(exfat, refresh=20.0, force=False):
     """RecentClips 一小时缓冲有几百个文件, 每秒全列一次太贵(~300ms)。
-    这里按 20 秒缓存最新前视文件; 新文件最晚 20 秒被发现, 对判定足够。"""
+    这里按 20 秒缓存最新前视文件; 新文件最晚 20 秒被发现, 对判定足够。
+    force=True 时跳过缓存并重新列目录, 用于连接 U 盘前的即时 SEI 复检。"""
     global _REC_CACHE
     now = time.time()
+    if force:
+        _REC_CACHE = {"ts": 0.0, "entry": None}
+        refresh = 0.0
     if _REC_CACHE["entry"] is not None and now - _REC_CACHE["ts"] < refresh:
         return _REC_CACHE["entry"]
     root = exfat.list_dir(exfat.root_cluster)
@@ -847,19 +853,20 @@ def _newest_recent_front(exfat, refresh=20.0):
     return _REC_CACHE["entry"]
 
 
-def probe_driving(exfat, limit=3 * 1048576):
+def probe_driving(exfat, limit=3 * 1048576, force=False):
     """判断车机最新行车记录前视片段里有没有 SEI 遥测: 有=真在行车, 没有=停车哨兵在录像。
     Tesla 停车状态下哨兵仍在循环写 RecentClips, 但停车片段不含车辆遥测 SEI;
     只看 "RecentClips 在写" 会把停车哨兵误判成行车, 所以要再看这一位。
     只读最新前视片段头部 limit 字节; 车机活跃期由 probe_loop 每 60 秒只读 512KB。
-    新文件不够 SEI_MIN_BYTES 时返回 None, 不沿用上一段结论, 避免刚起步时误判成停车。"""
+    新文件不够 SEI_MIN_BYTES 时返回 None, 不沿用上一段结论, 避免刚起步时误判成停车。
+    force=True 时跳过文件名缓存和目录缓存, 立即重新读最新前视片段, 供连接 U 盘前复检。"""
     global _DRIVE_HINT
     try:
-        newest = _newest_recent_front(exfat)
+        newest = _newest_recent_front(exfat, force=force)
         if newest is None:
             return None
         key = newest.name
-        if _DRIVE_HINT.get("key") == key and _DRIVE_HINT.get("val") is not None:
+        if not force and _DRIVE_HINT.get("key") == key and _DRIVE_HINT.get("val") is not None:
             return _DRIVE_HINT["val"]
         if newest.size < SEI_MIN_BYTES:
             # 文件刚建还没写够: 不沿用上一段结论, 返回未知; 宁可暂时保护, 不把起步误判成停车。
@@ -881,13 +888,15 @@ def probe_driving(exfat, limit=3 * 1048576):
         return None
 
 
-def publish_write_cat(sig, old, driving=None, recent=False):
+def publish_write_cat(sig, old, driving=None, recent=False, sei_ts=0.0):
     """把"哪一类正在写"落到文件, 页面据此区分行车记录(行车中)与哨兵/手动保存。
-    recent 由镜像 mtime 判定(车机一写盘就变), 不再依赖列 RecentClips 目录。"""
+    recent 由镜像 mtime 判定(车机一写盘就变), 不再依赖列 RecentClips 目录。
+    sei_ts 是最近一次 SEI 判定的时间, 网页连接U盘前据此确认即时复检已完成。"""
     flags = {"recent": bool(recent),
              "sentry": _cat_changed(sig, old, "SentryClips"),
              "saved": _cat_changed(sig, old, "SavedClips"),
              "driving": driving,
+             "sei_ts": float(sei_ts or 0.0),
              "ts": time.time()}
     try:
         tmp = WRITE_CAT_FILE + ".tmp"
@@ -898,10 +907,10 @@ def publish_write_cat(sig, old, driving=None, recent=False):
         pass
 
 
-def publish_recent_only(recent, driving=None):
+def publish_recent_only(recent, driving=None, sei_ts=0.0):
     """车机活动期间落"近期有写入 + 极小 SEI 分类", 页面/车机U盘门禁据此区分行车与停车哨兵。"""
     flags = {"recent": bool(recent), "sentry": False, "saved": False,
-             "driving": driving, "ts": time.time()}
+             "driving": driving, "sei_ts": float(sei_ts or 0.0), "ts": time.time()}
     try:
         tmp = WRITE_CAT_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -917,13 +926,25 @@ def publish_recent_only(recent, driving=None):
 PROBE_URGENT = threading.Event()
 
 
-def probe_loop():
+def probe_loop(stop_event=None):
     x = None
     last_sig = None
     last_sei = 0.0
     sei_drv = None
+    last_req_ns = 0
     while True:
+        if stop_event is not None and stop_event.is_set():
+            break
         try:
+            # 网页连接U盘前会写 sei-probe.req: 不等 60 秒周期, 下一轮立即做一次
+            # 强制 SEI 复检(跳过目录缓存和文件名缓存), 把最新 driving 落到 write-cat。
+            try:
+                req_ns = os.stat(SEI_REQ_FILE).st_mtime_ns
+            except OSError:
+                req_ns = 0
+            force_sei = bool(req_ns and req_ns != last_req_ns)
+            if force_sei:
+                last_req_ns = req_ns
             st = os.stat(IMG)
             age = max(0.0, time.time() - st.st_mtime)
             # 车机写入期间: 默认只 stat; 每 60 秒只读最新 front 片段头部 512KB 的 SEI,
@@ -941,11 +962,11 @@ def probe_loop():
                     # 否则 probe_loop 每秒清一次, 归档循环永远抢不到这个事件。
                     PROBE_URGENT.clear()
                 now = time.time()
-                if now - last_sei >= SEI_PROBE_SEC:
+                if force_sei or now - last_sei >= SEI_PROBE_SEC:
                     y = None
                     try:
                         y = ExFat(IMG)
-                        drv = probe_driving(y, limit=SEI_PROBE_BYTES)
+                        drv = probe_driving(y, limit=SEI_PROBE_BYTES, force=force_sei)
                     except Exception as e:
                         drv = None
                         log("SEI探针失败: %s" % e)
@@ -955,11 +976,15 @@ def probe_loop():
                                 y.close()
                             except Exception:
                                 pass
+                    if force_sei:
+                        log("SEI即时复检: %s" % ("行车" if drv is True else ("停车哨兵" if drv is False else "未判定")))
                     if drv != sei_drv:
                         log("SEI探针: %s" % ("行车" if drv is True else ("停车哨兵" if drv is False else "未判定")))
                     sei_drv = drv
-                    last_sei = now
-                publish_recent_only(age < 12, sei_drv)
+                    last_sei = time.time()
+                    if drv is True:
+                        PROBE_URGENT.clear()
+                publish_recent_only(age < 12, sei_drv, last_sei)
                 time.sleep(1)
                 continue
             if x is None or st.st_ino != x.fd_ino:
@@ -972,11 +997,24 @@ def probe_loop():
             sig = probe_sig(x)
             recent = False
             if last_sig is None:
-                publish_write_cat(sig, None, None, False)   # 基线, 不补推历史
+                # 基线不补推历史; 但如果是网页请求的即时复检, 必须这一次就给出结论。
+                if force_sei:
+                    drv = probe_driving(x, force=True)
+                    sei_drv = drv
+                    last_sei = time.time()
+                else:
+                    drv = None
+                publish_write_cat(sig, None, drv, False, sei_ts=last_sei)
                 last_sig = sig
             else:
-                drv = probe_driving(x)
-                publish_write_cat(sig, last_sig, drv, recent)
+                drv = probe_driving(x, force=force_sei)
+                if force_sei:
+                    log("SEI即时复检: %s" % ("行车" if drv is True else ("停车哨兵" if drv is False else "未判定")))
+                    sei_drv = drv
+                    last_sei = time.time()
+                    if drv is True:
+                        PROBE_URGENT.clear()
+                publish_write_cat(sig, last_sig, drv, recent, sei_ts=last_sei)
                 if not sync_allowed():
                     PROBE_URGENT.clear()
                 elif _cat_changed(sig, last_sig, "SentryClips"):

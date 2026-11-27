@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.34"
+APP_VERSION = "3.2.36"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -695,6 +695,8 @@ def ota_rollback():
 SETTINGS_FILE = os.environ.get("TSF_SETTINGS", "/opt/tesla-sentry/settings.json")
 # 同步服务每 8 秒写入: 哪个分类正在写 (RecentClips=行车中, SentryClips/SavedClips=哨兵/手动保存)
 WRITE_CAT_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "write-cat.json")
+# 与 tesla-live-sync.py 约定: 写这个文件请求一次即时 SEI 复检(不等 60 秒周期)
+SEI_REQ_FILE = os.path.join(os.path.dirname(WRITE_CAT_FILE) or "/opt/tesla-sentry", "sei-probe.req")
 AUTO_UPD = {"last_check": 0, "last_result": "", "last_apply": 0, "next_try": 0}
 
 # ---- 标题栏标识 (logo + 名称): 默认内置这张图, 设置里可换成自己的 ----
@@ -9118,7 +9120,7 @@ function wrapStatusHtml(attached) {
     '<button class="ust-btn" onclick="wrapDetach()">恢复车机导出</button></div>';
 }
 async function wrapAttach() {
-  toast('⏳ 正在连接 (车机读取将断开几秒)...');
+  toast('⏳ 正在做即时 SEI 复检并连接 (车机读取将断开几秒)...');
   const j = await (await fetch('/api/usb/attach', { method: 'POST' })).json();
   toast(j.ok ? '✅ 已连接车机U盘' : '❌ ' + j.msg);
   await refreshWraps();
@@ -9493,8 +9495,9 @@ function usbStatusHtml(attached, msg) {
     '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
-  if (DRIVE_LOCK_STATE.locked) { toast('🔒 行车锁：车机近3分钟仍在写U盘；若你已停车，可临时关闭行车锁后连接'); return; }
-  toast('⏳ 正在连接 (车机读取将断开几秒)...');
+  // 页面上的 locked 是 1 秒级旧快照, 不能拿它直接拦住用户;
+  // 后端会在真正挂载前做一次即时 SEI 复检, 以复检结果为准。
+  toast('⏳ 正在做即时 SEI 复检并连接 (车机读取将断开几秒)...');
   const r = await fetch('/api/usb/attach', { method: 'POST' });
   const j = await r.json();
   toast(j.ok ? '✅ 已连接车机U盘' : '❌ ' + j.msg);
@@ -10118,16 +10121,36 @@ def ensure_teslacam_tree():
     return made
 
 
+def usb_connect_gate():
+    """连接虚拟U盘前的纯决策: 即时 SEI 复检 + 近3分钟行车写入检查。
+    返回 (ok, msg); 不碰 UDC/loop/挂载, 便于模拟测试复用。"""
+    # 行车锁: 车机正在写镜像(行车中)时禁止读取虚拟U盘, 停车后自动解锁;
+    # 哨兵告警/手动保存写入不算行车中, 不锁 (否则停车时看不了U盘管理)。
+    # 连接前先做一次即时 SEI 复检: 不拿最多 60 秒前的 driving=false 放行,
+    # 避免停车哨兵刚切真行车时仍把镜像读起来, 和车机抢 I/O。
+    if not drive_lock_on():
+        return True, ""
+    recheck = request_sei_recheck()
+    if recheck is None:
+        return False, "行车锁：即时 SEI 复检未完成，暂不读取虚拟U盘；请确认同步服务正常后重试"
+    if recheck.get("driving") is True:
+        return False, "行车锁：即时 SEI 复检确认正在行车，暂不读取虚拟U盘；停车后重试"
+    if recheck.get("driving") is None:
+        return False, "行车锁：即时 SEI 复检无法判定（片段不足/无SEI），按保护优先暂不读取虚拟U盘"
+    if car_active_for_usb():
+        return False, "行车锁：车机近 3 分钟仍有行车写入，暂不能读取虚拟U盘；停车 3 分钟后自动解锁，归档区可正常回放"
+    return True, ""
+
+
 def usb_attach():
     """临时断开车机读取, 挂载镜像到 MNT (读写). 返回 (ok, msg)"""
     global usb_attached, usb_timer
     with usb_lock:
         if usb_attached and os.path.ismount(MNT):
             return True, "already"
-        # 行车锁: 车机正在写镜像(行车中)时禁止读取虚拟U盘, 停车后自动解锁;
-        # 哨兵告警/手动保存写入不算行车中, 不锁 (否则停车时看不了U盘管理)。
-        if car_active_for_usb():
-            return False, "行车锁：车机近 3 分钟仍有行车写入，暂不能读取虚拟U盘；停车 3 分钟后自动解锁，归档区可正常回放"
+        ok, msg = usb_connect_gate()
+        if not ok:
+            return False, msg
         # 先拿跨进程锁再动 UDC: 归档/自愈正在操作镜像时直接让开, 不抢 loop 与挂载点。
         # 在线同步只短暂持共享锁, 等它放开即可, 避免用户偶发"点不动 U盘管理"。
         for _ in range(6):
@@ -13415,6 +13438,30 @@ def write_cat_state():
         return {}
 
 
+def request_sei_recheck(timeout=5.0):
+    """连接车机U盘前请求同步服务立即复检一次 SEI, 返回带新 sei_ts 的状态。
+    超时/服务没响应返回 None, 调用方按"未判定"保护, 不拿 60 秒前的旧状态放行。"""
+    req_ts = time.time()
+    try:
+        tmp = SEI_REQ_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("%.6f\n" % req_ts)
+        os.replace(tmp, SEI_REQ_FILE)
+    except OSError as e:
+        print("sei request write failed:", e)
+        return None
+    deadline = req_ts + max(0.5, float(timeout))
+    while time.time() < deadline:
+        st = write_cat_state()
+        try:
+            if float(st.get("sei_ts") or 0.0) >= req_ts - 0.001:
+                return st
+        except (TypeError, ValueError):
+            pass
+        time.sleep(0.1)
+    return None
+
+
 def sentry_writing_only():
     """车机在写, 但写的不是行车记录 -> True。
     两种情形: ① 正在写哨兵告警/手动保存目录; ② RecentClips 在涨, 但最新前视片段
@@ -13485,11 +13532,33 @@ def car_active_for_background():
     return (time.time() - float(_CAR_WRITE.get("changed") or 0.0)) < CAR_ACTIVE_SEC
 
 
-def drive_watch_loop():
+def drive_watch_loop(stop_event=None):
     """行车锁看门狗: 每 1s 跟踪车机写入状态供页面显示; 若行车锁开启且车机正在写入时
-    镜像仍被本地挂载(异常态), 主动归还车机导出, 车机写入永远第一优先。"""
+    镜像仍被本地挂载(异常态), 主动归还车机导出, 车机写入永远第一优先。
+    另外: 已连接U盘期间车机一有新写入, 就做一次即时 SEI 复检; 若变成行车/未判定,
+    不等 60 秒探针周期, 立即卸载归还车机。"""
+    attached_mtime = None
     while True:
+        if stop_event is not None and stop_event.is_set():
+            break
         try:
+            if usb_attached:
+                try:
+                    mt = os.stat(IMG).st_mtime_ns
+                except OSError:
+                    mt = 0
+                if attached_mtime is None:
+                    attached_mtime = mt
+                elif mt != attached_mtime:
+                    attached_mtime = mt
+                    # 车机新写入; 停车哨兵/手动保存继续用, 真行车/未判定立刻归还。
+                    recheck = request_sei_recheck(timeout=2.0)
+                    if recheck is None or recheck.get("driving") is not False:
+                        print("drive-watch: 车机新写入, 即时SEI复检=%s, 自动恢复车机导出" %
+                              ("未判定" if recheck is None else recheck.get("driving")))
+                        usb_detach_safe()
+            else:
+                attached_mtime = None
             cw = car_active_for_usb()
             on = drive_lock_on()
             sentry_only = sentry_writing_only()

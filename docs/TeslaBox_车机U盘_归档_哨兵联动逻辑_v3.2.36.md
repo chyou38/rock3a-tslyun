@@ -1,6 +1,6 @@
 # TeslaBox 车机U盘 / 归档区 / 哨兵联动逻辑
 
-版本：v3.2.34 beta  
+版本：v3.2.36 beta  
 范围：`tesla-live-sync.py`、`sentry-viewer.py`、`write-cat.json`  
 目标：车机写入永远第一优先；只有明确停车哨兵时才自动归档 `SentryClips`；手动保存和行车记录走常规归档。
 
@@ -32,11 +32,39 @@ write-cat.json
 | `recent` | 镜像 mtime 在 12 秒内，近期有写入 |
 | `sentry` | 空闲签名扫描发现 `SentryClips` 变化 |
 | `saved` | 空闲签名扫描发现 `SavedClips` 变化 |
+| `sei_ts` | 最近一次 SEI 判定时间，网页连接U盘前据此确认即时复检已完成 |
 | `ts` | 状态时间戳；超过 30 秒视为过期/未知 |
 
 ---
 
-## 2. 车机U盘读取（虚拟U盘）
+## 2. 即时 SEI 复检（v3.2.36）
+
+### 连接 U 盘前
+
+1. 网页 `usb_connect_gate()` 先写 `/opt/tesla-sentry/sei-probe.req`；
+2. `tesla-live-sync.py` 的 `probe_loop()` 下一轮发现请求，执行 `probe_driving(force=True)`：跳过 20 秒目录缓存和文件名缓存，重新列 `RecentClips` 并只读最新前视片段头部 512KB；
+3. 结果连同 `sei_ts` 回写 `write-cat.json`；
+4. 网页最多等 5 秒：
+   - `driving=true` → 拒绝连接；
+   - `driving=null`（片段不足/无 SEI）→ 拒绝；
+   - 超时/服务没回写新的 `sei_ts` → 拒绝；
+   - `driving=false` → 继续走原有 `car_active_for_usb()` 检查。
+
+页面上的 `locked` 是旧快照，不再直接拦住用户；真正裁决以后端复检为准。
+
+### 已连接 U 盘期间
+
+`drive_watch_loop()` 监测镜像 mtime。车机一有新写入：
+
+- 立即请求一次即时 SEI 复检；
+- 复检为 `true` 或 `null`/超时 → `usb_detach_safe()` 立刻归还车机导出；
+- 复检为 `false`（停车哨兵/手动保存）→ 保持连接。
+
+这样停车哨兵切换真行车时，不再等最多 60 秒的周期探针。
+
+---
+
+## 3. 车机U盘读取（虚拟U盘）
 
 判定函数：`car_active_for_usb()`
 
@@ -56,7 +84,7 @@ write-cat.json
 
 ---
 
-## 3. 后台缩略图 / 预缓冲 / 转码
+## 4. 后台缩略图 / 预缓冲 / 转码
 
 判定函数：`car_active_for_background()`
 
@@ -67,7 +95,7 @@ write-cat.json
 
 ---
 
-## 4. 归档通道分类
+## 5. 归档通道分类
 
 | 类别 | 归档通道 | 触发条件 |
 |---|---|---|
@@ -82,7 +110,7 @@ write-cat.json
 
 ---
 
-## 5. 常规归档门禁
+## 6. 常规归档门禁
 
 判定函数：`sync_allowed()`
 
@@ -105,7 +133,7 @@ write-cat.json
 
 ---
 
-## 6. 停车哨兵自动归档
+## 7. 停车哨兵自动归档
 
 判定函数：`sentry_sync_allowed()`
 
@@ -125,7 +153,7 @@ write-cat.json
 
 ---
 
-## 7. 状态时序
+## 8. 状态时序
 
 ### 真行车
 
@@ -158,20 +186,21 @@ driving=false
 
 ---
 
-## 8. 当前实测状态（v3.2.34）
+## 9. 当前实测状态（v3.2.36）
 
 - `write-cat.json`：`driving=false`，识别为停车哨兵。
 - `/api/drive_lock`：`on=true`、`locked=false`、`parked_recording=true`、`sentry_writing=true`、`driving=false`。
 - 页面应显示：**哨兵录像中 · 未锁定**；车机U盘可连接。
 - `/api/archive_sched`：`car_writing=true`，常规归档暂停，消息“车机未静止（停车哨兵），归档暂停”。
 - `tesla-live`、`sentry-viewer` 均 active。
+- `/api/ver` 已返回 `3.2.36`；`write-cat.json` 的 `sei_ts` 随即时复检更新。
 - 当前没有新的 `SentryClips` 事件，所以哨兵自动通道暂无新的复制日志；有事件时按上述流程触发。
 
 ---
 
-## 9. 已知边界 / 风险
+## 10. 已知边界 / 风险
 
-1. **SEI 分类有最多 60 秒延迟**：车机从停车哨兵切换为真行车时，旧的 `driving=false` 可能最多保留一个探针周期；这段时间 U 盘仍可能处于未锁状态。要彻底消除，需要更短的探针周期或在 U 盘连接前做一次即时 SEI 复检。
+1. **未连接 U 盘时仍有 60 秒窗口**：哨兵自动通道依赖 `write-cat` 的 `driving=false`；车辆从停车哨兵切换真行车、且 U 盘没有连接时，哨兵自动通道理论上仍可能保留一个探针周期的旧状态。U 盘连接前和连接期间已由即时复检覆盖；哨兵自动通道后续可按实际日志决定是否也加写入触发复检。
 2. **只读最新前视片段头部 512KB**：极少数片段头部没有足够 SEI 标记时会判为 `null`，按保护优先处理，不会误放行。
 3. **哨兵自动只处理最新 1 个事件**：如果最新事件还在写入，需等签名连续两轮一致；更早的未归档事件不会在这个通道里自动补。
 4. **常规归档仍要等 3 分钟静默**：停车哨兵持续每分钟写盘时，`SavedClips/RecentClips` 不会自动进入常规归档；这是“车机写入第一优先”的直接结果。
@@ -179,7 +208,7 @@ driving=false
 
 ---
 
-## 10. 关键代码位置
+## 11. 关键代码位置
 
 - `tesla-live-sync.py`
   - `probe_driving()`：512KB SEI 判定

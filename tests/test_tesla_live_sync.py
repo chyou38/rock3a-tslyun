@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -289,3 +291,140 @@ class FirstRunSyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _SeiFakeEntry:
+    def __init__(self, name, cluster, size, is_dir=False, data=b""):
+        self.name = name
+        self.cluster = cluster
+        self.size = size
+        self.is_dir = is_dir
+        self.data = data
+
+
+class _SeiFakeExFat:
+    """只实现 probe_driving 需要的目录树/读取接口。"""
+    root_cluster = 0
+
+    def __init__(self, front):
+        self.cam = _SeiFakeEntry("TeslaCam", 1, 0, True)
+        self.rec = _SeiFakeEntry("RecentClips", 2, 0, True)
+        self.front = front
+
+    def list_dir(self, cluster, size=0):
+        if cluster == 0:
+            return [self.cam]
+        if cluster == self.cam.cluster:
+            return [self.rec]
+        if cluster == self.rec.cluster:
+            return [self.front]
+        return []
+
+    @staticmethod
+    def find(entries, name):
+        for e in entries:
+            if e.name == name:
+                return e
+        return None
+
+    @staticmethod
+    def read_file(entry):
+        yield entry.data
+
+
+class ForceSeiProbeTests(unittest.TestCase):
+    """即时复检必须跳过文件名缓存, 否则刚出现的新行车片段会被旧结论挡住。"""
+
+    def setUp(self):
+        live_sync._REC_CACHE = {"ts": 0.0, "entry": None}
+        live_sync._DRIVE_HINT = {"key": None, "val": None}
+        self.size = live_sync.SEI_MIN_BYTES + 1024
+        self.front = _SeiFakeEntry(
+            "2026-11-27_19-00-00-front.mp4", 3, self.size, False,
+            b"no-telemetry" * (self.size // 12 + 1),
+        )
+        self.exfat = _SeiFakeExFat(self.front)
+
+    def test_force_bypasses_same_filename_cache(self):
+        self.assertFalse(live_sync.probe_driving(self.exfat, limit=live_sync.SEI_PROBE_BYTES))
+        self.front.data = b"\x42\x42\x42\x69" * 3 + b"x" * self.size
+        self.assertFalse(live_sync.probe_driving(self.exfat, limit=live_sync.SEI_PROBE_BYTES))
+        self.assertTrue(live_sync.probe_driving(self.exfat, limit=live_sync.SEI_PROBE_BYTES, force=True))
+
+    def test_short_front_file_is_unknown_even_with_force(self):
+        self.front.size = live_sync.SEI_MIN_BYTES - 1
+        self.front.data = b"\x42\x42\x42\x69" * 3
+        self.assertIsNone(live_sync.probe_driving(self.exfat, force=True))
+
+
+
+class ProbeLoopRequestTests(unittest.TestCase):
+    """真实 probe_loop + 请求文件: 验证网页即时复检能拿到新的 sei_ts/driving。"""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.image = root / "teslacam.img"
+        self.image.write_bytes(b"image")
+        self.write_cat = root / "write-cat.json"
+        self.req = root / "sei-probe.req"
+        self.size = live_sync.SEI_MIN_BYTES + 1024
+        self.front = _SeiFakeEntry(
+            "2026-11-27_19-00-00-front.mp4", 3, self.size, False,
+            b"no-telemetry" * (self.size // 12 + 1),
+        )
+        self.exfat = _SeiFakeExFat(self.front)
+        live_sync._REC_CACHE = {"ts": 0.0, "entry": None}
+        live_sync._DRIVE_HINT = {"key": None, "val": None}
+        self.patches = [
+            patch.object(live_sync, "IMG", str(self.image)),
+            patch.object(live_sync, "WRITE_CAT_FILE", str(self.write_cat)),
+            patch.object(live_sync, "SEI_REQ_FILE", str(self.req)),
+            patch.object(live_sync, "SENTRY_IDLE_MIN", 3.0),
+            patch.object(live_sync, "ExFat", lambda _p: self.exfat),
+        ]
+        for p in self.patches:
+            p.start()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=live_sync.probe_loop, args=(self.stop,), daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.stop.set()
+        self.thread.join(timeout=3)
+        for p in self.patches:
+            p.stop()
+        self.tempdir.cleanup()
+
+    def state(self):
+        try:
+            return json.loads(self.write_cat.read_text())
+        except Exception:
+            return {}
+
+    def request_and_wait(self, expected, deadline=3.0):
+        req_ts = time.time()
+        self.req.write_text("%.6f\n" % req_ts)
+        end = time.time() + deadline
+        while time.time() < end:
+            st = self.state()
+            try:
+                if st.get("driving") is expected and float(st.get("sei_ts") or 0) >= req_ts:
+                    return st
+            except (TypeError, ValueError):
+                pass
+            time.sleep(0.1)
+        return self.state()
+
+    def test_request_forces_new_sei_after_same_filename(self):
+        # 等第一轮基线/自动探针落盘
+        end = time.time() + 2.0
+        while time.time() < end and not self.state():
+            time.sleep(0.1)
+        st = self.request_and_wait(False)
+        self.assertIs(st.get("driving"), False)
+
+        # 同一个文件名内容变成有 SEI: 请求必须绕过旧缓存
+        self.front.data = b"\x42\x42\x42\x69" * 3 + b"x" * self.size
+        st = self.request_and_wait(True)
+        self.assertIs(st.get("driving"), True)
