@@ -232,7 +232,7 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 
 网页 **⚙ 个性化** 包含网络设置、文件、车机U盘、锁车语音、涂装、推送、账号、语言、网页背景、风扇、品牌、系统体检、更新等页面。存储盘选择和虚拟U盘创建在 **「个性化 → 车机U盘」** 里，不在首页。
 
-- **系统体检**：个性化 → 系统体检，调用独立 Go 只读工具 `tsf-doctor`，检查服务、内存/负载/磁盘、进程 RSS、health.log、归档 `.part/.pruned`、关键 API、媒体 HEAD/Range 与缩略图；不写业务文件、不重启服务、不改配置。手动刷新接口为 `/api/doctor?refresh=1`。每次真实体检写一条 JSONL 日志到 `/opt/tesla-sentry/doctor-history.jsonl`，页面可展开全部检查项、下载日志或清空。
+- **系统体检**：个性化 → 系统体检，调用独立 Go 只读工具 `tsf-doctor`，检查服务、内存/负载/磁盘、进程 RSS、health.log、归档 `.part/.pruned`、关键 API、媒体 HEAD/Range 与缩略图；不写业务文件、不重启服务、不改配置。手动刷新接口为 `/api/doctor?refresh=1`。每次真实体检写一条内部 JSONL 日志到 `/opt/tesla-sentry/doctor-history.jsonl`；页面可展开全部检查项、下载 **TXT 可读日志**或清空。TXT 同时包含 OTG/USB 连接/断开与 LUN、USB reset 次数、gadget/同步/健康日志、内核 dwc3 USB 事件，以及 MPP 视频解码 NULL、等待中断次数与原因（解码统计取 journal 最近 8000 行）。
 
 - **品牌**：设置 → 品牌，标题栏左侧的图标（png/jpg/webp，≤3MB）与名称（≤24 字）都能换成自己的，改完立即生效、登录页同步；默认是内置的「TSL哨兵云盘」图标与名称，一键可恢复。
 - **在线升级**：设置 → 更新，自动比对仓库 `version.json`，一键升级 / 回滚；配置与录像归档不在升级范围内。

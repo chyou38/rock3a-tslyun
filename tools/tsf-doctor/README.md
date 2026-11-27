@@ -30,4 +30,4 @@ install -m 755 tsf-doctor-linux-arm64 /opt/tesla-sentry/bin/tsf-doctor
 ```
 
 网页入口：个性化 → 系统体检。后端接口：`/api/doctor`，手动刷新使用 `/api/doctor?refresh=1`。
-每次真实体检会写入 `/opt/tesla-sentry/doctor-history.jsonl`（JSONL，含全部检查项）；`GET /api/doctor/history/download` 下载日志，`POST /api/doctor/history/clear` 清空日志。
+每次真实体检会写入 `/opt/tesla-sentry/doctor-history.jsonl`（内部 JSONL，含全部检查项）。`GET /api/doctor/history/download` 会把内部 JSONL 转成中文可读的 **TXT**，包含 OTG/USB 事件、gadget/同步/健康日志、内核 USB/解码事件、MPP NULL 次数与原因；`POST /api/doctor/history/clear` 清空日志。

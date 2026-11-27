@@ -66,6 +66,11 @@ PORT = int(os.environ.get("TSF_PORT", "80"))
 # Go 只读体检工具: 独立二进制, 不影响主服务; 未安装时接口会返回明确失败项
 DOCTOR_BIN = os.environ.get("TSF_DOCTOR_BIN", "/opt/tesla-sentry/bin/tsf-doctor")
 DOCTOR_HISTORY = os.environ.get("TSF_DOCTOR_HISTORY", "/opt/tesla-sentry/doctor-history.jsonl")
+DOCTOR_LOG_DIR = os.environ.get("TSF_LOG_DIR", "/opt/tesla-sentry")
+DOCTOR_WATCH_LOG = os.path.join(DOCTOR_LOG_DIR, "watch.log")
+DOCTOR_GADGET_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-gadget.log")
+DOCTOR_SYNC_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-sync.log")
+DOCTOR_HEALTH_LOG = os.path.join(DOCTOR_LOG_DIR, "health.log")
 _DOCTOR_CACHE = {"at": 0.0, "data": None}
 _DOCTOR_LOCK = threading.Lock()
 CATS = ["SentryClips", "SavedClips", "RecentClips"]
@@ -191,7 +196,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.5"
+APP_VERSION = "3.2.6"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -2673,7 +2678,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div id="doctor-box" class="doctor-box" style="display:none"></div>
     <div id="doctor-log" class="doctor-logsec" style="display:none">
-      <div class="doctor-loghead"><span>日志记录 <span class="doctor-logcount" id="doctor-log-count"></span></span><span class="doctor-logtools"><a href="/api/doctor/history/download" download>下载</a><button onclick="doctorLogClear()">清空</button></span></div>
+      <div class="doctor-loghead"><span>日志记录 <span class="doctor-logcount" id="doctor-log-count"></span></span><span class="doctor-logtools"><a href="/api/doctor/history/download" download>下载TXT</a><button onclick="doctorLogClear()">清空</button></span></div>
       <div id="doctor-log-box" class="doctor-box"></div>
     </div>
   </div>
@@ -7962,14 +7967,35 @@ function doctorLogRender(list, emptyText) {
           '<span class="doctor-group">' + esc(doctorGroupName(c.group)) + '</span>' +
           '<div class="doctor-detail">' + esc(c.detail || '') + '</div></div>';
       }).join('') + '</details>' : '';
+    const sysDetail = doctorSysDetail(e.system_logs || {});
     return '<div class="doctor-logrow"><span class="doctor-dot ' + cls + '"></span>' +
       '<div class="doctor-logmain"><div><span class="doctor-logtime">' + esc(e.at || '') + '</span>' +
       '<span class="doctor-logstatus ' + cls + '">' + status + '</span></div>' +
       '<div class="doctor-logsum">' + pass + ' 通过 · ' + warn + ' 注意 · ' + fail + ' 故障' +
       (ms ? ' · ' + (ms / 1000).toFixed(1) + 's' : '') + ' · ' + trig + '</div>' +
       (issues ? '<div class="doctor-logissue">' + issues + more + '</div>' : '') +
-      detail + '</div></div>';
+      detail + sysDetail + '</div></div>';
   }).join('');
+}
+function doctorSysDetail(s) {
+  const otg = s.otg || {}, dec = s.decode || {};
+  if (!Object.keys(otg).length && !Object.keys(dec).length) return '';
+  const conn = otg.connected ? '已连接' : '未连接';
+  const reset = (otg.watch_reset_total == null ? '?' : otg.watch_reset_total);
+  const nulln = (otg.watch_null_total == null ? '?' : otg.watch_null_total);
+  let body = '<div class="doctor-logissue">OTG: ' + esc(otg.state || '?') + ' · ' + conn +
+    ' · ' + esc(otg.speed || '?') + ' · LUN ' + esc(otg.lun || '无') +
+    ' · reset ' + reset + ' · null ' + nulln + '</div>' +
+    '<div class="doctor-logissue">解码: MPP NULL ' + (dec.mpp_null_total == null ? '?' : dec.mpp_null_total) +
+    ' 次（最近8000行）· 等待中断 ' + (dec.wait_break_total == null ? '?' : dec.wait_break_total) + ' 次</div>' +
+    (dec.mpp_null_reason ? '<div class="doctor-logissue">原因: ' + esc(dec.mpp_null_reason) + '</div>' : '');
+  const ev = [];
+  (otg.events || []).slice(-6).forEach(x => ev.push('[OTG] ' + esc(x)));
+  (dec.mpp_null_events || []).slice(-4).forEach(x => ev.push('[MPP] ' + esc(x)));
+  (s.kernel || []).slice(-4).forEach(x => ev.push('[内核] ' + esc(x)));
+  (s.gadget || []).slice(-3).forEach(x => ev.push('[Gadget] ' + esc(x)));
+  if (ev.length) body += '<div class="doctor-logissue">' + ev.join('<br>') + '</div>';
+  return '<details class="doctor-logdetails"><summary>系统日志 · OTG/视频解码</summary>' + body + '</details>';
 }
 async function doctorLogClear() {
   if (!confirm('确定清空所有体检日志？此操作不可恢复。')) return;
@@ -13543,6 +13569,102 @@ def _doctor_error(msg):
     }
 
 
+def _doctor_tail(path, lines=20, max_bytes=256 * 1024):
+    """只读文件尾部, 避免把 1MB+ 的巡检日志整个读进内存。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes))
+            raw = f.read()
+        return raw.decode("utf-8", "replace").replace("\x00", "").splitlines()[-lines:]
+    except Exception:
+        return []
+
+
+def _doctor_cmd(args, timeout=5):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return (p.stdout or "")
+    except Exception:
+        return ""
+
+
+def _doctor_pick(lines, pattern, limit=8):
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except Exception:
+        return []
+    out = [ln.strip()[:240] for ln in lines if ln.strip() and rx.search(ln)]
+    return out[-limit:]
+
+
+def _doctor_last_hb(lines):
+    for line in reversed(lines):
+        m = re.search(r"hb mem=(\d+)M cma=(\d+)M load=([^ ]+) temp=(\d+)C usb=([^ ]+) lun=([^ ]+) reset=(\d+) null=(\d+)", line)
+        if m:
+            return {"mem_mb": int(m.group(1)), "cma_mb": int(m.group(2)),
+                    "load": m.group(3), "temp_c": int(m.group(4)),
+                    "usb": m.group(5), "lun": m.group(6),
+                    "reset_total": int(m.group(7)), "null_total": int(m.group(8))}
+    return {}
+
+
+def _doctor_system_logs():
+    """收集 OTG/USB 状态变化、gadget/sync/health 日志、内核 USB 与 MPP 解码错误。"""
+    watch = _doctor_tail(DOCTOR_WATCH_LOG, 4000, 256 * 1024)
+    gadget = _doctor_tail(DOCTOR_GADGET_LOG, 20, 64 * 1024)
+    sync = _doctor_tail(DOCTOR_SYNC_LOG, 20, 64 * 1024)
+    health = _doctor_tail(DOCTOR_HEALTH_LOG, 8, 64 * 1024)
+    try:
+        otg = _otg_info()
+    except Exception:
+        otg = {}
+    hb = _doctor_last_hb(watch)
+    watch_events = _doctor_pick(
+        watch, r"usb state:|LUN |usb reset|mpp buffer|ALERT|service .*NOT active|kernel OOM", 12)
+    journal = _doctor_cmd([
+        "journalctl", "-b", "-u", "sentry-viewer.service", "-u", "tesla-live.service",
+        "-u", "tesla-gadget.service", "-q", "--no-pager", "-n", "8000"], timeout=8)
+    jlines = journal.splitlines() if journal else []
+    mpp = _doctor_pick(jlines, r"check buffer found NULL pointer", 6)
+    dmesg = _doctor_cmd(["dmesg"], timeout=3).splitlines()
+    wait = _doctor_pick(dmesg, r"wait task break by signal", 4)
+    jerr = _doctor_pick(jlines, r"Traceback|Exception|ERROR|failed|mpp_buffer: check buffer", 5)
+    kernel = _doctor_pick(
+        dmesg, r"dwc3.*(device reset|device disconnect|device connect)|rkvdec|rk_vcodec|mpp_wait|check buffer", 10)
+    return {
+        "collected_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "otg": {
+            "state": str(otg.get("state") or ""),
+            "connected": bool(otg.get("connected")),
+            "speed": str(otg.get("speed_text") or ""),
+            "max_speed": str(otg.get("max_text") or ""),
+            "kind": str(otg.get("kind") or ""),
+            "lun": str(otg.get("lun_name") or ""),
+            "lun_backed": bool(otg.get("lun_backed")),
+            "watch_reset_total": hb.get("reset_total", 0),
+            "watch_null_total": hb.get("null_total", 0),
+            "events": watch_events,
+        },
+        "decode": {
+            "mpp_null_total": len([x for x in jlines if "check buffer found NULL pointer" in x]),
+            "mpp_null_window": 8000,
+            "mpp_null_reason": "check buffer found NULL pointer from get_packet",
+            "mpp_null_events": mpp,
+            "wait_break_total": len([x for x in dmesg if "wait task break by signal" in x]),
+            "wait_break_reason": "wait task break by signal",
+            "wait_break_events": wait,
+            "journal_errors": jerr,
+        },
+        "gadget": [x.strip()[:240] for x in gadget[-8:] if x.strip()],
+        "sync": [x.strip()[:240] for x in sync[-6:] if x.strip()],
+        "health": [x.strip()[:240] for x in health[-6:] if x.strip()],
+        "kernel": kernel,
+        "hb": hb,
+    }
+
+
 def _doctor_log_entry(data, trigger="auto"):
     """把一份体检报告压缩成一行历史记录; 保留全部检查项, 方便回看。"""
     s = data.get("summary") if isinstance(data.get("summary"), dict) else {}
@@ -13582,6 +13704,7 @@ def _doctor_log_entry(data, trigger="auto"):
         "host": socket.gethostname(),
         "issues": issues,
         "checks": checks,
+        "system_logs": data.get("system_logs") if isinstance(data.get("system_logs"), dict) else {},
     }
 
 
@@ -13619,6 +13742,85 @@ def _doctor_history_clear():
         return {"ok": False, "msg": "清空失败: " + str(ex)[:120]}
 
 
+def _doctor_history_text():
+    """把内部 JSONL 转成用户可读的 TXT; 下载不暴露内部结构, 但保留全部细节。"""
+    entries = []
+    for line in _doctor_history_bytes().decode("utf-8", "ignore").splitlines():
+        try:
+            e = json.loads(line)
+            if isinstance(e, dict) and e.get("at"):
+                entries.append(e)
+        except Exception:
+            pass
+    status_cn = {"pass": "通过", "warn": "注意", "fail": "故障"}
+    trigger_cn = {"manual": "手动", "auto": "自动"}
+    out = ["TSL哨兵 系统体检日志", "生成时间: " + time.strftime("%Y-%m-%d %H:%M:%S"),
+           "记录数: %d" % len(entries), "=" * 78, ""]
+    def add_items(title, items):
+        if not items:
+            return
+        out.append("    %s:" % title)
+        for x in items:
+            s = str(x).replace("\x00", "").strip()
+            if s:
+                out.append("      " + s[:300])
+    for i, e in enumerate(entries, 1):
+        s = e.get("summary") if isinstance(e.get("summary"), dict) else e
+        ok = int(e.get("pass") or s.get("pass") or 0)
+        wn = int(e.get("warn") or s.get("warn") or 0)
+        fl = int(e.get("fail") or s.get("fail") or 0)
+        out.append("[%d] %s | %s | %d通过 %d注意 %d故障 | %s | %s" % (
+            i, e.get("at", ""), status_cn.get(e.get("status"), e.get("status") or "?"),
+            ok, wn, fl, ("%dms" % int(e.get("ms") or 0)), trigger_cn.get(e.get("trigger"), "自动")))
+        out.append("    host=%s app=%s tool=%s" % (
+            e.get("host") or "?", e.get("app_version") or "?", e.get("tool_version") or "?"))
+        issues = e.get("issues") or []
+        if issues:
+            out.append("    问题项:")
+            for x in issues:
+                if isinstance(x, dict):
+                    out.append("      - [%s] %s: %s" % (
+                        x.get("level") or "", x.get("title") or x.get("id") or "",
+                        str(x.get("detail") or "")[:300]))
+        sl = e.get("system_logs") if isinstance(e.get("system_logs"), dict) else {}
+        otg = sl.get("otg") if isinstance(sl.get("otg"), dict) else {}
+        if otg:
+            out.append("    OTG: state=%s connected=%s speed=%s max=%s lun=%s reset_total=%s null_total=%s" % (
+                otg.get("state") or "?", bool(otg.get("connected")), otg.get("speed") or "?",
+                otg.get("max_speed") or "?", otg.get("lun") or "?", otg.get("watch_reset_total", "?"),
+                otg.get("watch_null_total", "?")))
+            add_items("OTG/系统事件", otg.get("events"))
+        dec = sl.get("decode") if isinstance(sl.get("decode"), dict) else {}
+        if dec:
+            out.append("    解码: mpp_null_total=%s wait_break_total=%s (最近8000行)" % (
+                dec.get("mpp_null_total", "?"), dec.get("wait_break_total", "?")))
+            if dec.get("mpp_null_reason"):
+                out.append("    解码原因: " + str(dec.get("mpp_null_reason"))[:240])
+            add_items("MPP NULL 事件", dec.get("mpp_null_events"))
+            add_items("解码等待中断", dec.get("wait_break_events"))
+            add_items("日志错误", dec.get("journal_errors"))
+        hb = sl.get("hb") if isinstance(sl.get("hb"), dict) else {}
+        if hb:
+            out.append("    巡检心跳: mem=%sM cma=%sM load=%s temp=%sC usb=%s lun=%s reset=%s null=%s" % (
+                hb.get("mem_mb", "?"), hb.get("cma_mb", "?"), hb.get("load", "?"),
+                hb.get("temp_c", "?"), hb.get("usb", "?"), hb.get("lun", "?"),
+                hb.get("reset_total", "?"), hb.get("null_total", "?")))
+        for key, title in (("gadget", "Gadget 日志"), ("sync", "同步日志"),
+                           ("health", "健康日志"), ("kernel", "内核 USB/解码")):
+            add_items(title, sl.get(key))
+        checks = e.get("checks") or []
+        if checks:
+            out.append("    检查项:")
+            for c in checks:
+                if isinstance(c, dict):
+                    out.append("      [%s] %s (%s): %s" % (
+                        c.get("level") or "info", c.get("title") or c.get("id") or "",
+                        c.get("group") or "", str(c.get("detail") or "")[:300]))
+        out.append("-" * 78)
+        out.append("")
+    return "\n".join(out)
+
+
 def _doctor_history_read(limit=8):
     """读取最近 limit 条, 新的在前; 文件不存在/损坏时返回空列表。"""
     try:
@@ -13641,6 +13843,11 @@ def _doctor_finish(data, record=False, trigger="auto"):
     if record:
         data = dict(data)
         data["trigger"] = trigger
+        if not isinstance(data.get("system_logs"), dict):
+            try:
+                data["system_logs"] = _doctor_system_logs()
+            except Exception:
+                data["system_logs"] = {}
         _doctor_history_append(data, trigger)
     out = dict(data)
     out["history"] = _doctor_history_read(12)
@@ -13689,6 +13896,10 @@ def doctor_report(force=False):
             return _doctor_finish(_doctor_error("体检输出结构异常"), record=True, trigger=trigger)
         data["app_version"] = APP_VERSION
         data["cached"] = False
+        try:
+            data["system_logs"] = _doctor_system_logs()
+        except Exception:
+            data["system_logs"] = {}
         _DOCTOR_CACHE = {"at": time.time(), "data": data}
         return _doctor_finish(data, record=True, trigger=trigger)
     except FileNotFoundError:
@@ -18520,10 +18731,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, html.encode())
             return
         elif path == "/api/doctor/history/download":
-            raw = _doctor_history_bytes()
-            fname = "tsf-doctor-history-%s.jsonl" % time.strftime("%Y%m%d-%H%M%S")
+            raw = _doctor_history_text().encode("utf-8")
+            fname = "tsf-doctor-history-%s.txt" % time.strftime("%Y%m%d-%H%M%S")
             self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Disposition", 'attachment; filename="%s"' % fname)
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
