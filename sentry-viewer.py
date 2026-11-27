@@ -434,8 +434,14 @@ def ota_latest(force=False):
         j2 = _api_manifest(timeout=3, branch=branch)
         if j2 and str(j2.get("version") or "").strip():
             fresh.append(j2)
+    # 镜像 CDN 按分支缓存清单, 常出现「版本号已是新版、notes 仍是旧内容」的情况。
+    # 只要 GitHub API 拿到同版本或更新的清单, 就以它为准(实时, 无 CDN 缓存)。
     if fresh:
-        j, base = fresh[0], "https://api.github.com"
+        j2 = fresh[0]
+        if _vtuple(j2.get("version")) >= _vtuple(raced.get("version")):
+            j, base = j2, "https://api.github.com"
+        else:
+            j = raced
     else:
         j = raced
     j["_base"] = base
