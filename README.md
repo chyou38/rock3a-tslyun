@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.16** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.17** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)

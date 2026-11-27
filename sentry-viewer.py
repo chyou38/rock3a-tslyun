@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.16"
+APP_VERSION = "3.2.17"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -9402,6 +9402,9 @@ function usbStatusHtml(attached, msg) {
     } else if (sd.otg_kind === 'ejected' || sd.lun_backed === false) {
       title = '未连接管理 · 车机U盘被弹出';
       sub = '自愈狗正在重新挂回车机U盘' + usbGuardText(g) + usbBootCountText(g);
+    } else if (sd.otg_kind === 'off') {
+      title = '未连接管理 · 车机USB已断电';
+      sub = '哨兵关闭或车机休眠时 USB 口断电；自愈狗只等待，不做逻辑重插' + usbGuardText(g) + usbBootCountText(g);
     } else if (sd.host_connected === false && sd.otg_kind) {
       title = '未连接管理 · 等待车机连接';
       sub = '车机未连接时自愈狗待命；接上后自动恢复U盘' + usbGuardText(g) + usbBootCountText(g);
@@ -11513,6 +11516,10 @@ def _usb_guard_boot_log_counts(boot_at):
                 if boot_at and at < boot_at - 5.0:
                     continue
                 if "usb-guard: start:" in line:
+                    # 车机 USB 口断电（otg=off）不是异常，不能计入本次开机触发；
+                    # 旧版本日志里可能留有这类 start，重建计数时统一排除。
+                    if "(otg=off)" in line:
+                        continue
                     triggers += 1
                 elif "usb-guard: recovered:" in line:
                     recoveries += 1
@@ -11931,7 +11938,17 @@ def _usb_guard_tick():
         return
     otg = _otg_info()
     now = time.time()
-    old_kind, kind_at = _usb_guard_observe(otg, now)
+    old_kind, _kind_at = _usb_guard_observe(otg, now)
+    if otg["kind"] == "off":
+        # 车机 USB 口断电（哨兵关闭、车机休眠或数据线断开）时，主机不会枚举；
+        # 此时 UDC 逻辑重插/介质重插都没有意义，反而会把“车机没上电”误记成一次自愈。
+        # 只排空 kmsg 并等待，车机恢复供电后会自己重新枚举。
+        _usb_guard_kmsg_read()
+        if old_kind != "off":
+            _usb_guard_log("host powered off; skip replug (otg=off)")
+        _usb_guard_set("waiting", "车机USB已断电（哨兵关闭/车机休眠），等待车机重新供电",
+                       action="车机USB已断电，跳过重插")
+        return
     if otg["kind"] == "ready" and (not otg["lun_file"] or otg["lun_file"] == IMG):
         resets, disconnects = _usb_guard_kmsg_poll(now)
         with USB_GUARD_LOCK:
@@ -11955,23 +11972,12 @@ def _usb_guard_tick():
         return
     # LUN 为空或被指向了别的镜像：车机已经看不到正确盘，优先热写回，不碰 UDC。
     if (not otg["lun_backed"]) or (otg["lun_file"] and otg["lun_file"] != IMG):
-        replug = bool(otg["kind"] == "off" and old_kind == "ready" and
-                      (now - kind_at) <= 10.0)
         _usb_guard_recover("车机把U盘弹出" if otg["connected"] else "LUN 未挂载",
-                           otg, want_replug=replug)
+                           otg, want_replug=False)
         return
     if otg["kind"] == "off":
-        # 从 ready 掉到 off 才做一次逻辑重插；车机熄火/拔线后不反复折腾。
-        if car_writing() and not sentry_writing_only():
-            _usb_guard_set("paused", "车机写入中，自愈狗等待空窗")
-            return
-        with USB_GUARD_LOCK:
-            last_replug = float(USB_GUARD["last_replug"] or 0)
-        if old_kind == "ready" and (now - kind_at) <= 10.0 and \
-                (now - last_replug) >= USB_GUARD_REBIND_GAP:
-            _usb_guard_recover("车机USB刚断开，逻辑重插", otg, want_replug=True)
-        else:
-            _usb_guard_set("waiting", "等待车机连接")
+        # 理论上前面的 off 分支已经 return；保留兜底，任何时候都不在主机断电时重插。
+        _usb_guard_set("waiting", "车机USB已断电，等待车机重新供电")
         return
     if otg["kind"] == "none":
         if old_kind in ("ready", "off", "ejected"):
