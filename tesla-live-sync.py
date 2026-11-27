@@ -924,6 +924,7 @@ def probe_loop():
                         pass
                     x = None
                 last_sig = None
+                PROBE_URGENT.clear()   # 行车中不存在哨兵优先同步, 连排队都不留
                 publish_recent_only(age < 12)
                 time.sleep(1)
                 continue
