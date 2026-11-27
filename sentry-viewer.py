@@ -5,6 +5,7 @@
 """
 import base64
 import datetime
+import errno
 import json
 import os
 import re
@@ -201,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.11"
+APP_VERSION = "3.2.13"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1902,8 +1903,10 @@ body.livemode #grid, body.livemode #empty { display:none !important; }
   padding:9px 12px; margin:0 0 10px; }
 .usbstrip.off { border-left-color:var(--amber); }
 .usbstrip.on { border-left-color:#4cc38a; }
+.usbstrip.bad { border-left-color:var(--accent); }
 .usbstrip .ust-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--amber); }
 .usbstrip.on .ust-dot { background:#4cc38a; }
+.usbstrip.bad .ust-dot { background:var(--accent); }
 .usbstrip .ust-body { flex:1; min-width:150px; }
 .usbstrip .ust-t { font-size:12.5px; font-weight:600; color:var(--text); line-height:1.35; }
 .usbstrip .ust-s { font-size:11.5px; color:var(--muted2); line-height:1.4; margin-top:2px; }
@@ -9131,6 +9134,7 @@ const USB_ICON = '<svg class="usb-ico" viewBox="0 0 14 20" width="13" height="18
 let storageFirst = true;
 let storageReq = 0;
 let storageBusy = false;
+let usbStatusTimer = null;
 function storageInitButtonOk(sizeOk) {
   const btn = document.querySelector('.storage-init');
   if (!btn) return;
@@ -9155,6 +9159,8 @@ async function refreshStorage() {
   if (req !== storageReq) return;
   if (!j.ok) { st.textContent = j.msg || '存储状态读取失败'; return; }
   storageData = j;
+  const usbStrip = document.getElementById('usb-status');
+  if (usbStrip) usbStrip.innerHTML = usbStatusHtml(!!j.attached, '');
   const linked = j.host_connected === true;
   const config = j.img_configured === true;
   const summary = document.getElementById('storage-summary');
@@ -9206,6 +9212,19 @@ async function refreshStorage() {
     const body = document.getElementById('storage-body');
     if (body) body.hidden = false;
   }
+}
+/* 自愈狗轻量状态: USB 页打开时 2s 轮询，不重复枚举磁盘 */
+async function refreshUsbGuard() {
+  try {
+    const j = await (await fetch('/api/usb/guard', {cache:'no-store'})).json();
+    if (!j.ok) return;
+    storageData = Object.assign({}, storageData || {}, {
+      attached: j.attached, otg_kind: j.otg_kind,
+      host_connected: j.host_connected, lun_backed: j.lun_backed, guard: j.guard
+    });
+    const el = document.getElementById('usb-status');
+    if (el && el.style.display !== 'none') el.innerHTML = usbStatusHtml(j.attached, '');
+  } catch (e) { /* 页面短暂断网时保持上一帧状态 */ }
 }
 let allocSizeTouched = false;
 function storageAllocCalc() {
@@ -9338,21 +9357,59 @@ function switchArea(a) {
   /* 通用上传只在「车机U盘」子页出现: 归档区上传的文件没有任何入口会去读, 纯占空间 */
   const up = document.getElementById('upbtn');
   if (up) up.style.display = a === 'usb' ? '' : 'none';
-  if (a === 'usb') refreshStorage();
-  else loadArchiveRetention();   /* 归档区: 刷新占用与自动清理状态 */
+  if (usbStatusTimer) { clearInterval(usbStatusTimer); usbStatusTimer = null; }
+  if (a === 'usb') {
+    refreshStorage();
+    refreshUsbGuard();
+    usbStatusTimer = setInterval(() => { if (!document.hidden) refreshUsbGuard(); }, 2000);
+  } else {
+    loadArchiveRetention();   /* 归档区: 刷新占用与自动清理状态 */
+  }
   curDir = a === 'usb' ? '' : '/archive/files';
   refreshFiles();
 }
+function usbGuardText(g) {
+  const s = (g && g.state) || '';
+  if (s === 'recovering') return ' · 自愈狗正在恢复…';
+  if (s === 'recovered') {
+    const age = (g && g.last_recovery_age >= 0) ? g.last_recovery_age : 0;
+    return ' · 自愈狗已恢复' + (age ? '（' + age + ' 秒前）' : '');
+  }
+  if (s === 'fault') return ' · 自愈狗恢复失败';
+  if (s === 'paused') return ' · 自愈狗暂停（管理操作中）';
+  if (s === 'waiting') return ' · 自愈狗待命';
+  if (s === 'disabled') return '';
+  return ' · 自愈狗待命';
+}
 function usbStatusHtml(attached, msg) {
+  const sd = storageData || {};
+  const g = sd.guard || {};
   if (!attached) {
-    return '<div class="usbstrip off"><span class="ust-dot"></span><div class="ust-body">' +
-      '<div class="ust-t">未连接管理 · 车机正在正常读写</div>' +
-      '<div class="ust-s">连接会临时断开车机读取几秒，5 分钟无操作自动恢复</div></div>' +
+    let cls = 'off', title = '未连接管理 · 车机正在正常读写';
+    let sub = '连接会临时断开车机读取几秒，5 分钟无操作自动恢复' + usbGuardText(g);
+    if (g.state === 'recovering') {
+      cls = 'bad';
+      title = '自愈狗正在恢复车机U盘…';
+      sub = '检测到U盘异常断开，正在立即重挂；车机正常写入优先';
+    } else if (g.state === 'fault') {
+      cls = 'bad';
+      title = '自愈狗恢复失败 · 车机U盘暂不可用';
+      sub = (g.last_error || '可稍后点「连接」检查，或重新插拔数据线');
+    } else if (sd.otg_kind === 'ejected' || sd.lun_backed === false) {
+      title = '未连接管理 · 车机U盘被弹出';
+      sub = '自愈狗正在重新挂回车机U盘' + usbGuardText(g);
+    } else if (sd.host_connected === false && sd.otg_kind) {
+      title = '未连接管理 · 等待车机连接';
+      sub = '车机未连接时自愈狗待命；接上后自动恢复U盘' + usbGuardText(g);
+    }
+    return '<div class="usbstrip ' + cls + '"><span class="ust-dot"></span><div class="ust-body">' +
+      '<div class="ust-t">' + title + '</div>' +
+      '<div class="ust-s">' + sub + '</div></div>' +
       '<button class="ust-btn" onclick="usbAttach()">连接</button></div>';
   }
   return '<div class="usbstrip on"><span class="ust-dot"></span><div class="ust-body">' +
     '<div class="ust-t">已连接 · 车机U盘可读写</div>' +
-    '<div class="ust-s">改动直接写入车机U盘；断开满 5 分钟自动恢复车机导出</div></div>' +
+    '<div class="ust-s">改动直接写入车机U盘；断开满 5 分钟自动恢复车机导出 · 自愈狗暂停（网页管理中）</div></div>' +
     '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
@@ -11278,11 +11335,12 @@ def _gadget_lun():
     """读 configfs 的 mass_storage LUN: 有备份文件=车机能看到盘; 空=没导出或被主机弹出"""
     fn = ""
     fp = ""
+    path = ""
     try:
         fns = [d for d in os.listdir(os.path.join(GADGET_DIR, "functions"))
                if d.startswith("mass_storage")]
     except OSError:
-        return {"fn": "", "file": "", "name": "", "backed": False}
+        return {"fn": "", "path": "", "file": "", "name": "", "backed": False}
     for d in sorted(fns):
         p = os.path.join(GADGET_DIR, "functions", d, "lun.0", "file")
         try:
@@ -11291,8 +11349,10 @@ def _gadget_lun():
         except OSError:
             continue
         fn = d
+        path = p
         break
-    return {"fn": fn, "file": fp, "name": os.path.basename(fp) if fp else "", "backed": bool(fp)}
+    return {"fn": fn, "path": path, "file": fp,
+            "name": os.path.basename(fp) if fp else "", "backed": bool(fp)}
 
 
 def _otg_info():
@@ -11333,6 +11393,420 @@ def _otg_info():
             "lun_file": lun["file"], "connected": connected}
 
 
+# ---------- USB 自愈狗 ----------
+# 车机把 U 盘弹出/异常断开后，不等人点「连接」也不等 cron：1s 级检查，
+# 优先热写回 LUN（不摘 NCM/ACM），失败才做完整 gadget 恢复。
+# 所有动作都必须先拿 usb_lock + /tmp/tsf-usb.lock；网页管理、归档、同步在用 U 盘时完全不碰。
+USB_GUARD_ENABLED = os.environ.get("TSF_USB_GUARD", "1").strip().lower() not in (
+    "0", "false", "off", "no", "disabled")
+USB_GUARD_INTERVAL = 1.0
+USB_GUARD_REBIND_GAP = 25.0
+USB_GUARD_RESET_WINDOW = 12.0
+USB_GUARD_LOCK = threading.Lock()
+_USB_KMSG = {"fd": None, "broken": False}
+USB_GUARD = {
+    "enabled": USB_GUARD_ENABLED,
+    "state": "starting",
+    "reason": "启动中",
+    "last_error": "",
+    "last_action": "",
+    "last_ok": 0.0,
+    "last_event": 0.0,
+    "last_recovery": 0.0,
+    "recoveries": 0,
+    "attempts": 0,
+    "last_attempt": 0.0,
+    "last_replug": 0.0,
+    "otg_kind": "",
+    "last_kind_at": 0.0,
+    "host_connected": False,
+    "lun_backed": False,
+    "check_at": 0.0,
+    "kernel_events": 0,
+    "last_kernel_event": 0.0,
+    "kmsg_available": False,
+}
+_UNSET = object()
+
+
+def _usb_guard_status():
+    """给 /api/storage/status 用的快照; 不暴露内部锁对象。"""
+    with USB_GUARD_LOCK:
+        out = dict(USB_GUARD)
+    now = time.time()
+    for k in ("last_ok", "last_event", "last_recovery", "last_attempt",
+              "last_replug", "last_kind_at", "check_at", "last_kernel_event"):
+        v = float(out.get(k) or 0)
+        out[k + "_age"] = int(max(0, now - v)) if v else -1
+    return out
+
+
+def _usb_guard_set(state=None, reason=None, error=_UNSET, action=_UNSET):
+    with USB_GUARD_LOCK:
+        changed = False
+        if state is not None and USB_GUARD["state"] != state:
+            USB_GUARD["state"] = state
+            changed = True
+        if reason is not None and USB_GUARD["reason"] != reason:
+            USB_GUARD["reason"] = reason
+            changed = True
+        if error is not _UNSET and USB_GUARD["last_error"] != error:
+            USB_GUARD["last_error"] = error
+            changed = True
+        if action is not _UNSET and USB_GUARD["last_action"] != action:
+            USB_GUARD["last_action"] = action
+            changed = True
+        if changed:
+            USB_GUARD["last_event"] = time.time()
+
+
+def _usb_guard_log(msg):
+    line = "[%s] usb-guard: %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
+    try:
+        print(line)
+    except Exception:
+        pass
+    try:
+        log_dir = os.environ.get("TSF_LOG_DIR") or os.environ.get("TSF_DIR") or "/opt/tesla-sentry"
+        with open(os.path.join(log_dir, "tesla-gadget.log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+_USB_KMSG_LOCK = threading.Lock()
+_USB_KMSG = {"fd": None, "broken": False, "reset_times": [], "disconnect_times": []}
+
+
+def _usb_guard_kmsg_read():
+    """从 /dev/kmsg 读新增内核记录，识别 dwc3 的 device reset / disconnect。
+    第一次打开会先清空开机以来的旧记录，避免刚启动就误触发。"""
+    with _USB_KMSG_LOCK:
+        if _USB_KMSG["broken"]:
+            return []
+        first = _USB_KMSG["fd"] is None
+        fd = _USB_KMSG["fd"]
+        if fd is None:
+            try:
+                fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
+                _USB_KMSG["fd"] = fd
+            except OSError as ex:
+                _USB_KMSG["broken"] = True
+                _usb_guard_log("kmsg unavailable: %s" % ex)
+                return []
+        events = []
+        count = 0
+        limit = 20000 if first else 200
+        while count < limit:
+            try:
+                data = os.read(fd, 4096)
+            except BlockingIOError:
+                break
+            except OSError as ex:
+                if ex.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    break
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                _USB_KMSG["fd"] = None
+                _USB_KMSG["broken"] = True
+                _usb_guard_log("kmsg read failed: %s" % ex)
+                break
+            if not data:
+                break
+            count += 1
+            if first:
+                continue          # 旧日志只排空，不当作本次事件
+            text = data.decode("utf-8", "ignore")
+            if "dwc3" not in text:
+                continue
+            if "device disconnect" in text:
+                events.append("disconnect")
+            elif "device reset" in text:
+                events.append("reset")
+        if first:
+            with USB_GUARD_LOCK:
+                USB_GUARD["kmsg_available"] = not _USB_KMSG["broken"]
+            _usb_guard_log("kmsg ready; usb reset watchdog active")
+        return events
+
+
+def _usb_guard_kmsg_poll(now):
+    """返回 (最近窗口 reset 次数, disconnect 次数)。"""
+    events = _usb_guard_kmsg_read()
+    if not events:
+        return 0, 0
+    with USB_GUARD_LOCK:
+        last_replug = float(USB_GUARD["last_replug"] or 0)
+        # 自己逻辑重插产生的 reset 不重复触发
+        if last_replug and (now - last_replug) < 5.0:
+            return 0, 0
+        reset_times = _USB_KMSG["reset_times"]
+        disconnect_times = _USB_KMSG["disconnect_times"]
+        for ev in events:
+            USB_GUARD["kernel_events"] = int(USB_GUARD["kernel_events"] or 0) + 1
+            USB_GUARD["last_kernel_event"] = now
+            if ev == "disconnect":
+                disconnect_times.append(now)
+            else:
+                reset_times.append(now)
+        reset_times[:] = [t for t in reset_times if now - t <= USB_GUARD_RESET_WINDOW]
+        disconnect_times[:] = [t for t in disconnect_times if now - t <= USB_GUARD_RESET_WINDOW]
+        return len(reset_times), len(disconnect_times)
+
+
+def _usb_guard_kmsg_clear():
+    with USB_GUARD_LOCK:
+        _USB_KMSG["reset_times"][:] = []
+        _USB_KMSG["disconnect_times"][:] = []
+
+
+def _usb_guard_observe(otg, now):
+    with USB_GUARD_LOCK:
+        old_kind = USB_GUARD["otg_kind"]
+        if old_kind != otg["kind"]:
+            USB_GUARD["last_kind_at"] = now
+        USB_GUARD["otg_kind"] = otg["kind"]
+        USB_GUARD["host_connected"] = bool(otg["connected"])
+        USB_GUARD["lun_backed"] = bool(otg["lun_backed"])
+        USB_GUARD["check_at"] = now
+        return old_kind, float(USB_GUARD["last_kind_at"] or now)
+
+
+def _usb_guard_hot_export():
+    """只换 mass_storage 介质，不动 UDC；这是现有 usb-selfheal / tesla-gadget.sh on 的热路径。"""
+    lun = _gadget_lun()
+    path = lun.get("path") or ""
+    if not path:
+        return False, "找不到 mass_storage LUN"
+    if not os.path.isfile(IMG):
+        return False, "虚拟U盘镜像不存在"
+    try:
+        cur = lun.get("file") or ""
+        if cur and cur != IMG:
+            try:
+                with open(os.path.join(os.path.dirname(path), "forced_eject"), "w") as f:
+                    f.write("1")
+            except OSError:
+                pass
+        with open(path, "w") as f:
+            f.write(IMG)
+    except OSError as ex:
+        return False, "写 LUN 失败: %s" % ex
+    time.sleep(0.35)
+    now = _gadget_lun()
+    return (True, "热写回 LUN") if now.get("backed") else (False, "LUN 写入后仍为空")
+
+
+def _usb_guard_media_cycle():
+    """只把 mass_storage 介质弹出再插回，不动 UDC/NCM/ACM。
+    用于“UDC 还 configured，但车机侧已经看不到盘”的异常。"""
+    lun = _gadget_lun()
+    path = lun.get("path") or ""
+    if not path or not os.path.isfile(IMG):
+        return False, "没有可用的 mass_storage LUN"
+    try:
+        with open(path, "w") as f:
+            f.write("\n")              # configfs: 空介质 = 主机看到 U 盘拔出
+        time.sleep(0.35)
+        with open(path, "w") as f:
+            f.write(IMG)               # 再插回同一镜像
+    except OSError as ex:
+        return False, "介质弹出/插回失败: %s" % ex
+    time.sleep(0.55)
+    return (True, "LUN 介质弹出/插回") if _gadget_lun().get("backed") else (False, "LUN 插回后为空")
+
+
+def _usb_guard_replug():
+    """UDC 逻辑重插: 只在车机刚断开的瞬间用；不删 mass_storage 功能。"""
+    if not _gadget_rebind(False):
+        return False, "UDC 解绑失败"
+    time.sleep(0.35)
+    if not _gadget_rebind(True):
+        return False, "UDC 重绑失败"
+    with USB_GUARD_LOCK:
+        USB_GUARD["last_replug"] = time.time()
+    time.sleep(0.7)
+    return True, "UDC 逻辑重插完成"
+
+
+def _usb_guard_full_on():
+    helper = os.path.join(os.environ.get("TSF_DIR") or "/opt/tesla-sentry", "tesla-gadget.sh")
+    if not os.path.isfile(helper):
+        return False, "找不到 tesla-gadget.sh"
+    try:
+        r = subprocess.run([helper, "on"], capture_output=True, text=True, timeout=20)
+        detail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
+        return (r.returncode == 0), (detail[-1][-180:] if detail else "无输出")
+    except (OSError, subprocess.TimeoutExpired) as ex:
+        return False, "gadget 恢复失败: %s" % ex
+
+
+def _usb_guard_can_attempt(now):
+    with USB_GUARD_LOCK:
+        attempts = int(USB_GUARD["attempts"] or 0)
+        last = float(USB_GUARD["last_attempt"] or 0)
+    if last <= 0:
+        return True
+    gap = 2.0 if attempts <= 0 else min(30.0, 2.0 * (attempts + 1))
+    return (now - last) >= gap
+
+
+def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_full=True):
+    now = time.time()
+    if not _usb_guard_can_attempt(now):
+        return
+    # 和网页「连接」、归档、同步共用同一把进程内锁；拿不到就整轮让路。
+    if not usb_lock.acquire(blocking=False):
+        _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
+        return
+    got_flock = False
+    try:
+        if usb_attached or os.path.ismount(MNT):
+            _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
+            return
+        got_flock = _acquire_usb_flock()
+        if not got_flock:
+            _usb_guard_set("paused", "归档/同步占用U盘，自愈狗稍后再试")
+            return
+        with USB_GUARD_LOCK:
+            USB_GUARD["last_attempt"] = now
+            USB_GUARD["attempts"] = int(USB_GUARD["attempts"] or 0) + 1
+        _usb_guard_set("recovering", reason)
+        _usb_guard_log("start: %s (otg=%s)" % (reason, otg.get("kind", "")))
+        ok = True
+        detail = ""
+        lun = _gadget_lun()
+        need_hot = (not lun.get("backed")) or (lun.get("file") and lun.get("file") != IMG)
+        if need_hot:
+            ok, detail = _usb_guard_hot_export()
+            if not ok:
+                _usb_guard_log("hot export failed: %s" % detail)
+        else:
+            detail = "LUN 已挂载"
+        if want_media:
+            mok, mdetail = _usb_guard_media_cycle()
+            ok = bool(ok and mok)
+            detail = (detail + "; " if detail else "") + mdetail
+        if want_replug:
+            rok, rdetail = _usb_guard_replug()
+            ok = bool(ok and rok)
+            detail = (detail + "; " if detail else "") + rdetail
+        if (not ok) and allow_full:
+            fok, fdetail = _usb_guard_full_on()
+            ok = bool(ok or fok)
+            detail = (detail + "; " if detail else "") + ("full-on ok" if fok else ("full-on: " + fdetail))
+        time.sleep(0.8)
+        after = _otg_info()
+        if after["kind"] == "ready":
+            with USB_GUARD_LOCK:
+                USB_GUARD["recoveries"] = int(USB_GUARD["recoveries"] or 0) + 1
+                USB_GUARD["last_recovery"] = time.time()
+                USB_GUARD["last_ok"] = time.time()
+                USB_GUARD["attempts"] = 0
+            _usb_guard_set("recovered", "自愈狗已恢复车机U盘", error="", action=detail)
+            _usb_guard_log("recovered: %s" % detail)
+        elif after["connected"]:
+            _usb_guard_set("fault", "恢复后车机仍异常", error=detail or "OTG 仍 connected",
+                           action=detail)
+            _usb_guard_log("failed: connected but kind=%s (%s)" % (after["kind"], detail))
+        elif after["lun_backed"]:
+            with USB_GUARD_LOCK:
+                USB_GUARD["recoveries"] = int(USB_GUARD["recoveries"] or 0) + 1
+                USB_GUARD["last_recovery"] = time.time()
+                USB_GUARD["attempts"] = 0
+            _usb_guard_set("waiting", "U盘已挂回，等待车机连接", error="", action=detail)
+            _usb_guard_log("armed: %s (等待车机)" % detail)
+        else:
+            _usb_guard_set("fault", "LUN 仍为空", error=detail or "LUN empty", action=detail)
+            _usb_guard_log("failed: LUN still empty (%s)" % detail)
+    except Exception as ex:
+        _usb_guard_set("fault", "自愈狗异常", error=str(ex))
+        _usb_guard_log("exception: %s" % ex)
+    finally:
+        if got_flock:
+            _release_usb_flock()
+        usb_lock.release()
+
+
+def _usb_guard_tick():
+    if not USB_GUARD_ENABLED:
+        _usb_guard_set("disabled", "TSF_USB_GUARD=0")
+        return
+    if usb_attached or os.path.ismount(MNT):
+        _usb_guard_kmsg_read()          # 网页管理期间只排空内核事件，不触发
+        _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
+        return
+    if not storage_ready():
+        _usb_guard_kmsg_read()
+        _usb_guard_set("waiting", "外接存储未挂载")
+        return
+    otg = _otg_info()
+    now = time.time()
+    old_kind, kind_at = _usb_guard_observe(otg, now)
+    if otg["kind"] == "ready" and (not otg["lun_file"] or otg["lun_file"] == IMG):
+        resets, disconnects = _usb_guard_kmsg_poll(now)
+        with USB_GUARD_LOCK:
+            last_ok = float(USB_GUARD["last_ok"] or 0)
+        stable = bool(last_ok and (now - last_ok) >= 3.0)
+        if stable and (disconnects >= 1 or resets >= 2):
+            # 车机正在正常写盘时不动；等写入空窗，避免和车机抢磁盘。
+            if not (car_writing() and not sentry_writing_only()):
+                _usb_guard_kmsg_clear()
+                _usb_guard_recover("检测到车机USB复位/断开，介质重插",
+                                   otg, want_media=True, allow_full=False)
+                return
+        with USB_GUARD_LOCK:
+            state = "recovered" if (USB_GUARD["last_recovery"] and
+                                   now - float(USB_GUARD["last_recovery"]) < 60.0) else "ok"
+            USB_GUARD["last_ok"] = now
+            USB_GUARD["attempts"] = 0
+            old_state = USB_GUARD["state"]
+        if old_state != state:
+            _usb_guard_set(state, "自愈狗待命", error="")
+        return
+    # LUN 为空或被指向了别的镜像：车机已经看不到正确盘，优先热写回，不碰 UDC。
+    if (not otg["lun_backed"]) or (otg["lun_file"] and otg["lun_file"] != IMG):
+        replug = bool(otg["kind"] == "off" and old_kind == "ready" and
+                      (now - kind_at) <= 10.0)
+        _usb_guard_recover("车机把U盘弹出" if otg["connected"] else "LUN 未挂载",
+                           otg, want_replug=replug)
+        return
+    if otg["kind"] == "off":
+        # 从 ready 掉到 off 才做一次逻辑重插；车机熄火/拔线后不反复折腾。
+        if car_writing() and not sentry_writing_only():
+            _usb_guard_set("paused", "车机写入中，自愈狗等待空窗")
+            return
+        with USB_GUARD_LOCK:
+            last_replug = float(USB_GUARD["last_replug"] or 0)
+        if old_kind == "ready" and (now - kind_at) <= 10.0 and \
+                (now - last_replug) >= USB_GUARD_REBIND_GAP:
+            _usb_guard_recover("车机USB刚断开，逻辑重插", otg, want_replug=True)
+        else:
+            _usb_guard_set("waiting", "等待车机连接")
+        return
+    if otg["kind"] == "none":
+        if old_kind in ("ready", "off", "ejected"):
+            _usb_guard_recover("USB控制器消失", otg, want_replug=False, allow_full=True)
+        else:
+            _usb_guard_set("fault", "无 OTG 控制器", error="no UDC")
+        return
+    _usb_guard_set("waiting", "等待车机连接")
+
+
+def usb_guard_loop():
+    """常驻自愈狗。异常断开时 1s 内进入恢复；正常连接时只读 sysfs，不做任何写操作。"""
+    _usb_guard_log("watchdog started (interval=%.1fs)" % USB_GUARD_INTERVAL)
+    while True:
+        try:
+            _usb_guard_tick()
+        except Exception as ex:
+            _usb_guard_set("fault", "自愈狗异常", error=str(ex))
+            _usb_guard_log("tick exception: %s" % ex)
+        time.sleep(USB_GUARD_INTERVAL)
+
+
 def storage_status():
     otg = _otg_info()
     img_configured = False
@@ -11358,6 +11832,7 @@ def storage_status():
             "otg_kind": ("manage" if usb_attached else otg["kind"]),
             "lun_backed": otg["lun_backed"], "lun_name": otg["lun_name"],
             "host_connected": otg["connected"], "attached": usb_attached,
+            "guard": _usb_guard_status(),
             "img": IMG, "img_size": img_size, "img_used": img_used,
             "img_configured": img_configured,
             "gadget_serial": gadget_serial, "volume_serial": volume_serial,
@@ -19618,6 +20093,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(storage_init_progress())
         elif path == "/api/storage/status":
             self._json(storage_status())
+        elif path == "/api/usb/guard":
+            otg = _otg_info()
+            self._json({"ok": True, "attached": bool(usb_attached),
+                        "otg_kind": ("manage" if usb_attached else otg["kind"]),
+                        "host_connected": otg["connected"],
+                        "lun_backed": otg["lun_backed"],
+                        "guard": _usb_guard_status()})
         elif path == "/api/usb/browse":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             fp = usb_real(q.get("dir", [""])[0])
@@ -21009,6 +21491,7 @@ if __name__ == "__main__":
     threading.Thread(target=lib_cleaner_loop, daemon=True).start()   # 作品库按保留天数定时清理
     threading.Thread(target=playback_sweep_loop, daemon=True).start()
     threading.Thread(target=drive_watch_loop, daemon=True).start()   # 行车锁看门狗
+    threading.Thread(target=usb_guard_loop, daemon=True).start()    # USB 自愈狗: 异常断开立即重挂
     threading.Thread(target=trans_priority_loop, daemon=True).start()  # 归档期间挂起转码
     threading.Thread(target=hw_warm_loop, daemon=True).start()        # 硬解探测后台跑, 不堵接口
     threading.Thread(target=stats_warm_once, daemon=True).start()     # 归档页统计预热
