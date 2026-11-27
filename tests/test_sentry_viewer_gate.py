@@ -275,3 +275,18 @@ class SentryThumbPolicyTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("已推送", msg)
         self.assertIs(frame.call_args.kwargs.get("force"), True)
+
+    def test_sentry_never_transcodes_video(self):
+        conf = {"enabled": True, "mode": "dm", "app_id": "cli_test", "app_secret": "secret",
+                "receive_id": "ou_test", "receive_id_type": "open_id",
+                "media": "video", "vdur": 30, "quality": "480p"}
+        with patch.object(viewer, "notify_conf", return_value=conf), \
+             patch.object(viewer, "_trigger_frame", return_value=("/tmp/x.jpg", {})), \
+             patch.object(viewer, "_feishu_upload", return_value="img_key"), \
+             patch.object(viewer, "_feishu_send_dm", return_value=True), \
+             patch.object(viewer, "_feishu_card", return_value={}), \
+             patch.object(viewer, "_make_push_video") as video:
+            ok, msg = viewer.notify_push("SentryClips", "2026-11-27_12-00-00")
+        self.assertTrue(ok)
+        self.assertFalse(video.called)
+        self.assertNotIn("秒视频", msg)
