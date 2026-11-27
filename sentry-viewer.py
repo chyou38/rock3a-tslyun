@@ -13541,7 +13541,8 @@ def car_active_for_usb():
 
 
 def car_active_for_background():
-    """车机近 CAR_ACTIVE_SEC 有写入 -> True。行车/停车哨兵录制期间禁止后台缩略图和预缓冲。
+    """车机近 CAR_ACTIVE_SEC 有写入 -> True。行车/停车哨兵录制期间禁止非哨兵后台缩略图、
+    预缓冲和视频转码; 哨兵缩略图由 thumb_file(force=True) 单独放行。
     该门禁不受行车锁开关影响: 行车锁只控制虚拟U盘读取, 后台任务必须始终让路。
     OTG 主机断开时立即返回 False, 让归档/预缓冲/视频转码马上恢复; 不断开则用 3 分钟窗口。"""
     if not car_host_connected():
