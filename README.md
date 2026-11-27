@@ -232,7 +232,7 @@ OTA、飞书推送、认证的参数**不写入这个 conf**，走环境变量�
 
 网页 **⚙ 个性化** 包含网络设置、文件、车机U盘、锁车语音、涂装、推送、账号、语言、网页背景、风扇、品牌、系统体检、更新等页面。存储盘选择和虚拟U盘创建在 **「个性化 → 车机U盘」** 里，不在首页。
 
-- **系统体检**：个性化 → 系统体检，调用独立 Go 只读工具 `tsf-doctor`，检查服务、内存/负载/磁盘、进程 RSS、health.log、归档 `.part/.pruned`、关键 API、媒体 HEAD/Range 与缩略图；不写业务文件、不重启服务、不改配置。手动刷新接口为 `/api/doctor?refresh=1`。每次真实体检写一条内部 JSONL 日志到 `/opt/tesla-sentry/doctor-history.jsonl`；页面可展开全部检查项、每条记录下方单独下载 **TXT 可读日志**或清空。单条 TXT 同时包含该次接口/检查问题、OTG/USB 连接/断开与 LUN、USB reset 次数、gadget/同步/健康日志、内核 dwc3 USB 事件，以及 MPP 视频解码 NULL、等待中断次数与原因（页面摘要取 journal 最近 8000 行；单条下载会追加本次开机至今的 watch/health/gadget/sync、服务 journal 全量与 dmesg，压缩缓存在 `/opt/tesla-sentry/doctor-history-logs/`）。 另可选装常驻 Go 缓存服务 `tsf-sysd`（`tools/tsf-sysd/README.md`），体检优先读它的内存快照；服务未起/未 ready/数据过期超过 60 秒时自动回退 Python 采集。
+- **系统体检**：个性化 → 系统体检，调用独立 Go 只读工具 `tsf-doctor`，检查服务、内存/负载/磁盘、进程 RSS、health.log、归档 `.part/.pruned`、关键 API、媒体 HEAD/Range 与缩略图；不写业务文件、不重启服务、不改配置。进入页面只加载已有记录，不会自动检查或拉日志；只有点「立即检查」才执行 `/api/doctor?refresh=1`、写一条内部 JSONL 记录并生成本次开机全量日志。记录在 `/opt/tesla-sentry/doctor-history.jsonl`（保留最近 120 条）；页面可展开全部检查项、每条记录下方单独下载 **TXT 可读日志**或清空。每条记录的日志在生成时落独立快照（硬链接共享压缩缓存，后续重建不会串记录），下载从快照流式解压，不整段读入内存。单条 TXT 包含该次接口/检查问题、OTG/USB 连接/断开与 LUN、USB reset 次数、gadget/同步/健康日志、内核 dwc3 USB 事件、MPP 视频解码 NULL/等待中断，以及本次开机至今的 watch/health/gadget/sync、**全部 systemd 服务 journal** 与 dmesg（缓存在 `/opt/tesla-sentry/doctor-history-logs/`）。页面 MPP 摘要取 journal 最近 8000 行，下载为本次开机全量口径。另可选装常驻 Go 缓存服务 `tsf-sysd`（`tools/tsf-sysd/README.md`），体检优先读它的内存快照；服务未起/未 ready/数据过期超过 60 秒时自动回退 Python 采集。
 
 - **品牌**：设置 → 品牌，标题栏左侧的图标（png/jpg/webp，≤3MB）与名称（≤24 字）都能换成自己的，改完立即生效、登录页同步；默认是内置的「TSL哨兵云盘」图标与名称，一键可恢复。
 - **在线升级**：设置 → 更新，自动比对仓库 `version.json`，一键升级 / 回滚；配置与录像归档不在升级范围内。
