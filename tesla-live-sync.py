@@ -63,6 +63,7 @@ SENTRY_IDLE_MIN = float(os.environ.get("TSF_SENTRY_IDLE_MIN", "3"))
 SEI_PROBE_SEC = float(os.environ.get("TSF_SEI_PROBE_SEC", "60"))       # 车机写入期间极小 SEI 探针间隔
 SEI_PROBE_BYTES = int(os.environ.get("TSF_SEI_PROBE_BYTES", str(512 * 1024)))  # 只读最新前视片段头部 512KB
 SEI_MIN_BYTES = int(os.environ.get("TSF_SEI_MIN_BYTES", str(512 * 1024)))      # 不足这个大小先不判定, 保护优先
+SENTRY_AUTO_SEC = float(os.environ.get("TSF_SENTRY_AUTO_SEC", "60"))       # 停车哨兵写入期间, 自动归档最新哨兵事件的检查间隔
 # 归档调度 (2026-11-26): 不再实时搬运, 默认每 10 分钟归档一次, 间隔在网页
 # 「个性化 → 虚拟硬盘 → 归档区」自定义; 「立即归档」写触发文件, 车机空闲后马上执行。
 TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
@@ -408,11 +409,15 @@ def touch_write_cat():
         pass
 
 
-def copy_entry(exfat, entry, dest_path, hold=True):
+def copy_entry(exfat, entry, dest_path, hold=True, allow_active=False):
     """把镜像里的文件写到归档区, 返回写入字节数。
     hold=True: 车机写入期间暂停搬运(车机第一优先), 车机空闲再续。
-    hold=False: 哨兵/手动保存走优先通道, 车机在写也只做小让步, 不整段停。"""
-    if not sync_allowed():
+    hold=False: 哨兵/手动保存走优先通道, 车机在写也只做小让步, 不整段停。
+    allow_active=True: 仅给已确认停车哨兵的最新事件用, 不适用于 RecentClips/行车。"""
+    if allow_active:
+        if not sentry_sync_allowed():
+            raise RuntimeError("停车哨兵状态未确认, 暂停搬运")
+    elif not sync_allowed():
         raise RuntimeError("车机活动/未静止, 暂停搬运")
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
@@ -424,7 +429,10 @@ def copy_entry(exfat, entry, dest_path, hold=True):
             written += len(chunk)
             pace_bytes += len(chunk)
             if pace_bytes >= 1048576:
-                if not sync_allowed():
+                if allow_active:
+                    if not sentry_sync_allowed():
+                        raise RuntimeError("停车哨兵状态未确认, 暂停搬运")
+                elif not sync_allowed():
                     raise RuntimeError("车机活动/未静止, 暂停搬运")
                 if hold:
                     # 车机正在写盘 -> 暂停搬运直到车机空闲 (车机写入第一优先)
@@ -622,10 +630,12 @@ def roll_min():
     return max(60, min(v, 10080))
 
 
-def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None, progress=None):
+def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None, progress=None, allow_active=False):
     """跑一轮; 返回 (新增文件数, 字节数)
     progress(done, total, done_bytes, total_bytes, force) 用于网页展示「已归档百分比」:
     total 是本轮扫描到的有效片段, done 是其中已在归档区(或刚搬完)的片段。"""
+    if allow_active and (not cats or "RecentClips" in cats):
+        raise ValueError("allow_active 只允许哨兵/手动保存类别")
     cur = scan(exfat, cats, newest_events)
     pruned = load_pruned()
     # 只收滚动窗口内的 RecentClips: 以车机 U 盘上最新的片段为锚点
@@ -712,7 +722,7 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
         progress(done, total, done_bytes, total_bytes, True)
     for (key, e, dest, sig) in ready:
         try:
-            n = copy_entry(exfat, e, dest, hold=hold)
+            n = copy_entry(exfat, e, dest, hold=hold, allow_active=allow_active)
             copied += 1
             bytes_ += n
             done += 1
@@ -926,7 +936,10 @@ def probe_loop():
                         pass
                     x = None
                 last_sig = None
-                PROBE_URGENT.clear()   # 行车中不存在哨兵优先同步, 连排队都不留
+                if sei_drv is not False:
+                    # 真行车/未判定时不留哨兵优先排队; 明确停车哨兵时保留自动归档触发,
+                    # 否则 probe_loop 每秒清一次, 归档循环永远抢不到这个事件。
+                    PROBE_URGENT.clear()
                 now = time.time()
                 if now - last_sei >= SEI_PROBE_SEC:
                     y = None
@@ -966,8 +979,8 @@ def probe_loop():
                 publish_write_cat(sig, last_sig, drv, recent)
                 if not sync_allowed():
                     PROBE_URGENT.clear()
-                elif (_cat_changed(sig, last_sig, "SentryClips")
-                        or _cat_changed(sig, last_sig, "SavedClips")):
+                elif _cat_changed(sig, last_sig, "SentryClips"):
+                    # 哨兵单独走自动优先通道; SavedClips 与 RecentClips 一起走常规归档。
                     PROBE_URGENT.set()
                 last_sig = sig
         except Exception as e:
@@ -1044,6 +1057,16 @@ def sync_allowed():
     if car_busy():
         return False
     return car_idle_seconds() >= SENTRY_IDLE_MIN * 60
+
+
+def sentry_sync_allowed():
+    """停车哨兵优先通道: 只认 SEI 探针明确判定的 driving=false。
+    只给 SentryClips 最新事件用; SavedClips/RecentClips 走常规归档。
+    状态未知/driving=true/driving=null 一律拒绝。"""
+    state = _write_cat_state()
+    if state is None:
+        return False
+    return state.get("driving") is False
 
 
 def archive_interval_min():
@@ -1127,7 +1150,7 @@ def main():
             if not sync_allowed():
                 log("单轮跳过: 车机未静止 (%s, 第一优先), 停车后再跑" % car_state_text())
                 return 0
-            n, b = do_sync(exfat, state)
+            n, b = do_sync(exfat, state, cats=("RecentClips", "SavedClips"))
             log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
             return 0
         finally:
@@ -1145,9 +1168,10 @@ def main():
     except Exception:
         last_run = 0.0
     last_car_log = 0.0
+    last_sentry_auto = 0.0
     lock_miss = 0
-    # 哨兵/手动保存优先通道: 独立线程每 1 秒轻扫一次, 不读视频内容;
-    # 一旦 SentryClips/SavedClips 出现变化就置位, 主线程立刻小步搬运。
+    # 哨兵优先通道: 独立线程每 1 秒轻扫一次; 停车哨兵每 60 秒自动检查最新
+    # SentryClips 事件。SavedClips 与 RecentClips 只走常规归档, 不混入哨兵通道。
     threading.Thread(target=probe_loop, daemon=True).start()
     write_sched(last_run, False, msg=("等待下一轮归档" if last_run else "等待首轮归档"))
     prog_mark = {"t": 0.0}
@@ -1170,12 +1194,19 @@ def main():
     while True:
         time.sleep(1)
         now = time.time()
+        # 停车哨兵写入期间: 允许自动归档最新哨兵事件。只认 SEI 探针明确判定的
+        # driving=false, 未知(driving=null)或行车一律不碰。
+        state = _write_cat_state()
+        if (state is not None and state.get("driving") is False
+                and now - last_sentry_auto >= SENTRY_AUTO_SEC):
+            PROBE_URGENT.set()
+            last_sentry_auto = now
         if PROBE_URGENT.is_set():
-            # 行车/车机未静止: 连哨兵优先同步也一律不做, 等连续静止够久再搬。
-            if not sync_allowed():
+            # 行车/车机未静止: 连哨兵优先同步也一律不做; 停车哨兵走 allow_active 小步让路。
+            if not sentry_sync_allowed():
                 now2 = time.time()
                 if now2 - last_car_log >= 60:
-                    log("车机未静止 (%s), 哨兵优先同步顺延" % car_state_text())
+                    log("哨兵优先同步顺延: 未确认停车 (%s)" % car_state_text())
                     last_car_log = now2
                 time.sleep(2)
                 continue
@@ -1191,8 +1222,8 @@ def main():
             if lk is None:
                 continue                    # U 盘正被占用, 下一轮再试
             try:
-                n, b = do_sync(exfat, state, cats=("SentryClips", "SavedClips"),
-                               hold=False, newest_events=2)
+                n, b = do_sync(exfat, state, cats=("SentryClips",),
+                               hold=False, newest_events=1, allow_active=True)
                 if n:
                     log("哨兵优先同步: %d 个片段, %.1f MB" % (n, b / 1048576))
                     write_sched(last_run, False, copied=n,
@@ -1246,7 +1277,7 @@ def main():
                 log("镜像不可读: %s" % ex)
                 continue
             write_sched(last_run, True, msg="归档中")
-            n, b = do_sync(exfat, state, progress=on_progress)
+            n, b = do_sync(exfat, state, cats=("RecentClips", "SavedClips"), progress=on_progress)
             last_run = time.time()
             if trig:
                 try:

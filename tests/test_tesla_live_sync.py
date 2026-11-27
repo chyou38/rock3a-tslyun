@@ -87,10 +87,10 @@ class DrivingGateTests(unittest.TestCase):
         ns = int(ts * 1_000_000_000)
         os.utime(self.image, ns=(ns, ns))
 
-    def set_state(self, driving=None, recent=False):
+    def set_state(self, driving=None, recent=False, sentry=False, saved=False):
         self.write_cat.write_text(__import__("json").dumps({
-            "driving": driving, "recent": recent, "sentry": False,
-            "saved": False, "ts": time.time(),
+            "driving": driving, "recent": recent, "sentry": sentry,
+            "saved": saved, "ts": time.time(),
         }))
 
     def test_recent_write_blocks_even_when_not_marked_driving(self):
@@ -114,6 +114,23 @@ class DrivingGateTests(unittest.TestCase):
         self.set_state(driving=False, recent=False)
         self.assertFalse(live_sync.sync_allowed())
 
+    def test_sentry_sync_only_when_parked_is_confirmed(self):
+        self.set_state(driving=None, recent=True)
+        self.assertFalse(live_sync.sentry_sync_allowed())
+        self.set_state(driving=True, recent=True, sentry=True)
+        self.assertFalse(live_sync.sentry_sync_allowed())
+        self.set_state(driving=False, recent=True)
+        self.assertTrue(live_sync.sentry_sync_allowed())
+        self.set_state(driving=None, recent=False, sentry=True)
+        self.assertFalse(live_sync.sentry_sync_allowed())
+
+    def test_sentry_sync_rejects_stale_state(self):
+        self.set_state(driving=False, recent=False)
+        j = __import__("json").loads(self.write_cat.read_text())
+        j["ts"] = time.time() - 60
+        self.write_cat.write_text(__import__("json").dumps(j))
+        self.assertFalse(live_sync.sentry_sync_allowed())
+
     def test_only_after_three_minutes_idle_allows(self):
         self.set_image_age(700)
         self.set_state(driving=False, recent=False)
@@ -125,6 +142,46 @@ class DrivingGateTests(unittest.TestCase):
         self.assertTrue(live_sync.sync_allowed())
         self.set_image_age(60)
         self.assertFalse(live_sync.sync_allowed())
+
+
+class ActiveSentrySyncTests(unittest.TestCase):
+    """停车哨兵自动通道只能动 SentryClips; 不能把 SavedClips/RecentClips 混进来。"""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.state_path = self.root / "state.json"
+        self.dest = self.root / "clip.mp4"
+        self.entry = _FakeEntry(b"x" * 128)
+        self.key = ("SentryClips", "2026-11-27_19-00-00", "clip.mp4")
+        self.state = {"__pending__": {"/".join(self.key):
+                                      [self.entry.size, self.entry.vdl, self.entry.mtime]}}
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def run_sync(self, cats, copy):
+        with patch.object(live_sync, "STATE", str(self.state_path)), \
+                patch.object(live_sync, "scan", return_value={self.key: self.entry}), \
+                patch.object(live_sync, "safe_dest", return_value=str(self.dest)), \
+                patch.object(live_sync, "load_pruned", return_value=set()), \
+                patch.object(live_sync, "copy_entry", side_effect=copy):
+            return live_sync.do_sync(object(), self.state, quiet=True, cats=cats,
+                                     hold=False, newest_events=1, allow_active=True)
+
+    def test_active_sentry_rejects_recentclips(self):
+        with self.assertRaises(ValueError):
+            self.run_sync(("RecentClips",), lambda *a, **kw: 0)
+
+    def test_active_sentry_uses_active_gate_only(self):
+        calls = []
+        def copy(*a, **kw):
+            calls.append(kw)
+            return self.entry.size
+        copied, _ = self.run_sync(("SentryClips",), copy)
+        self.assertEqual(copied, 1)
+        self.assertTrue(calls[0].get("allow_active"))
+        self.assertFalse(calls[0].get("hold"))
 
 
 class _FakeEntry:
