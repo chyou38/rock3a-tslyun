@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.27"
+APP_VERSION = "3.2.30"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -9507,7 +9507,7 @@ async function usbDetach() {
   document.getElementById('dir-nav').style.display = 'none';
   refreshFiles();
 }
-/* 行车锁: 车机写入(行车中)禁止读虚拟U盘镜像; 归档区不受影响 */
+/* 行车锁: 车机写入(行车中)禁止读虚拟U盘镜像; 归档/缩略图/预缓冲后台仍让路 */
 let DRIVE_LOCK_STATE = {on: true, locked: false, car_writing: false};
 async function loadDriveLock() {
   try {
@@ -13386,9 +13386,15 @@ def car_writing():
         return _CAR_WRITE["v"]
     try:
         mt = os.stat(IMG).st_mtime_ns
-        if _CAR_WRITE["mtime"] and mt != _CAR_WRITE["mtime"]:
+        if not _CAR_WRITE["mtime"]:
+            # 首次观测没有历史可对比: 用镜像自身 mtime 推断最近一次写入时间,
+            # 不能从 changed=-100 开始, 否则服务重启后头一分钟会误判车机空闲,
+            # 后台缩略图/预缓冲就会在车机正在写盘时启动。
+            _CAR_WRITE["mtime"] = mt
+            _CAR_WRITE["changed"] = mt / 1e9
+        elif mt != _CAR_WRITE["mtime"]:
             _CAR_WRITE["changed"] = now
-        _CAR_WRITE["mtime"] = mt
+            _CAR_WRITE["mtime"] = mt
     except OSError:
         pass
     v = (now - _CAR_WRITE["changed"]) < 10.0
@@ -13421,8 +13427,9 @@ def sentry_writing_only():
             return False
         if bool(j.get("sentry") or j.get("saved")):
             return True
-        # driving=False 是同步侧用 SEI 遥测判定出的"停车哨兵录像"; None 表示未判定/不确定
-        return bool(j.get("recent")) and j.get("driving") is False
+        # driving=False 是同步侧 SEI 探针判定出的"停车哨兵录像"; None 表示未判定/不确定。
+        # 特斯拉两次写入之间 recent 会短暂为 false, 不能因此把停车哨兵重新当成行车锁盘。
+        return j.get("driving") is False
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 
@@ -13434,7 +13441,7 @@ def parked_recording():
             j = json.load(f)
         if time.time() - float(j.get("ts") or 0) > 30:
             return False
-        return bool(j.get("recent")) and j.get("driving") is False and not bool(j.get("sentry") or j.get("saved"))
+        return j.get("driving") is False and not bool(j.get("sentry") or j.get("saved"))
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 

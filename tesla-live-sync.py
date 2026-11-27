@@ -60,6 +60,9 @@ STATE = os.environ.get("TSF_LIVE_STATE", "/root/.tesla-live-state.json")
 INTERVAL = int(os.environ.get("TSF_LIVE_INTERVAL", "15"))
 CAR_WRITE_HOLD = float(os.environ.get("TSF_LIVE_CAR_HOLD", "30"))
 SENTRY_IDLE_MIN = float(os.environ.get("TSF_SENTRY_IDLE_MIN", "3"))
+SEI_PROBE_SEC = float(os.environ.get("TSF_SEI_PROBE_SEC", "60"))       # 车机写入期间极小 SEI 探针间隔
+SEI_PROBE_BYTES = int(os.environ.get("TSF_SEI_PROBE_BYTES", str(512 * 1024)))  # 只读最新前视片段头部 512KB
+SEI_MIN_BYTES = int(os.environ.get("TSF_SEI_MIN_BYTES", str(512 * 1024)))      # 不足这个大小先不判定, 保护优先
 # 归档调度 (2026-11-26): 不再实时搬运, 默认每 10 分钟归档一次, 间隔在网页
 # 「个性化 → 虚拟硬盘 → 归档区」自定义; 「立即归档」写触发文件, 车机空闲后马上执行。
 TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
@@ -834,11 +837,12 @@ def _newest_recent_front(exfat, refresh=20.0):
     return _REC_CACHE["entry"]
 
 
-def probe_driving(exfat):
+def probe_driving(exfat, limit=3 * 1048576):
     """判断车机最新行车记录前视片段里有没有 SEI 遥测: 有=真在行车, 没有=停车哨兵在录像。
     Tesla 停车状态下哨兵仍在循环写 RecentClips, 但停车片段不含车辆遥测 SEI;
     只看 "RecentClips 在写" 会把停车哨兵误判成行车, 所以要再看这一位。
-    只读每类最新前视片段的头 3MB, 按文件名+大小缓存, 每分钟最多读一次。"""
+    只读最新前视片段头部 limit 字节; 车机活跃期由 probe_loop 每 60 秒只读 512KB。
+    新文件不够 SEI_MIN_BYTES 时返回 None, 不沿用上一段结论, 避免刚起步时误判成停车。"""
     global _DRIVE_HINT
     try:
         newest = _newest_recent_front(exfat)
@@ -847,18 +851,14 @@ def probe_driving(exfat):
         key = newest.name
         if _DRIVE_HINT.get("key") == key and _DRIVE_HINT.get("val") is not None:
             return _DRIVE_HINT["val"]
-        if newest.size < 1048576:
-            # 文件刚建还没写够: 同一文件沿用上轮结论, 新文件沿用上一段的结论
-            # (停车哨兵录像一分钟换一个文件, 不能在这个缝里误判成行车而锁盘)
-            prev = _DRIVE_HINT.get("val")
-            if _DRIVE_HINT.get("key") != key:
-                _DRIVE_HINT = {"key": key, "val": prev}
-            return prev
+        if newest.size < SEI_MIN_BYTES:
+            # 文件刚建还没写够: 不沿用上一段结论, 返回未知; 宁可暂时保护, 不把起步误判成停车。
+            return None
         buf = b""
         try:
             for chunk in exfat.read_file(newest):
                 buf += chunk
-                if len(buf) >= 3 * 1048576:
+                if len(buf) >= limit:
                     break
         except Exception:
             return None
@@ -888,10 +888,10 @@ def publish_write_cat(sig, old, driving=None, recent=False):
         pass
 
 
-def publish_recent_only(recent):
-    """车机活动期间只落"近期有写入", 不打开/不解析镜像; 页面与归档门禁据此等待。"""
+def publish_recent_only(recent, driving=None):
+    """车机活动期间落"近期有写入 + 极小 SEI 分类", 页面/车机U盘门禁据此区分行车与停车哨兵。"""
     flags = {"recent": bool(recent), "sentry": False, "saved": False,
-             "driving": None, "ts": time.time()}
+             "driving": driving, "ts": time.time()}
     try:
         tmp = WRITE_CAT_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -910,12 +910,14 @@ PROBE_URGENT = threading.Event()
 def probe_loop():
     x = None
     last_sig = None
+    last_sei = 0.0
+    sei_drv = None
     while True:
         try:
             st = os.stat(IMG)
             age = max(0.0, time.time() - st.st_mtime)
-            # 行车/停车哨兵只要还在写盘: 只做 stat, 绝不打开镜像、不列目录、不读 SEI。
-            # 连续静止 SENTRY_IDLE_MIN 分钟后才恢复探测; 特斯拉约 1 分钟写一次, 用 3 分钟滚动窗口。
+            # 车机写入期间: 默认只 stat; 每 60 秒只读最新 front 片段头部 512KB 的 SEI,
+            # 用来区分"真行车"和"停车哨兵", 不读整段视频、不列全目录、不生成缩略图。
             if age < SENTRY_IDLE_MIN * 60:
                 if x is not None:
                     try:
@@ -925,7 +927,26 @@ def probe_loop():
                     x = None
                 last_sig = None
                 PROBE_URGENT.clear()   # 行车中不存在哨兵优先同步, 连排队都不留
-                publish_recent_only(age < 12)
+                now = time.time()
+                if now - last_sei >= SEI_PROBE_SEC:
+                    y = None
+                    try:
+                        y = ExFat(IMG)
+                        drv = probe_driving(y, limit=SEI_PROBE_BYTES)
+                    except Exception as e:
+                        drv = None
+                        log("SEI探针失败: %s" % e)
+                    finally:
+                        if y is not None:
+                            try:
+                                y.close()
+                            except Exception:
+                                pass
+                    if drv != sei_drv:
+                        log("SEI探针: %s" % ("行车" if drv is True else ("停车哨兵" if drv is False else "未判定")))
+                    sei_drv = drv
+                    last_sei = now
+                publish_recent_only(age < 12, sei_drv)
                 time.sleep(1)
                 continue
             if x is None or st.st_ino != x.fd_ino:
@@ -980,6 +1001,18 @@ def _drive_lock_enabled():
             return bool(json.load(f).get("drive_lock", True))
     except (OSError, ValueError, TypeError):
         return True
+
+
+def car_state_text():
+    """给日志/页面用的车机状态文字; 不把停车哨兵笼统写成"行车中"。"""
+    state = _write_cat_state()
+    if state is None:
+        return "未判定"
+    if state.get("driving") is True:
+        return "行车"
+    if state.get("driving") is False:
+        return "停车哨兵"
+    return "未判定"
 
 
 def _write_cat_state():
@@ -1092,7 +1125,7 @@ def main():
             return 0
         try:
             if not sync_allowed():
-                log("单轮跳过: 行车中/车机未静止 (车机第一优先), 停车后再跑")
+                log("单轮跳过: 车机未静止 (%s, 第一优先), 停车后再跑" % car_state_text())
                 return 0
             n, b = do_sync(exfat, state)
             log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
@@ -1142,7 +1175,7 @@ def main():
             if not sync_allowed():
                 now2 = time.time()
                 if now2 - last_car_log >= 60:
-                    log("行车中/车机未静止, 哨兵优先同步顺延")
+                    log("车机未静止 (%s), 哨兵优先同步顺延" % car_state_text())
                     last_car_log = now2
                 time.sleep(2)
                 continue
@@ -1183,9 +1216,9 @@ def main():
         if not sync_allowed():
             now = time.time()
             if now - last_car_log >= 60:
-                log("行车中/车机未静止, 归档顺延 (给 OTG 让路)")
+                log("车机未静止 (%s), 归档顺延 (给 OTG 让路)" % car_state_text())
                 last_car_log = now
-            write_sched(last_run, False, msg="行车中/车机未静止, 归档暂停")
+            write_sched(last_run, False, msg="车机未静止 (%s), 归档暂停" % car_state_text())
             continue
         if os.path.ismount(MNT):
             continue
