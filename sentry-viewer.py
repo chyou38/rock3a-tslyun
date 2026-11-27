@@ -71,6 +71,7 @@ DOCTOR_WATCH_LOG = os.path.join(DOCTOR_LOG_DIR, "watch.log")
 DOCTOR_GADGET_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-gadget.log")
 DOCTOR_SYNC_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-sync.log")
 DOCTOR_HEALTH_LOG = os.path.join(DOCTOR_LOG_DIR, "health.log")
+TSF_SYSD_URL = os.environ.get("TSF_SYSD_URL", "http://127.0.0.1:8099/status")
 _DOCTOR_CACHE = {"at": 0.0, "data": None}
 _DOCTOR_LOCK = threading.Lock()
 CATS = ["SentryClips", "SavedClips", "RecentClips"]
@@ -196,7 +197,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.7"
+APP_VERSION = "3.2.8"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -13601,7 +13602,7 @@ def _doctor_pick(lines, pattern, limit=8):
 
 def _doctor_last_hb(lines):
     for line in reversed(lines):
-        m = re.search(r"hb mem=(\d+)M cma=(\d+)M load=([^ ]+) temp=(\d+)C usb=([^ ]+) lun=([^ ]+) reset=(\d+) null=(\d+)", line)
+        m = re.search(r"hb mem=(\d+)M cma=(\d+)M load=([^ ]+) temp=(\d+)C usb=(.*?) lun=([^ ]+) reset=(\d+) null=(\d+)", line)
         if m:
             return {"mem_mb": int(m.group(1)), "cma_mb": int(m.group(2)),
                     "load": m.group(3), "temp_c": int(m.group(4)),
@@ -13610,9 +13611,36 @@ def _doctor_last_hb(lines):
     return {}
 
 
+def _doctor_sysd():
+    """常驻 Go 系统服务缓存; 服务未起/未 ready/数据过期时返回 None, 调用方走原采集。"""
+    try:
+        req = urllib.request.Request(TSF_SYSD_URL, headers={"User-Agent": "tsf-doctor/" + APP_VERSION})
+        with urllib.request.urlopen(req, timeout=1.0) as r:
+            raw = r.read(1024 * 1024)
+        j = json.loads(raw.decode("utf-8", "replace"))
+        if not isinstance(j, dict) or not j.get("ready"):
+            return None
+        if not isinstance(j.get("otg"), dict) or not isinstance(j.get("decode"), dict):
+            return None
+        at = j.get("collected_at") or ""
+        try:
+            age = time.time() - time.mktime(time.strptime(at, "%Y-%m-%d %H:%M:%S"))
+            if age > 60:
+                return None
+        except Exception:
+            pass
+        j["source"] = "tsf-sysd"
+        return j
+    except Exception:
+        return None
+
+
 def _doctor_system_logs():
     """收集 OTG/USB 状态变化、gadget/sync/health 日志、内核 USB 与 MPP 解码错误。"""
-    watch = _doctor_tail(DOCTOR_WATCH_LOG, 4000, 256 * 1024)
+    cached = _doctor_sysd()
+    if cached:
+        return cached
+    watch = _doctor_tail(DOCTOR_WATCH_LOG, 14000, 1536 * 1024)
     gadget = _doctor_tail(DOCTOR_GADGET_LOG, 20, 64 * 1024)
     sync = _doctor_tail(DOCTOR_SYNC_LOG, 20, 64 * 1024)
     health = _doctor_tail(DOCTOR_HEALTH_LOG, 8, 64 * 1024)
@@ -13772,8 +13800,9 @@ def _doctor_history_text():
         out.append("[%d] %s | %s | %d通过 %d注意 %d故障 | %s | %s" % (
             i, e.get("at", ""), status_cn.get(e.get("status"), e.get("status") or "?"),
             ok, wn, fl, ("%dms" % int(e.get("ms") or 0)), trigger_cn.get(e.get("trigger"), "自动")))
-        out.append("    host=%s app=%s tool=%s" % (
-            e.get("host") or "?", e.get("app_version") or "?", e.get("tool_version") or "?"))
+        src = ((e.get("system_logs") or {}).get("source") or "python") if isinstance(e.get("system_logs"), dict) else "python"
+        out.append("    host=%s app=%s tool=%s syslog_src=%s" % (
+            e.get("host") or "?", e.get("app_version") or "?", e.get("tool_version") or "?", src))
         issues = e.get("issues") or []
         if issues:
             out.append("    问题项:")

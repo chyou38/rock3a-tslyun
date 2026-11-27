@@ -1,0 +1,20 @@
+[Unit]
+Description=TeslaBox system status cache (Go)
+After=network.target systemd-journald.service
+Documentation=https://github.com/chyou38/rock3a-tslyun
+
+[Service]
+Type=simple
+ExecStart=/opt/tesla-sentry/bin/tsf-sysd -log-dir /opt/tesla-sentry -interval 5s
+Restart=always
+RestartSec=2
+Nice=5
+CPUAffinity=0-2
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=64M
+CPUQuota=20%
+WorkingDirectory=/opt/tesla-sentry
+
+[Install]
+WantedBy=multi-user.target
