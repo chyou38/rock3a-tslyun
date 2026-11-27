@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.25"
+APP_VERSION = "3.2.26"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -10199,6 +10199,19 @@ def usb_detach_safe():
         print("auto detach error:", e)
 
 
+def usb_touch():
+    """用户每次访问车机U盘路径时续期 3 分钟自动恢复计时。
+    这样「无操作」才是真的无操作, 不会在浏览文件时被自动断开。"""
+    global usb_timer
+    if not usb_attached:
+        return
+    if usb_timer:
+        usb_timer.cancel()
+    usb_timer = threading.Timer(USB_AUTO_DETACH, usb_detach_safe)
+    usb_timer.daemon = True
+    usb_timer.start()
+
+
 def usb_manual_begin():
     """用户点「连接」时先抢占自愈狗，再动 UDC。
     这样即使自愈狗已经在恢复，也会在拿锁后看到手动标记而放弃；
@@ -12546,6 +12559,7 @@ def live_latest():
 
 def usb_real(p):
     """校验镜像内相对路径, 返回挂载点下真实绝对路径或 None"""
+    usb_touch()
     p = (p or "").strip().strip("/")
     if not p:
         return MNT
