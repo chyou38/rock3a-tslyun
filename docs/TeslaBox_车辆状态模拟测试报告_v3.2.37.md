@@ -1,23 +1,24 @@
 # TeslaBox 车辆状态模拟测试报告
 
-版本：v3.2.36 beta  
+版本：v3.2.37 beta  
 日期：2026-11-27  
 设备：Radxa ROCK3 Model A（RK3568，Debian 12，盒子 `tsl-sentry`）  
 测试方式：临时镜像 + 临时 `write-cat.json` + 模拟状态；不挂载真实车机 U 盘、不改真实归档区。
 
 ## 结论
 
-- 32 个自动化测试全部通过：`Ran 32 tests ... OK`。
+- 33 个自动化测试全部通过：`Ran 33 tests ... OK`。
 - 8 个车辆状态场景矩阵全部符合预期。
 - 即时 SEI 复检在真实盒子上完成：请求文件写入后，同步服务下一轮回写新的 `sei_ts` 和 `driving`。
-- v3.2.36 已部署，`/api/ver` 返回 `3.2.36`；`tesla-live`、`sentry-viewer` 均 active。
+- v3.2.37 已部署，`/api/ver` 返回 `3.2.37`；`tesla-live`、`sentry-viewer` 均 active。
+- 实时日志发现并修复主循环 `state` 被 `write-cat` 覆盖的严重 bug：哨兵事件 pending 被反复清空、一直“待确认”；修复后同一 67 个片段、1.8GB 在 3 轮内完成自动归档。
 - 实时日志窗口内没有新的 `dwc3 ... device reset`；已有 USB reset 记录仍为 17:38–17:47 的历史故障。
 
 ## 一、自动化测试
 
 ```text
 python3 -m unittest -q tests.test_tesla_live_sync tests.test_sentry_viewer_gate
-Ran 32 tests in 6.139s
+Ran 33 tests in 6.149s
 OK
 ```
 
@@ -58,7 +59,7 @@ python3 tests/vehicle_state_matrix.py
 
 ## 三、真实盒子即时复检验证
 
-部署 v3.2.36 后直接调用查看器的 `request_sei_recheck()`：
+部署 v3.2.36 时直接调用查看器的 `request_sei_recheck()`：
 
 ```text
 {'recent': True, 'sentry': False, 'saved': False,
@@ -87,7 +88,34 @@ python3 tests/vehicle_state_matrix.py
 [Fri Nov 27 17:47:59 2026] dwc3 fcc00000.usb: device reset
 ```
 
-19:25–19:26 的部署/复检窗口内没有新增 `dwc3 ... device reset`。
+19:25–19:41 的部署/复检/归档窗口内没有新增 `dwc3 ... device reset`。
+
+### v3.2.37 实测：即时复检与哨兵自动归档恢复
+
+v3.2.37 部署后再次调用 `request_sei_recheck()`：
+
+```text
+{'recent': False, 'sentry': False, 'saved': False,
+ 'driving': False, 'sei_ts': 1795779711.5897179,
+ 'ts': 1795779711.5897503}
+```
+
+对应时间约 19:41:51，`sei_ts` 更新，`driving=false`（停车哨兵）。
+
+同一时间窗口内，19:26 创建的哨兵事件 `SentryClips/2026-11-27_19-26-02` 完成自动归档：
+
+```text
+[2026-11-27 19:38:35] 在线同步服务启动: 车机连续静止 3 分钟前不打开镜像
+[2026-11-27 19:38:36] SEI即时复检: 停车哨兵
+[2026-11-27 19:38:36] 已同步 SentryClips/2026-11-27_19-26-02/event.json (0 KB)
+[2026-11-27 19:38:38] 已同步 ... 19-15-28-front.mp4 (51046 KB)
+[2026-11-27 19:39:14] 哨兵优先同步: 7 个片段, 300.8 MB
+[2026-11-27 19:40:38] 哨兵优先同步: 27 个片段, 772.2 MB
+[2026-11-27 19:41:28] 哨兵优先同步: 33 个片段, 751.6 MB
+```
+
+共 67 个片段、约 1824.6 MB；归档目录 `SentryClips/2026-11-27_19-26-02` 实测 1.8G。  
+复制期间日志出现“车机未静止（停车哨兵），归档顺延（给 OTG 让路）”，常规归档没有抢跑。
 
 ## 四、本轮发现并修复的问题
 
@@ -119,6 +147,30 @@ if (DRIVE_LOCK_STATE.locked) { ... return; }
 - 车机一有新写入，立即请求一次 SEI 复检。
 - 复检为 `true` 或 `null`（未判定/超时）立即 `usb_detach_safe()`，不等 60 秒周期。
 - 复检为 `false`（停车哨兵/手动保存）继续保留连接。
+
+### 4. 实时日志发现：主循环 `state` 被 `write-cat` 覆盖（v3.2.37 修复）
+
+现象：19:27:07 发现哨兵事件后，19:27、19:28、19:29、19:31、19:33、19:36 反复打印同一批 `发现新片段(待确认)`；状态文件里 67 个片段签名已稳定且与扫描结果完全相等，但永远不进入复制，归档目录为空。
+
+根因：主循环写：
+
+```python
+state = _write_cat_state()
+```
+
+把持久同步状态 `state`（含 `__pending__`、`__cmp__`）覆盖成 `write-cat.json` 的分类标志。随后 `do_sync()` 每轮拿到的 `pending` 都是空字典，上一轮签名永远读不到；`save_state()` 还把 `driving/recent/sentry` 等 write-cat 字段写进了同步状态文件。常规归档同样受影响。
+
+修复：改用独立变量：
+
+```python
+cat_state = _write_cat_state()
+if cat_state is not None and cat_state.get("driving") is False:
+    ...
+```
+
+并新增回归测试 `MainLoopStateRegressionTests`，用 AST 检查 `main()` 中不能把 `_write_cat_state()` 的返回值赋给 `state`。
+
+验证：33 个测试全部通过；v3.2.37 启动后 19:38:36 第一轮即识别已有 pending，19:38:38 开始复制，19:41:28 完成 67 个片段、约 1.8GB 的哨兵自动归档。
 
 ## 五、仍需观察的点
 

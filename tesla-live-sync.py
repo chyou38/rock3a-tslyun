@@ -1234,8 +1234,12 @@ def main():
         now = time.time()
         # 停车哨兵写入期间: 允许自动归档最新哨兵事件。只认 SEI 探针明确判定的
         # driving=false, 未知(driving=null)或行车一律不碰。
-        state = _write_cat_state()
-        if (state is not None and state.get("driving") is False
+        # 注意: 这里必须用独立变量读 write-cat; 不能叫 state。
+        # 主循环里的 state 是持久同步状态(__pending__/__cmp__), 一旦被
+        # write-cat 覆盖, do_sync 永远看不到上一轮签名, 哨兵事件会一直
+        # "待确认"且反复重扫; save_state 还会把 write-cat 字段写进状态文件。
+        cat_state = _write_cat_state()
+        if (cat_state is not None and cat_state.get("driving") is False
                 and now - last_sentry_auto >= SENTRY_AUTO_SEC):
             PROBE_URGENT.set()
             last_sentry_auto = now

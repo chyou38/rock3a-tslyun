@@ -1,6 +1,6 @@
 # TeslaBox 车机U盘 / 归档区 / 哨兵联动逻辑
 
-版本：v3.2.36 beta  
+版本：v3.2.37 beta  
 范围：`tesla-live-sync.py`、`sentry-viewer.py`、`write-cat.json`  
 目标：车机写入永远第一优先；只有明确停车哨兵时才自动归档 `SentryClips`；手动保存和行车记录走常规归档。
 
@@ -186,15 +186,16 @@ driving=false
 
 ---
 
-## 9. 当前实测状态（v3.2.36）
+## 9. 当前实测状态（v3.2.37）
 
 - `write-cat.json`：`driving=false`，识别为停车哨兵。
 - `/api/drive_lock`：`on=true`、`locked=false`、`parked_recording=true`、`sentry_writing=true`、`driving=false`。
 - 页面应显示：**哨兵录像中 · 未锁定**；车机U盘可连接。
 - `/api/archive_sched`：`car_writing=true`，常规归档暂停，消息“车机未静止（停车哨兵），归档暂停”。
 - `tesla-live`、`sentry-viewer` 均 active。
-- `/api/ver` 已返回 `3.2.36`；`write-cat.json` 的 `sei_ts` 随即时复检更新。
-- 当前没有新的 `SentryClips` 事件，所以哨兵自动通道暂无新的复制日志；有事件时按上述流程触发。
+- `/api/ver` 已返回 `3.2.37`；`write-cat.json` 的 `sei_ts` 随即时复检更新。
+- 19:26 的 `SentryClips/2026-11-27_19-26-02` 事件已由哨兵自动通道归档：67 个片段、约 1.8GB，分 3 轮完成（19:38–19:41）。
+- v3.2.37 修复了主循环 `state` 被 `write-cat` 覆盖导致 pending 永远无法确认的 bug；`do_sync()` 的持久状态必须使用独立变量名。
 
 ---
 

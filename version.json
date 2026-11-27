@@ -1,7 +1,8 @@
 {
-  "version": "3.2.36",
+  "version": "3.2.37",
   "date": "2026-11-27",
   "notes": [
+    "修复主循环 state 被 write-cat 覆盖: 哨兵事件 pending 签名被反复清空、永远待确认且反复重扫; 改用独立 cat_state 后两轮签名确认恢复, 常规归档状态同样修复",
     "自动化测试补充: probe_loop/drive_watch_loop 支持停止事件; 生产行为不变",
     "新增即时 SEI 复检: 网页连接车机U盘前写 sei-probe.req, 同步服务下一轮强制复检并回写 sei_ts, 不再拿最多 60 秒前的 driving=false 放行",
     "连接时复检为真行车/未判定/超时一律拒绝; 页面旧的 locked 快照不再直接拦住用户, 由后端复检裁决",

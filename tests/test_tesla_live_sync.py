@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import json
 import os
@@ -428,3 +429,24 @@ class ProbeLoopRequestTests(unittest.TestCase):
         self.front.data = b"\x42\x42\x42\x69" * 3 + b"x" * self.size
         st = self.request_and_wait(True)
         self.assertIs(st.get("driving"), True)
+
+
+class MainLoopStateRegressionTests(unittest.TestCase):
+    """主循环不能用 state 变量接 write-cat, 否则持久同步状态被覆盖。"""
+
+    def test_write_cat_uses_separate_variable(self):
+        tree = ast.parse(Path(live_sync.__file__).read_text(encoding="utf-8"))
+        main_fn = next(n for n in tree.body
+                       if isinstance(n, ast.FunctionDef) and n.name == "main")
+        found_cat = False
+        for node in ast.walk(main_fn):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            if getattr(node.value.func, "id", "") != "_write_cat_state":
+                continue
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            self.assertNotIn("state", targets,
+                             "main() 不能用 state 接 write-cat, 会覆盖持久同步状态")
+            if "cat_state" in targets:
+                found_cat = True
+        self.assertTrue(found_cat)
