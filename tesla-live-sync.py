@@ -330,6 +330,29 @@ def same_file(path, size):
         return False
 
 
+def same_content(dest, entry, exfat):
+    """归档区已有文件与车机镜像中的片段逐字节比对。
+    只比大小会漏掉同尺寸就地改写(车机复用同一 exFAT 簇、覆盖写同一事件名),
+    那类改动在归档区留下的是旧内容。这里按块流式比较, 不整读进内存。
+    返回 True=内容一致(可跳过), False=不同或读取失败(需要重抄)。"""
+    try:
+        if os.path.getsize(dest) != entry.size:
+            return False
+        with open(dest, "rb") as f:
+            off = 0
+            for chunk in exfat.read_file(entry):
+                if not chunk:
+                    continue
+                if f.read(len(chunk)) != chunk:
+                    return False
+                off += len(chunk)
+        return off == entry.size
+    except OSError:
+        return False
+    except Exception:
+        return False
+
+
 _CW_MT = 0
 _CW_TS = -100.0
 
@@ -441,12 +464,26 @@ def load_state():
 
 
 def save_state(st):
+    """原子写状态文件; 失败必须留痕。
+    早期实现静默吞掉异常, eMMC 满/只读时进度永远写不进去, 页面看不到原因,
+    每轮都从旧状态重扫重抄。现在写失败记一条日志(限频), 便于定位。"""
+    global _STATE_FAIL_TS
     try:
         with open(STATE + ".tmp", "w") as f:
             json.dump(st, f)
         os.replace(STATE + ".tmp", STATE)
-    except Exception:
-        pass
+        _STATE_FAIL_TS = 0.0
+        return True
+    except Exception as ex:
+        now = time.time()
+        if now - _STATE_FAIL_TS >= 300:
+            _STATE_FAIL_TS = now
+            log("状态文件写入失败 %s: %s (同步进度可能无法保存)" % (STATE, ex))
+        try:
+            os.unlink(STATE + ".tmp")
+        except OSError:
+            pass
+        return False
 
 
 def scan(exfat, cats=None, newest_events=None):
@@ -630,9 +667,13 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
         total += 1
         total_bytes += e.size
         if same_file(dest, e.size):
-            done += 1
-            done_bytes += e.size
-            continue
+            # 同尺寸不代表同内容: 车机复用事件名/簇覆盖写时, 归档区留着旧字节。
+            # 签名里带 mtime, 只有归档副本与当前签名不同才逐字节复核, 未变过的文件不重复读。
+            if state.get("__cmp__", {}).get(key) == sig or same_content(dest, e, exfat):
+                state.setdefault("__cmp__", {})[key] = sig
+                done += 1
+                done_bytes += e.size
+                continue
         # 需要连续两轮签名一致才认为写完
         if pending.get(key) != sig:
             new_pending[key] = sig
@@ -714,6 +755,9 @@ def probe_sig(exfat):
 
 
 _CAR_WRITE = {"mtime": None, "changed": 0.0}
+
+# 状态文件写入失败的限频时间戳 (save_state 使用), 0=从未失败
+_STATE_FAIL_TS = 0.0
 
 
 def _cat_changed(sig, old, cat):
@@ -858,8 +902,10 @@ def car_busy():
         return False
     now = time.time()
     if _CAR_WRITE["mtime"] is None:
+        # 首次观测没有历史可对比: 用文件自身 mtime 推断最近一次写入时间,
+        # 不能把"本次看到它的时刻"当成写时刻, 否则每次启动都误判为车机在写。
         _CAR_WRITE["mtime"] = mt
-        _CAR_WRITE["changed"] = now
+        _CAR_WRITE["changed"] = mt / 1e9
     elif mt != _CAR_WRITE["mtime"]:
         _CAR_WRITE["mtime"] = mt
         _CAR_WRITE["changed"] = now
@@ -936,14 +982,27 @@ def main():
     log("在线同步启动: %s (簇 %dB, %d 簇)" % (IMG, exfat.cluster_size, exfat.cluster_count))
     state = load_state()
     if args.once:
-        if car_busy():
-            log("单轮跳过: 车机正在写 U 盘 (车机第一优先), 停车后再跑")
+        # --once 必须与常驻服务走同一套约束: 先看挂载点(网页管理中/归档占用时 /archive
+        # 可能没挂真实存储, 直接写会把片段落到系统盘), 再拿共享锁避免和网页挂载/归档抢 U 盘。
+        if os.path.ismount(MNT):
+            log("单轮跳过: %s 仍是挂载点, U 盘正被网页管理/归档占用" % MNT)
             exfat.close()
             return 0
-        n, b = do_sync(exfat, state)
-        log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
-        exfat.close()
-        return 0
+        lk = usb_shared_lock()
+        if lk is None:
+            log("单轮跳过: U 盘被其它任务占用 (%s), 无法取得共享锁" % USB_LOCK)
+            exfat.close()
+            return 0
+        try:
+            if car_busy():
+                log("单轮跳过: 车机正在写 U 盘 (车机第一优先), 停车后再跑")
+                return 0
+            n, b = do_sync(exfat, state)
+            log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
+            return 0
+        finally:
+            usb_unlock(lk)
+            exfat.close()
 
     # 定时归档调度: 每 5s 醒一次, 到点(间隔可在网页自定义, 默认10分钟)或收到
     # 「立即归档」触发文件才搬; 车机正在写盘 / 网页管理U盘 / 持锁冲突一律顺延。

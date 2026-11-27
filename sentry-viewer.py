@@ -202,22 +202,44 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.17"
+APP_VERSION = "3.2.19"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
-_OTA_DEFAULT = ",".join([
-    "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
-    "https://gcore.jsdelivr.net/gh/%s@main" % OTA_REPO,                              # 1.1s
-    "https://ghproxy.net/https://raw.githubusercontent.com/%s/main" % OTA_REPO,      # 2.4s
-    "https://gh-proxy.org/https://raw.githubusercontent.com/%s/main" % OTA_REPO,     # 3.2s
-    "https://gh-proxy.com/https://raw.githubusercontent.com/%s/main" % OTA_REPO,     # 时通时断, 兜底
-    "https://raw.githubusercontent.com/%s/main" % OTA_REPO,                          # 海外线路
-    "https://cdn.jsdelivr.net/gh/%s@main" % OTA_REPO,                                # 海外线路
-])
-OTA_SOURCES = [s.strip().rstrip("/") for s in os.environ.get("TSF_OTA_SOURCES", _OTA_DEFAULT).split(",") if s.strip()]
+# 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
+OTA_CHANNELS = {"stable": "main", "beta": "beta"}
+_OTA_CHANNEL_DEFAULT = "stable"
+
+
+def _ota_channel():
+    """当前更新渠道 (stable/beta); 非法值一律当 stable。"""
+    try:
+        ch = str(load_settings().get("update_channel") or _OTA_CHANNEL_DEFAULT).strip().lower()
+    except Exception:
+        ch = _OTA_CHANNEL_DEFAULT
+    return ch if ch in OTA_CHANNELS else _OTA_CHANNEL_DEFAULT
+
+
+def _ota_branch():
+    return OTA_CHANNELS.get(_ota_channel(), "main")
+
+
+def _ota_sources_for(branch):
+    """每个渠道各自的多镜像竞速源 (同一套镜像, 只换分支名)。"""
+    return [s.strip().rstrip("/") for s in os.environ.get(
+        "TSF_OTA_SOURCES",
+        ",".join([
+            "https://ghfast.top/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),       # 1.1s
+            "https://gcore.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                              # 1.1s
+            "https://ghproxy.net/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),      # 2.4s
+            "https://gh-proxy.org/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),     # 3.2s
+            "https://gh-proxy.com/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),     # 时通时断, 兜底
+            "https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),                          # 海外线路
+            "https://cdn.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                                # 海外线路
+        ])).split(",") if s.strip()]
+OTA_SOURCES = _ota_sources_for(_OTA_CHANNEL_DEFAULT)
 OTA_BACKUP = os.environ.get("TSF_OTA_BACKUP", "/opt/tesla-sentry/sentry-viewer.bak.py")
 OTA_STATE = os.environ.get("TSF_OTA_STATE", "/opt/tesla-sentry/ota-state.json")
 OTA_SRC_PREF = os.path.join(os.path.dirname(OTA_STATE) or ".", "ota-src.json")  # 记住上次最快的源
-_OTA_CACHE = {"t": 0.0, "data": None}
+_OTA_CACHE = {}   # 按渠道缓存: {"stable": {"t":..,"data":..}, "beta": {...}}
 
 
 def _http_get(url, timeout=10, limit=8 << 20):
@@ -226,9 +248,9 @@ def _http_get(url, timeout=10, limit=8 << 20):
         return r.read(limit)
 
 
-def _src_order():
+def _src_order(sources=None):
     """上次成功的源排最前 (竞速同时成功时优先选它)"""
-    order = list(OTA_SOURCES)
+    order = list(sources if sources is not None else OTA_SOURCES)
     try:
         with open(OTA_SRC_PREF, encoding="utf-8") as f:
             good = json.load(f).get("last_good")
@@ -260,7 +282,7 @@ def _err_kind(ex):
     return type(ex).__name__
 
 
-def _race_get(path, timeout, limit, validate=None, collect=False, grace=1.0):
+def _race_get(path, timeout, limit, validate=None, collect=False, grace=1.0, sources=None):
     """并发竞速所有下载源, 单个源被墙/超时不影响其它源。
     collect=False: 谁先返回【通过校验】的数据就用谁, 返回 (data, base)。
     collect=True:  返回 [(base, data), ...] 全部成功的源 —— 首次成功后最多再等 grace 秒
@@ -288,7 +310,7 @@ def _race_get(path, timeout, limit, validate=None, collect=False, grace=1.0):
             with lock:
                 done[0] += 1
 
-    order = _src_order()
+    order = _src_order(sources)
     for base in order:
         threading.Thread(target=worker, args=(base,), daemon=True).start()
     deadline = time.time() + timeout + 1.5
@@ -325,11 +347,13 @@ def _vtuple(v):
     return tuple(out) or (0,)
 
 
-def _api_manifest(timeout=5):
+def _api_manifest(timeout=5, branch=None):
     """GitHub API 实时读 version.json (返回 base64 内容), 不受 raw/镜像 CDN 缓存影响。
-    国内不可达时静默失败, 由调用方退回原有的多源竞速结果。"""
+    国内不可达时静默失败, 由调用方退回原有的多源竞速结果。
+    branch 为空时按当前更新渠道取对应分支。"""
     try:
-        url = "https://api.github.com/repos/%s/contents/version.json?ref=main" % OTA_REPO
+        ref = branch or _ota_branch()
+        url = "https://api.github.com/repos/%s/contents/version.json?ref=%s" % (OTA_REPO, ref)
         req = urllib.request.Request(url, headers={
             "User-Agent": "tsf-ota/" + APP_VERSION,
             "Accept": "application/vnd.github+json",
@@ -342,10 +366,15 @@ def _api_manifest(timeout=5):
 
 
 def ota_latest(force=False):
-    """读仓库 version.json (含版本号/日期/更新说明), 并发竞速多个源, 结果缓存 10 分钟"""
+    """读仓库 version.json (含版本号/日期/更新说明), 并发竞速多个源, 结果缓存 10 分钟。
+    缓存与源列表都按更新渠道分流: 切到测试版不会读到稳定版的旧清单。"""
     now = time.time()
-    if not force and _OTA_CACHE["data"] and now - _OTA_CACHE["t"] < 600:
-        return _OTA_CACHE["data"]
+    ch = _ota_channel()
+    branch = _ota_branch()
+    cache = _OTA_CACHE.get(ch) or {"t": 0.0, "data": None}
+    if not force and cache["data"] and now - cache["t"] < 600:
+        return cache["data"]
+    sources = _ota_sources_for(branch)
 
     def ok(raw):
         try:
@@ -359,7 +388,7 @@ def ota_latest(force=False):
     fresh = []
 
     def api_worker():
-        j = _api_manifest()
+        j = _api_manifest(branch=branch)
         if j and str(j.get("version") or "").strip():
             fresh.append(j)
 
@@ -371,7 +400,7 @@ def ota_latest(force=False):
     err = ""
     try:
         res = _race_get("/version.json?ts=%d" % int(now), timeout=6, limit=256 << 10,
-                        validate=ok, collect=True, grace=1.5)
+                        validate=ok, collect=True, grace=1.5, sources=sources)
     except RuntimeError as ex:
         res, err = [], str(ex)
     parsed = []
@@ -392,7 +421,7 @@ def ota_latest(force=False):
         base, raced = parsed[best]
     else:
         # 一个源都没给出可用清单: 走 GitHub API 兜底, 再不行就把各源的失败原因报上去
-        j2 = _api_manifest(timeout=6)
+        j2 = _api_manifest(timeout=6, branch=branch)
         if j2 and str(j2.get("version") or "").strip():
             raced, base = j2, "https://api.github.com"
         else:
@@ -402,7 +431,7 @@ def ota_latest(force=False):
     if not fresh and apith.is_alive():
         apith.join(timeout=2.5 if stale else 1.2)
     if not fresh and stale:
-        j2 = _api_manifest(timeout=3)
+        j2 = _api_manifest(timeout=3, branch=branch)
         if j2 and str(j2.get("version") or "").strip():
             fresh.append(j2)
     if fresh:
@@ -410,7 +439,9 @@ def ota_latest(force=False):
     else:
         j = raced
     j["_base"] = base
-    _OTA_CACHE.update({"t": now, "data": j})
+    j["_channel"] = ch
+    j["_branch"] = branch
+    _OTA_CACHE[ch] = {"t": now, "data": j}
     return j
 
 
@@ -419,6 +450,7 @@ def ota_check(force=False):
     out = {"ok": True, "current": cur, "latest": "", "date": "", "notes": [],
            "has_update": False, "source": "", "error": "",
            "rollback_ready": os.path.isfile(OTA_BACKUP),
+           "channel": _ota_channel(),
            "auto": load_settings().get("auto_update", True),
            "auto_checked": AUTO_UPD["last_check"], "auto_msg": AUTO_UPD["last_result"]}
     try:
@@ -565,9 +597,12 @@ def ota_apply():
     if not _vtuple(latest) > _vtuple(APP_VERSION):
         return False, "当前已是最新版本 (%s)" % APP_VERSION
     # 下载也走多源竞速: 清单来源的镜像突然挂了, 其它源照样能补位
+    # 必须锁定清单所属渠道的分支, 否则切到测试版后仍会下到 main 的稳定版文件
+    branch = str(j.get("_branch") or _ota_branch())
     try:
         data, base = _race_get("/sentry-viewer.py?ts=%d" % int(time.time()), timeout=60, limit=8 << 20,
-                               validate=lambda d: len(d) > 50000 and b"APP_VERSION" in d)
+                               validate=lambda d: len(d) > 50000 and b"APP_VERSION" in d,
+                               sources=_ota_sources_for(branch))
     except Exception as ex:
         return False, "下载失败: %s" % ex
     # 1) 完整性校验: 大小 + 特征串 + 内嵌版本号必须与清单一致
@@ -747,7 +782,7 @@ BRAND_LOGO_B64 = (
 
 
 def load_settings():
-    d = {"auto_update": True, "ui_style": "default", "brand_name": "", "brand_logo": "",
+    d = {"auto_update": True, "update_channel": "stable", "ui_style": "default", "brand_name": "", "brand_logo": "",
          "archive_retention_days": 0, "archive_low_water_pct": 10, "preview_low_water_pct": 10,
          "lib_ttl_days": 7, "amap_key": "", "open_view": "all", "open_autoplay": True,
          "drive_lock": True}
@@ -757,6 +792,9 @@ def load_settings():
         if isinstance(j, dict):
             if "auto_update" in j:
                 d["auto_update"] = bool(j["auto_update"])
+            ch = str(j.get("update_channel") or "").strip().lower()
+            if ch in OTA_CHANNELS:
+                d["update_channel"] = ch
             # 归档自动清理: 保留天数, 0=永不; 非法值一律当 0
             try:
                 d["archive_retention_days"] = max(0, min(int(j.get("archive_retention_days") or 0), 3650))
@@ -2834,6 +2872,14 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <input type="checkbox" id="upd-auto" checked onchange="setAutoUpdate(this.checked)">
     </label>
     <div class="hint" id="upd-autohint">—</div>
+    <div class="updrow" style="padding-top:8px;border-top:1px solid var(--line)">
+      <span class="updk">更新渠道</span>
+      <select id="upd-channel" class="arc-input" style="flex:1;max-width:220px;padding:6px 8px" onchange="setUpdateChannel(this.value)">
+        <option value="stable">稳定版 (main)</option>
+        <option value="beta">测试版 (beta)</option>
+      </select>
+    </div>
+    <div class="hint" id="upd-chanhint">测试版更新更早、可能有 bug；出问题可点下方「回滚到上一版本」。</div>
     <div class="updbtns">
       <button class="mini" id="upd-check" onclick="otaCheck(true)">检查更新</button>
       <button class="mini primary" id="upd-go" onclick="otaApply()" disabled>立即升级</button>
@@ -8600,6 +8646,8 @@ async function autoLoad() {
     const cb = document.getElementById('upd-auto'), el = document.getElementById('upd-autohint');
     if (!cb || !el) return;
     cb.checked = !!s.auto_update;
+    const chSel = document.getElementById('upd-channel');
+    if (chSel && s.update_channel) chSel.value = s.update_channel;
     let txt = s.auto_update
       ? '已开启: 每 5 分钟检查一次, 发现新版本且没人看视频时自动升级'
       : '已关闭: 只用下方按钮手动升级';
@@ -8623,6 +8671,25 @@ async function setAutoUpdate(on) {
   } catch (e) {
     cb.checked = !on;
     toast('❌ 自动更新设置失败: ' + (e.message || e));
+  }
+}
+async function setUpdateChannel(ch) {
+  const sel = document.getElementById('upd-channel'), hint = document.getElementById('upd-chanhint');
+  const prev = sel ? sel.value : '';
+  try {
+    const j = await (await fetch('/api/ota/channel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: ch })
+    })).json();
+    if (!j.ok) throw new Error(j.msg || '保存失败');
+    if (hint) hint.textContent = ch === 'beta'
+      ? '已切换到测试版: 更新更早、可能有 bug；出问题可点下方「回滚到上一版本」。'
+      : '已切换到稳定版: 只接收正式发布。';
+    toast(ch === 'beta' ? '✅ 已切换到测试版' : '✅ 已切换到稳定版');
+    setTimeout(() => otaCheck(true), 400);
+  } catch (e) {
+    if (sel) sel.value = prev;
+    toast('❌ 切换更新渠道失败: ' + (e.message || e));
   }
 }
 /* 服务重启期间轮询, 起来后自动刷新页面 */
@@ -19958,6 +20025,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ota_check(force=q.get("force", ["0"])[0] == "1"))
         elif path == "/api/settings":
             self._json({"ok": True, "auto_update": load_settings().get("auto_update", True),
+                        "update_channel": _ota_channel(),
                         "ui_style": load_settings().get("ui_style", "default"),
                         "brand_name": brand_name(), "brand_default": BRAND_NAME_DEFAULT,
                         "brand_logo": load_settings().get("brand_logo", ""),
@@ -21099,6 +21167,20 @@ class Handler(BaseHTTPRequestHandler):
             if on:
                 AUTO_UPD["next_try"] = 0        # 刚打开就尽快检查一次, 不用等下一轮
             self._json({"ok": True, "auto": on})
+            return
+        if path == "/api/ota/channel":
+            body = self._read_json()
+            if body == "TOOBIG" or not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            ch = str(body.get("channel") or "").strip().lower()
+            if ch not in OTA_CHANNELS:
+                self._json({"ok": False, "msg": "未知更新渠道"}, 400)
+                return
+            save_settings({"update_channel": ch})
+            _OTA_CACHE.pop(ch, None)            # 清掉该渠道旧清单, 立即重新拉
+            AUTO_UPD["next_try"] = 0
+            self._json({"ok": True, "channel": ch})
             return
         if path == "/api/font/dl":
             # 一键从官方 google/fonts 装中文字体 (17MB, 多镜像串行重试)

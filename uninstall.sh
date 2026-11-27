@@ -49,9 +49,33 @@ rm -f /etc/systemd/system/tesla-gadget.service \
 rm -f /etc/NetworkManager/conf.d/99-tsf-unmanaged.conf
 rm -f /etc/cron.d/tesla-sentry
 [ -f /etc/crontab ] && sed -i '/tesla-sync.sh/d;/usb-selfheal.sh/d' /etc/crontab 2>/dev/null || true
+rm -f /usr/local/sbin/teslabox-usb-irq.sh
+rm -f /etc/systemd/system/teslabox-usb-irq.service
+
+# 撤销安装时对系统的改动: 安装曾改 Avahi 主机名 / nsswitch 的 mDNS 解析 / mask
+# wpa_supplicant.service。卸载不还原会把这些改动永久留在系统里。
+if [ -f /etc/avahi/avahi-daemon.conf.tsf.bak ]; then
+    cp -a /etc/avahi/avahi-daemon.conf.tsf.bak /etc/avahi/avahi-daemon.conf 2>/dev/null || true
+    rm -f /etc/avahi/avahi-daemon.conf.tsf.bak
+fi
+if [ -f /etc/nsswitch.conf.tsf.bak ]; then
+    cp -a /etc/nsswitch.conf.tsf.bak /etc/nsswitch.conf 2>/dev/null || true
+    rm -f /etc/nsswitch.conf.tsf.bak
+fi
+if [ -f /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf ]; then
+    rm -f /etc/wpa_supplicant/wpa_supplicant-wlp1s0.conf
+fi
 if command -v systemctl >/dev/null 2>&1; then
+    # 只在当前被 mask 为 /dev/null 时才解除, 不覆盖用户原有的 mask 意图
+    if [ "$(readlink -f /etc/systemd/system/wpa_supplicant.service 2>/dev/null)" = "/dev/null" ]; then
+        systemctl unmask wpa_supplicant.service >/dev/null 2>&1 || true
+    fi
+    systemctl disable --now teslabox-usb-irq.service >/dev/null 2>&1 || true
     systemctl daemon-reload 2>/dev/null || true
     systemctl restart cron 2>/dev/null || true
+    if [ -f /etc/avahi/avahi-daemon.conf ]; then
+        systemctl restart avahi-daemon >/dev/null 2>&1 || true
+    fi
 fi
 
 echo "==> 删除程序文件与缓存"
