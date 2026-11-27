@@ -201,7 +201,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.9"
+APP_VERSION = "3.2.10"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -18964,10 +18964,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "msg": "记录不存在或已清空"}, 404)
                 return
             try:
-                self.connection.settimeout(90)
+                self.connection.settimeout(120)
             except Exception:
                 pass
-            boot = _doctor_bootlog_wait(45)
+            boot = _doctor_bootlog_wait(90)
             body = _doctor_history_text([e])
             if boot:
                 body += "\n\n===== 本次开机全量日志（开机至今） =====\n\n" + boot
@@ -20808,6 +20808,11 @@ if __name__ == "__main__":
         print("port %d in use, another instance running? exit." % PORT)
         sys.exit(0)
     print(f"Sentry viewer on 0.0.0.0:{PORT}")
+    # 后台预热本次开机全量日志缓存；首次单条下载无需再等 journal 全量扫描
+    try:
+        _doctor_bootlog_kick()
+    except Exception:
+        pass
     print("auth: %s (%s)" % ("ON, user=" + AUTH_USER if AUTH_ON else "OFF - 公网可直接访问!", AUTH_FILE))
     # 清理上次进程中断遗留的导出临时包: /tmp 是 tmpfs, 大 zip 会吃内存并被换进 zram。
     # 端口已绑定成功 = 单实例, 此刻所有 exp_*.zip 都是孤儿, 直接删。
