@@ -59,6 +59,7 @@ LOG = os.environ.get("TSF_LIVE_LOG", "/root/tesla-live.log")
 STATE = os.environ.get("TSF_LIVE_STATE", "/root/.tesla-live-state.json")
 INTERVAL = int(os.environ.get("TSF_LIVE_INTERVAL", "15"))
 CAR_WRITE_HOLD = float(os.environ.get("TSF_LIVE_CAR_HOLD", "30"))
+SENTRY_IDLE_MIN = float(os.environ.get("TSF_SENTRY_IDLE_MIN", "10"))
 # 归档调度 (2026-11-26): 不再实时搬运, 默认每 10 分钟归档一次, 间隔在网页
 # 「个性化 → 虚拟硬盘 → 归档区」自定义; 「立即归档」写触发文件, 车机空闲后马上执行。
 TSF_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
@@ -408,6 +409,8 @@ def copy_entry(exfat, entry, dest_path, hold=True):
     """把镜像里的文件写到归档区, 返回写入字节数。
     hold=True: 车机写入期间暂停搬运(车机第一优先), 车机空闲再续。
     hold=False: 哨兵/手动保存走优先通道, 车机在写也只做小让步, 不整段停。"""
+    if not sync_allowed():
+        raise RuntimeError("车机活动/未静止, 暂停搬运")
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
     written = 0
@@ -418,6 +421,8 @@ def copy_entry(exfat, entry, dest_path, hold=True):
             written += len(chunk)
             pace_bytes += len(chunk)
             if pace_bytes >= 1048576:
+                if not sync_allowed():
+                    raise RuntimeError("车机活动/未静止, 暂停搬运")
                 if hold:
                     # 车机正在写盘 -> 暂停搬运直到车机空闲 (车机写入第一优先)
                     while _car_writing():
@@ -716,6 +721,10 @@ def do_sync(exfat, state, quiet=False, cats=None, hold=True, newest_events=None,
                 progress(done, total, done_bytes, total_bytes, False)
         except Exception as ex:
             log("同步失败 %s: %s" % (key, ex))
+            try:
+                os.unlink(dest + ".part")
+            except OSError:
+                pass
             new_pending[key] = sig
     if progress:
         progress(done, total, done_bytes, total_bytes, True)
@@ -879,6 +888,19 @@ def publish_write_cat(sig, old, driving=None, recent=False):
         pass
 
 
+def publish_recent_only(recent):
+    """车机活动期间只落"近期有写入", 不打开/不解析镜像; 页面与归档门禁据此等待。"""
+    flags = {"recent": bool(recent), "sentry": False, "saved": False,
+             "driving": None, "ts": time.time()}
+    try:
+        tmp = WRITE_CAT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(flags, f)
+        os.replace(tmp, WRITE_CAT_FILE)
+    except OSError:
+        pass
+
+
 # 探测独立成线程: 定时归档一次要搬几百 MB、还会因车机写盘暂停几十秒,
 # 放在主循环里会把 write-cat 卡成旧的, 页面就会误报"车机正在写入/上锁"。
 # 线程用自己的只读句柄, 每秒固定更新状态, 不受搬运阻塞。
@@ -891,6 +913,20 @@ def probe_loop():
     while True:
         try:
             st = os.stat(IMG)
+            age = max(0.0, time.time() - st.st_mtime)
+            # 行车/停车哨兵只要还在写盘: 只做 stat, 绝不打开镜像、不列目录、不读 SEI。
+            # 连续静止 SENTRY_IDLE_MIN 分钟后才恢复探测; 探测本身也在车机空闲时才做。
+            if age < SENTRY_IDLE_MIN * 60:
+                if x is not None:
+                    try:
+                        x.close()
+                    except Exception:
+                        pass
+                    x = None
+                last_sig = None
+                publish_recent_only(age < 12)
+                time.sleep(1)
+                continue
             if x is None or st.st_ino != x.fd_ino:
                 if x is not None:
                     try:
@@ -899,14 +935,16 @@ def probe_loop():
                         pass
                 x = ExFat(IMG)
             sig = probe_sig(x)
-            recent = (time.time() - st.st_mtime) < 12
+            recent = False
             if last_sig is None:
                 publish_write_cat(sig, None, None, False)   # 基线, 不补推历史
                 last_sig = sig
             else:
-                drv = probe_driving(x) if recent else None
+                drv = probe_driving(x)
                 publish_write_cat(sig, last_sig, drv, recent)
-                if (_cat_changed(sig, last_sig, "SentryClips")
+                if not sync_allowed():
+                    PROBE_URGENT.clear()
+                elif (_cat_changed(sig, last_sig, "SentryClips")
                         or _cat_changed(sig, last_sig, "SavedClips")):
                     PROBE_URGENT.set()
                 last_sig = sig
@@ -932,6 +970,48 @@ def car_busy():
         _CAR_WRITE["mtime"] = mt
         _CAR_WRITE["changed"] = now
     return (now - _CAR_WRITE["changed"]) < CAR_WRITE_HOLD
+
+
+def _drive_lock_enabled():
+    """网页「行车锁」开关; 读不到时按开启处理。"""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return bool(json.load(f).get("drive_lock", True))
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def _write_cat_state():
+    """读同步线程刚写的车机状态; 超过 30s 视为未知, 不拿旧状态放行。"""
+    try:
+        with open(WRITE_CAT_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        if time.time() - float(j.get("ts") or 0) > 30:
+            return None
+        return j if isinstance(j, dict) else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def car_idle_seconds():
+    car_busy()  # 刷新 _CAR_WRITE.changed
+    return max(0.0, time.time() - float(_CAR_WRITE["changed"]))
+
+
+def sync_allowed():
+    """只有确认停车且连续 SENTRY_IDLE_MIN 分钟没有任何车机写入才允许搬运。
+    行车中、RecentClips 还在写、状态未知或刚写过盘, 一律不读不搬。"""
+    if not _drive_lock_enabled():
+        return not car_busy()
+    state = _write_cat_state()
+    if state is not None:
+        if bool(state.get("driving")):
+            return False
+        if bool(state.get("recent")):
+            return False
+    if car_busy():
+        return False
+    return car_idle_seconds() >= SENTRY_IDLE_MIN * 60
 
 
 def archive_interval_min():
@@ -980,28 +1060,24 @@ def main():
 
     exfat = None
     last_wait_log = 0.0
-    while exfat is None:
-        try:
-            if not os.path.exists(IMG):
-                raise ValueError("镜像不存在: %s" % IMG)
-            exfat = ExFat(IMG)
-        except Exception as e:
-            # --dump/--once 保持原有失败语义; 常驻服务则等待初始化/车机格式化完成。
-            if args.dump or args.once:
+    # 常驻服务启动时绝不预先打开镜像: 车机可能正在行车/写盘, 先只做 stat,
+    # 等连续静止 SENTRY_IDLE_MIN 分钟后由归档循环/probe_loop 再打开。
+    if args.dump or args.once:
+        while exfat is None:
+            try:
+                if not os.path.exists(IMG):
+                    raise ValueError("镜像不存在: %s" % IMG)
+                exfat = ExFat(IMG)
+            except Exception as e:
                 log("解析镜像失败: %s" % e)
                 return 1
-            now = time.time()
-            if now - last_wait_log >= 300:
-                log("等待有效 exFAT 镜像: %s" % e)
-                last_wait_log = now
-            time.sleep(max(15, args.interval))
-
-    if args.dump:
-        dump(exfat)
-        exfat.close()
-        return 0
-
-    log("在线同步启动: %s (簇 %dB, %d 簇)" % (IMG, exfat.cluster_size, exfat.cluster_count))
+        if args.dump:
+            dump(exfat)
+            exfat.close()
+            return 0
+        log("在线同步启动: %s (簇 %dB, %d 簇)" % (IMG, exfat.cluster_size, exfat.cluster_count))
+    else:
+        log("在线同步服务启动: 车机连续静止 %g 分钟前不打开镜像" % SENTRY_IDLE_MIN)
     state = load_state()
     if args.once:
         # --once 必须与常驻服务走同一套约束: 先看挂载点(网页管理中/归档占用时 /archive
@@ -1016,8 +1092,8 @@ def main():
             exfat.close()
             return 0
         try:
-            if car_busy():
-                log("单轮跳过: 车机正在写 U 盘 (车机第一优先), 停车后再跑")
+            if not sync_allowed():
+                log("单轮跳过: 行车中/车机未静止 (车机第一优先), 停车后再跑")
                 return 0
             n, b = do_sync(exfat, state)
             log("单轮完成: %d 个新片段, %.1f MB" % (n, b / 1048576))
@@ -1063,10 +1139,21 @@ def main():
         time.sleep(1)
         now = time.time()
         if PROBE_URGENT.is_set():
-            # 哨兵优先通道也不得抢车机写盘: 等车机空闲后再搬。
-            if car_busy():
+            # 行车/车机未静止: 连哨兵优先同步也一律不做, 等连续静止够久再搬。
+            if not sync_allowed():
+                now2 = time.time()
+                if now2 - last_car_log >= 60:
+                    log("行车中/车机未静止, 哨兵优先同步顺延")
+                    last_car_log = now2
                 time.sleep(2)
                 continue
+            if exfat is None:
+                try:
+                    exfat = ExFat(IMG)
+                except Exception as e:
+                    log("镜像打开失败: %s" % e)
+                    time.sleep(15)
+                    continue
             PROBE_URGENT.clear()
             lk = usb_shared_lock()
             if lk is None:
@@ -1094,12 +1181,12 @@ def main():
         due = (time.time() - last_run) >= iv
         if not (trig or due):
             continue
-        if car_busy():
+        if not sync_allowed():
             now = time.time()
             if now - last_car_log >= 60:
-                log("车机正在写 U 盘, 归档顺延 (给 OTG 让路)")
+                log("行车中/车机未静止, 归档顺延 (给 OTG 让路)")
                 last_car_log = now
-            write_sched(last_run, False, msg="车机写入中, 归档顺延")
+            write_sched(last_run, False, msg="行车中/车机未静止, 归档暂停")
             continue
         if os.path.ismount(MNT):
             continue
@@ -1111,6 +1198,12 @@ def main():
             continue
         lock_miss = 0
         try:
+            if exfat is None:
+                try:
+                    exfat = ExFat(IMG)
+                except Exception as e:
+                    log("镜像打开失败: %s" % e)
+                    continue
             try:
                 st = os.stat(IMG)
                 if st.st_ino != exfat.fd_ino:

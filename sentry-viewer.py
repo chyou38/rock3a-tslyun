@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.21"
+APP_VERSION = "3.2.22"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -13429,6 +13429,15 @@ def drive_lock_on():
     return bool(load_settings().get("drive_lock", True))
 
 
+def car_active_for_background():
+    """车机近 5 分钟有写入 -> True。行车/停车哨兵录制期间禁止后台缩略图和预缓冲。
+    行车锁关闭时由用户自行承担风险, 不额外改变原有行为。"""
+    if not drive_lock_on():
+        return False
+    car_writing()
+    return (time.time() - float(_CAR_WRITE.get("changed") or 0.0)) < 300.0
+
+
 def drive_watch_loop():
     """行车锁看门狗: 每 1s 跟踪车机写入状态供页面显示; 若行车锁开启且车机正在写入时
     镜像仍被本地挂载(异常态), 主动归还车机导出, 车机写入永远第一优先。"""
@@ -13552,6 +13561,8 @@ def thumb_file(fp, ss_t=1.0, kind="list"):
         _thumb_touch(out)
         _thumb_write_meta(out, fp, kind, ss_t)
         return out
+    if car_active_for_background():
+        return None
     try:
         os.makedirs(THUMB_DIR, exist_ok=True)
     except OSError:
@@ -17014,6 +17025,9 @@ def prewarm_loop():
             if not storage_ready():
                 time.sleep(30)
                 continue
+            if car_active_for_background():
+                time.sleep(30)
+                continue
             thumb_migrate_legacy()
             preview_cleanup()          # 清理不受预缓冲开关影响, 额度满了/源片删了照样要降
             thumb_cleanup()
@@ -17029,6 +17043,7 @@ def prewarm_loop():
             # 哨兵告警/手动保存写入不打断预缓冲(停车状态, 写入量小)
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or full_busy
                     or play_hold_active() or usb_sync_busy()
+                    or car_active_for_background()
                     or (car_writing() and not sentry_writing_only())):
                 time.sleep(15)
                 continue
@@ -17065,6 +17080,7 @@ def prewarm_loop():
                         playing_now = bool(PLAYBACK_SESSIONS)
                     if (playing_now or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0
                             or play_hold_active()
+                            or car_active_for_background()
                             or (car_writing() and not sentry_writing_only())):  # USBGUARD
                         cancel.set()
                         return
@@ -17634,7 +17650,8 @@ def thumb_prewarm_loop():
             with PLAYBACK_LOCK:
                 playing = bool(PLAYBACK_SESSIONS)
             if (playing or MEDIA_ACTIVE[0] > 0 or USER_TRANS[0] > 0 or _VARIANT_JOBS
-                    or play_hold_active() or usb_sync_busy()):
+                    or play_hold_active() or usb_sync_busy()
+                    or car_active_for_background()):
                 time.sleep(5)   # 播放中/刚播放完 10 分钟内暂停抽帧, 播放一停就尽快恢复
                 continue
             fp = _thumb_pick()

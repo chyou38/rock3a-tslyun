@@ -53,6 +53,69 @@ class CarBusyTests(unittest.TestCase):
             self.assertTrue(live_sync.car_busy())
 
 
+class DrivingGateTests(unittest.TestCase):
+    """行车中 / 刚写盘 / RecentClips 还在写, 无论如何都不能搬运归档。"""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.image = root / "teslacam.img"
+        self.image.write_bytes(b"image")
+        self.settings = root / "settings.json"
+        self.settings.write_text('{"drive_lock": true}')
+        self.write_cat = root / "write-cat.json"
+        self.idle = live_sync.SENTRY_IDLE_MIN
+        live_sync.SENTRY_IDLE_MIN = 10
+        live_sync._CAR_WRITE.update(mtime=None, changed=0.0)
+        self.patches = [
+            patch.object(live_sync, "IMG", str(self.image)),
+            patch.object(live_sync, "SETTINGS_FILE", str(self.settings)),
+            patch.object(live_sync, "WRITE_CAT_FILE", str(self.write_cat)),
+        ]
+        for item in self.patches:
+            item.start()
+
+    def tearDown(self):
+        for item in self.patches:
+            item.stop()
+        live_sync.SENTRY_IDLE_MIN = self.idle
+        live_sync._CAR_WRITE.update(mtime=None, changed=0.0)
+        self.tempdir.cleanup()
+
+    def set_image_age(self, seconds):
+        ts = time.time() - seconds
+        ns = int(ts * 1_000_000_000)
+        os.utime(self.image, ns=(ns, ns))
+
+    def set_state(self, driving=None, recent=False):
+        self.write_cat.write_text(__import__("json").dumps({
+            "driving": driving, "recent": recent, "sentry": False,
+            "saved": False, "ts": time.time(),
+        }))
+
+    def test_recent_write_blocks_even_when_not_marked_driving(self):
+        self.set_image_age(1)
+        self.set_state(driving=False, recent=False)
+        self.assertFalse(live_sync.sync_allowed())
+
+    def test_driving_flag_blocks(self):
+        self.set_image_age(700)
+        self.set_state(driving=True, recent=True)
+        self.assertFalse(live_sync.sync_allowed())
+
+    def test_recentclips_still_writing_blocks(self):
+        self.set_image_age(700)
+        self.set_state(driving=False, recent=True)
+        self.assertFalse(live_sync.sync_allowed())
+
+    def test_only_after_ten_minutes_idle_allows(self):
+        self.set_image_age(700)
+        self.set_state(driving=False, recent=False)
+        self.assertTrue(live_sync.sync_allowed())
+        self.set_image_age(60)
+        self.assertFalse(live_sync.sync_allowed())
+
+
 class _FakeEntry:
     def __init__(self, data, name="clip.mp4", mtime=12345):
         self.data = data
