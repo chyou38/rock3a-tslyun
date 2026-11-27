@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.14"
+APP_VERSION = "3.2.16"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -9381,26 +9381,30 @@ function usbGuardText(g) {
   if (s === 'disabled') return '';
   return ' · 自愈狗待命';
 }
+function usbBootCountText(g) {
+  const n = Number((g && g.boot_triggers) || 0);
+  return ' · 本次开机触发 ' + n + ' 次';
+}
 function usbStatusHtml(attached, msg) {
   const sd = storageData || {};
   const g = sd.guard || {};
   if (!attached) {
     let cls = 'off', title = '未连接管理 · 车机正在正常读写';
-    let sub = '连接会临时断开车机读取几秒，5 分钟无操作自动恢复' + usbGuardText(g);
+    let sub = '连接会临时断开车机读取几秒，5 分钟无操作自动恢复' + usbGuardText(g) + usbBootCountText(g);
     if (g.state === 'recovering') {
       cls = 'bad';
       title = '自愈狗正在恢复车机U盘…';
-      sub = '检测到U盘异常断开，正在立即重挂；车机正常写入优先';
+      sub = '检测到U盘异常断开，正在立即重挂；车机正常写入优先' + usbBootCountText(g);
     } else if (g.state === 'fault') {
       cls = 'bad';
       title = '自愈狗恢复失败 · 车机U盘暂不可用';
-      sub = (g.last_error || '可稍后点「连接」检查，或重新插拔数据线');
+      sub = (g.last_error || '可稍后点「连接」检查，或重新插拔数据线') + usbBootCountText(g);
     } else if (sd.otg_kind === 'ejected' || sd.lun_backed === false) {
       title = '未连接管理 · 车机U盘被弹出';
-      sub = '自愈狗正在重新挂回车机U盘' + usbGuardText(g);
+      sub = '自愈狗正在重新挂回车机U盘' + usbGuardText(g) + usbBootCountText(g);
     } else if (sd.host_connected === false && sd.otg_kind) {
       title = '未连接管理 · 等待车机连接';
-      sub = '车机未连接时自愈狗待命；接上后自动恢复U盘' + usbGuardText(g);
+      sub = '车机未连接时自愈狗待命；接上后自动恢复U盘' + usbGuardText(g) + usbBootCountText(g);
     }
     return '<div class="usbstrip ' + cls + '"><span class="ust-dot"></span><div class="ust-body">' +
       '<div class="ust-t">' + title + '</div>' +
@@ -9409,7 +9413,7 @@ function usbStatusHtml(attached, msg) {
   }
   return '<div class="usbstrip on"><span class="ust-dot"></span><div class="ust-body">' +
     '<div class="ust-t">已连接 · 车机U盘可读写</div>' +
-    '<div class="ust-s">改动直接写入车机U盘；你主动连接期间自愈狗不会动作，断开满 5 分钟自动恢复车机导出</div></div>' +
+    '<div class="ust-s">改动直接写入车机U盘；你主动连接期间自愈狗不会动作，断开满 5 分钟自动恢复车机导出' + usbBootCountText(g) + '</div></div>' +
     '<button class="ust-btn" onclick="usbDetach()">恢复车机导出</button></div>';
 }
 async function usbAttach() {
@@ -10123,16 +10127,21 @@ def usb_manual_begin():
     这样即使自愈狗已经在恢复，也会在拿锁后看到手动标记而放弃；
     手动连接期间不自动热写回、不逻辑重插、不做介质重插。"""
     global usb_manual_hold
-    usb_manual_hold = True
+    with USB_GUARD_LOCK:
+        USB_GUARD["manual_until"] = time.time() + USB_GUARD_MANUAL_COOLDOWN
+        usb_manual_hold = True
     _usb_guard_kmsg_clear()
     _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停", error="")
 
 
 def usb_manual_end():
     """退出网页管理后解除手动让路，下一轮自愈狗再接管。
-    手动连接/断开产生的 USB reset 事件一并丢掉，避免刚恢复车机导出就被误判。"""
+    手动连接/断开产生的 USB reset 事件还有补发，因此先进入 15 秒静默窗口；
+    窗口内只排空事件，不热写回、不重插。"""
     global usb_manual_hold
-    usb_manual_hold = False
+    with USB_GUARD_LOCK:
+        USB_GUARD["manual_until"] = time.time() + USB_GUARD_MANUAL_COOLDOWN
+        usb_manual_hold = False
     _usb_guard_kmsg_clear()
 
 
@@ -11422,6 +11431,9 @@ USB_GUARD_ENABLED = os.environ.get("TSF_USB_GUARD", "1").strip().lower() not in 
 USB_GUARD_INTERVAL = 1.0
 USB_GUARD_REBIND_GAP = 25.0
 USB_GUARD_RESET_WINDOW = 12.0
+# 手动「连接」退出后，UDC 重新枚举会补发 reset/disconnect；这段窗口内只排空
+# 内核事件，不让自愈狗把手动操作误判成车机异常。
+USB_GUARD_MANUAL_COOLDOWN = 15.0
 USB_GUARD_LOCK = threading.Lock()
 _USB_KMSG = {"fd": None, "broken": False}
 USB_GUARD = {
@@ -11438,6 +11450,7 @@ USB_GUARD = {
     "last_attempt": 0.0,
     "last_replug": 0.0,
     "manual_hold": False,
+    "manual_until": 0.0,
     "otg_kind": "",
     "last_kind_at": 0.0,
     "host_connected": False,
@@ -11449,12 +11462,135 @@ USB_GUARD = {
 }
 _UNSET = object()
 
+# 本次开机累计: 进程重启后不能把已发生的自愈次数清零, 因此按 boot_id 落到小文件。
+# 首次部署没有文件时, 从本次开机后的 tesla-gadget.log 里补算 start/recovered。
+USB_GUARD_BOOT_FILE = os.environ.get(
+    "TSF_USB_GUARD_BOOT_FILE",
+    os.path.join(DOCTOR_LOG_DIR, "usb-guard-boot.json"))
+USB_GUARD_BOOT_LOCK = threading.Lock()
+USB_GUARD_BOOT = {
+    "boot_id": "",
+    "triggers": 0,
+    "recoveries": 0,
+    "last_trigger": 0.0,
+    "last_recovery": 0.0,
+}
+
+
+def _usb_guard_boot_id():
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _usb_guard_boot_at():
+    try:
+        with open("/proc/uptime", encoding="utf-8") as f:
+            uptime = float(f.read().split()[0])
+        return max(0.0, time.time() - uptime)
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def _usb_guard_boot_log_counts(boot_at):
+    """首次建立计数文件时, 统计本次开机以来的触发/恢复日志。"""
+    triggers = recoveries = 0
+    try:
+        with open(DOCTOR_GADGET_LOG, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if "usb-guard: " not in line:
+                    continue
+                m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]", line)
+                if not m:
+                    continue
+                try:
+                    at = time.mktime(datetime.datetime.strptime(
+                        m.group(1), "%Y-%m-%d %H:%M:%S").timetuple())
+                except (ValueError, OverflowError):
+                    continue
+                if boot_at and at < boot_at - 5.0:
+                    continue
+                if "usb-guard: start:" in line:
+                    triggers += 1
+                elif "usb-guard: recovered:" in line:
+                    recoveries += 1
+    except OSError:
+        pass
+    return triggers, recoveries
+
+
+def _usb_guard_boot_save():
+    with USB_GUARD_BOOT_LOCK:
+        data = dict(USB_GUARD_BOOT)
+    tmp = USB_GUARD_BOOT_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, USB_GUARD_BOOT_FILE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _usb_guard_boot_load():
+    boot_id = _usb_guard_boot_id()
+    triggers = recoveries = 0
+    last_trigger = last_recovery = 0.0
+    try:
+        with open(USB_GUARD_BOOT_FILE, encoding="utf-8") as f:
+            saved = json.load(f)
+        if boot_id and saved.get("boot_id") == boot_id:
+            triggers = max(0, int(saved.get("triggers") or 0))
+            recoveries = max(0, int(saved.get("recoveries") or 0))
+            last_trigger = float(saved.get("last_trigger") or 0)
+            last_recovery = float(saved.get("last_recovery") or 0)
+        else:
+            triggers, recoveries = _usb_guard_boot_log_counts(_usb_guard_boot_at())
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        triggers, recoveries = _usb_guard_boot_log_counts(_usb_guard_boot_at())
+    with USB_GUARD_BOOT_LOCK:
+        USB_GUARD_BOOT.update({
+            "boot_id": boot_id,
+            "triggers": triggers,
+            "recoveries": recoveries,
+            "last_trigger": last_trigger,
+            "last_recovery": last_recovery,
+        })
+    _usb_guard_boot_save()
+
+
+def _usb_guard_boot_bump(kind):
+    """kind=triggers 在每次开始恢复时 +1; kind=recoveries 在成功挂回时 +1。"""
+    if kind not in ("triggers", "recoveries"):
+        return
+    with USB_GUARD_BOOT_LOCK:
+        USB_GUARD_BOOT[kind] = int(USB_GUARD_BOOT.get(kind) or 0) + 1
+        USB_GUARD_BOOT["last_" + ("trigger" if kind == "triggers" else "recovery")] = time.time()
+    _usb_guard_boot_save()
+
+
+def _usb_guard_boot_snapshot():
+    with USB_GUARD_BOOT_LOCK:
+        return {
+            "boot_triggers": int(USB_GUARD_BOOT.get("triggers") or 0),
+            "boot_recoveries": int(USB_GUARD_BOOT.get("recoveries") or 0),
+            "boot_last_trigger": float(USB_GUARD_BOOT.get("last_trigger") or 0),
+            "boot_last_recovery": float(USB_GUARD_BOOT.get("last_recovery") or 0),
+        }
+
 
 def _usb_guard_status():
     """给 /api/storage/status 用的快照; 不暴露内部锁对象。"""
     with USB_GUARD_LOCK:
         out = dict(USB_GUARD)
     out["manual_hold"] = bool(usb_manual_hold)
+    out.update(_usb_guard_boot_snapshot())
     now = time.time()
     for k in ("last_ok", "last_event", "last_recovery", "last_attempt",
               "last_replug", "last_kind_at", "check_at", "last_kernel_event"):
@@ -11683,6 +11819,11 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
     if usb_manual_hold:
         _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
         return
+    with USB_GUARD_LOCK:
+        manual_until = float(USB_GUARD["manual_until"] or 0)
+    if manual_until and now < manual_until:
+        _usb_guard_set("paused", "手动连接刚结束，自愈狗等待 USB 稳定")
+        return
     # 和网页「连接」、归档、同步共用同一把进程内锁；拿不到就整轮让路。
     if not usb_lock.acquire(blocking=False):
         _usb_guard_set("paused", "网页管理/本地挂载中，自愈狗让路")
@@ -11705,6 +11846,7 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
         with USB_GUARD_LOCK:
             USB_GUARD["last_attempt"] = now
             USB_GUARD["attempts"] = int(USB_GUARD["attempts"] or 0) + 1
+        _usb_guard_boot_bump("triggers")
         _usb_guard_set("recovering", reason)
         _usb_guard_log("start: %s (otg=%s)" % (reason, otg.get("kind", "")))
         ok = True
@@ -11737,6 +11879,7 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
                 USB_GUARD["last_recovery"] = time.time()
                 USB_GUARD["last_ok"] = time.time()
                 USB_GUARD["attempts"] = 0
+            _usb_guard_boot_bump("recoveries")
             _usb_guard_set("recovered", "自愈狗已恢复车机U盘", error="", action=detail)
             _usb_guard_log("recovered: %s" % detail)
         elif after["connected"]:
@@ -11748,6 +11891,7 @@ def _usb_guard_recover(reason, otg, want_replug=False, want_media=False, allow_f
                 USB_GUARD["recoveries"] = int(USB_GUARD["recoveries"] or 0) + 1
                 USB_GUARD["last_recovery"] = time.time()
                 USB_GUARD["attempts"] = 0
+            _usb_guard_boot_bump("recoveries")
             _usb_guard_set("waiting", "U盘已挂回，等待车机连接", error="", action=detail)
             _usb_guard_log("armed: %s (等待车机)" % detail)
         else:
@@ -11766,9 +11910,16 @@ def _usb_guard_tick():
     if not USB_GUARD_ENABLED:
         _usb_guard_set("disabled", "TSF_USB_GUARD=0")
         return
+    now = time.time()
     if usb_manual_hold:
         _usb_guard_kmsg_read()          # 手动管理期间只排空内核事件，绝不触发
         _usb_guard_set("paused", "你已手动连接车机U盘，自愈狗暂停")
+        return
+    with USB_GUARD_LOCK:
+        manual_until = float(USB_GUARD["manual_until"] or 0)
+    if manual_until and now < manual_until:
+        _usb_guard_kmsg_read()          # 手动退出后的 UDC 补发事件，静默排空
+        _usb_guard_set("paused", "手动连接刚结束，自愈狗等待 USB 稳定")
         return
     if usb_attached or os.path.ismount(MNT):
         _usb_guard_kmsg_read()          # 网页管理期间只排空内核事件，不触发
@@ -11833,6 +11984,7 @@ def _usb_guard_tick():
 
 def usb_guard_loop():
     """常驻自愈狗。异常断开时 1s 内进入恢复；正常连接时只读 sysfs，不做任何写操作。"""
+    _usb_guard_boot_load()
     _usb_guard_log("watchdog started (interval=%.1fs)" % USB_GUARD_INTERVAL)
     while True:
         try:
