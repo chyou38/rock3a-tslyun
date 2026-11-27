@@ -202,7 +202,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.37"
+APP_VERSION = "3.2.38"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -16357,6 +16357,15 @@ def _ev_ts(name):
         return 0
 
 
+def notify_retry_delay(tries):
+    """失败重试退避: 30s 起, 指数增长, 单次最多 15 分钟。"""
+    try:
+        n = max(1, int(tries or 1))
+    except (TypeError, ValueError):
+        n = 1
+    return min(900, 30 * (2 ** min(n - 1, 5)))
+
+
 def notify_scan():
     """扫一遍归档, 把新出现的哨兵事件推给飞书; 返回本轮推送条数"""
     conf = notify_conf()
@@ -16365,8 +16374,10 @@ def notify_scan():
     st = _nstate_load()
     seen = st.setdefault("seen", {})
     tries = st.setdefault("try", {})
+    retry = st.setdefault("retry", {})
     first = not st.get("init")
     delay = max(5, int(conf.get("delay") or 20))
+    now = time.time()
     cats = ["SentryClips"] + (["SavedClips"] if conf.get("saved") else [])
     sent = 0
     for cat in cats:
@@ -16381,6 +16392,8 @@ def notify_scan():
             key = cat + "/" + name
             if key in seen:
                 continue
+            if retry.get(key, 0) > now:
+                continue            # 网络/飞书暂时失败: 退避后再试, 不永久丢弃
             d = os.path.join(base, name)
             newest = 0.0
             try:
@@ -16388,7 +16401,6 @@ def notify_scan():
                     newest = max(newest, os.path.getmtime(os.path.join(d, f)))
             except OSError:
                 continue
-            now = time.time()
             if now - newest < delay:
                 continue                     # 还在同步写入, 下一轮再看
             # 两道判定:
@@ -16400,9 +16412,13 @@ def notify_scan():
             ev_ts = _ev_ts(name)
             if ev_ts and now - ev_ts > 24 * 3600:
                 seen[key] = int(now)         # 历史回灌(一天以前的片段), 不推
+                tries.pop(key, None)
+                retry.pop(key, None)
                 continue
             if first or now - newest > 6 * 3600:
                 seen[key] = int(now)         # 首次启用不补历史; 太旧的(>6h)也不补
+                tries.pop(key, None)
+                retry.pop(key, None)
                 continue
             ok, msg = notify_push(cat, name)
             st["last"] = {"at": int(time.time()), "ok": ok, "msg": msg, "ev": key}
@@ -16410,11 +16426,12 @@ def notify_scan():
                 sent += 1
                 seen[key] = int(now)
                 tries.pop(key, None)
+                retry.pop(key, None)
             else:
                 tries[key] = tries.get(key, 0) + 1
-                if tries[key] >= 3:
-                    seen[key] = int(now)      # 连推 3 次都失败就放弃, 防止卡住队列
-                    tries.pop(key, None)
+                # 飞书域名/4G 路由抖动是短时故障, 不能 3 次就永久记账;
+                # 保留 pending, 按 30s→15min 退避重试, 最多重试到事件 6 小时。
+                retry[key] = int(now + notify_retry_delay(tries[key]))
             if sent >= 3:
                 break
     if first:
@@ -16422,6 +16439,8 @@ def notify_scan():
     if len(seen) > 3000:                       # 防止状态文件无限膨胀
         for k in sorted(seen, key=lambda x: seen.get(x) or 0)[:len(seen) - 2000]:
             seen.pop(k, None)
+            tries.pop(k, None)
+            retry.pop(k, None)
     _nstate_save(st)
     return sent
 

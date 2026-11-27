@@ -1,0 +1,12 @@
+[Unit]
+Description=TeslaBox Feishu API route via 4G (end1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/tesla-sentry/feishu-route.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

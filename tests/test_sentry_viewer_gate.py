@@ -152,3 +152,63 @@ class AttachedWriteWatchTests(unittest.TestCase):
         self.detach.assert_called_once()
         self.stop.set()
         th.join(timeout=2)
+
+
+class NotifyRetryTests(unittest.TestCase):
+    """飞书网络短时失败不能把事件永久记成 seen; 必须保留 pending 并退避重试。"""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.archive = root / "archive"
+        self.event = self.archive / "SentryClips" / "2026-11-27_12-00-00"
+        self.event.mkdir(parents=True)
+        clip = self.event / "clip.mp4"
+        clip.write_bytes(b"x" * 64)
+        old = time.time() - 60
+        os.utime(clip, (old, old))
+        self.conf = root / "notify.json"
+        self.conf.write_text(json.dumps({
+            "enabled": True, "mode": "dm", "app_id": "cli_test", "app_secret": "secret",
+            "receive_id": "ou_test", "receive_id_type": "open_id", "delay": 20,
+        }))
+        self.state = root / "notify-state.json"
+        self.state.write_text(json.dumps({"init": 1, "seen": {}}))
+        self.patches = [
+            patch.object(viewer, "ARCHIVE", str(self.archive)),
+            patch.object(viewer, "NOTIFY_CONF", str(self.conf)),
+            patch.object(viewer, "NOTIFY_STATE", str(self.state)),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tempdir.cleanup()
+
+    def read_state(self):
+        return json.loads(self.state.read_text())
+
+    def test_retry_delay_backoff(self):
+        self.assertEqual(viewer.notify_retry_delay(1), 30)
+        self.assertEqual(viewer.notify_retry_delay(6), 900)
+        self.assertEqual(viewer.notify_retry_delay(20), 900)
+
+    def test_network_failure_keeps_pending_then_succeeds(self):
+        key = "SentryClips/2026-11-27_12-00-00"
+        with patch.object(viewer, "notify_push", return_value=(False, "No route to host")):
+            self.assertEqual(viewer.notify_scan(), 0)
+        st = self.read_state()
+        self.assertNotIn(key, st["seen"])
+        self.assertGreater(st["retry"][key], int(time.time()))
+        self.assertEqual(st["try"][key], 1)
+
+        st["retry"][key] = 0
+        self.state.write_text(json.dumps(st))
+        with patch.object(viewer, "notify_push", return_value=(True, "已推送")):
+            self.assertEqual(viewer.notify_scan(), 1)
+        st = self.read_state()
+        self.assertIn(key, st["seen"])
+        self.assertNotIn(key, st["try"])
+        self.assertNotIn(key, st["retry"])
