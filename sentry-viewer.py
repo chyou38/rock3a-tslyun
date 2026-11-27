@@ -65,6 +65,7 @@ FILES_DIR = os.path.join(ARCHIVE, "files")
 PORT = int(os.environ.get("TSF_PORT", "80"))
 # Go 只读体检工具: 独立二进制, 不影响主服务; 未安装时接口会返回明确失败项
 DOCTOR_BIN = os.environ.get("TSF_DOCTOR_BIN", "/opt/tesla-sentry/bin/tsf-doctor")
+DOCTOR_HISTORY = os.environ.get("TSF_DOCTOR_HISTORY", "/opt/tesla-sentry/doctor-history.jsonl")
 _DOCTOR_CACHE = {"at": 0.0, "data": None}
 _DOCTOR_LOCK = threading.Lock()
 CATS = ["SentryClips", "SavedClips", "RecentClips"]
@@ -190,7 +191,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.2"
+APP_VERSION = "3.2.5"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 _OTA_DEFAULT = ",".join([
     "https://ghfast.top/https://raw.githubusercontent.com/%s/main" % OTA_REPO,       # 1.1s
@@ -1657,6 +1658,26 @@ select.ninput { cursor:pointer; }
 .doctor-title { font-weight:600; color:var(--text); }
 .doctor-detail { color:var(--muted2); font-size:11.5px; word-break:break-word; margin-top:1px; }
 .doctor-group { color:var(--muted2); font-size:10.5px; font-weight:400; margin-left:6px; }
+.doctor-logsec { margin-top:14px; }
+.doctor-loghead { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:0 0 6px; }
+.doctor-logcount { font-size:10.5px; color:var(--muted2); font-weight:400; }
+.doctor-logtools { display:flex; align-items:center; gap:10px; font-weight:400; }
+.doctor-logtools a, .doctor-logtools button { background:none; border:0; padding:0; color:var(--accent); font:inherit; font-size:11px; cursor:pointer; text-decoration:none; }
+.doctor-logtools a:hover, .doctor-logtools button:hover { text-decoration:underline; }
+.doctor-logdetails { margin-top:3px; }
+.doctor-logdetails summary { cursor:pointer; color:var(--accent); font-size:11px; }
+.doctor-logcheck { display:flex; flex-wrap:wrap; align-items:flex-start; gap:3px 6px; padding:4px 0; border-top:1px dashed var(--line); font-size:11px; line-height:1.4; }
+.doctor-logcheck:first-child { border-top:0; }
+.doctor-logrow { display:flex; align-items:flex-start; gap:8px; padding:7px 0; border-top:1px dashed var(--line); font-size:12px; line-height:1.45; }
+.doctor-logrow:first-child { border-top:0; padding-top:2px; }
+.doctor-logmain { min-width:0; }
+.doctor-logtime { font-weight:600; color:var(--text); }
+.doctor-logstatus { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:8px; margin-left:6px; border:1px solid var(--line2); color:var(--muted2); }
+.doctor-logstatus.pass { color:#4cc38a; border-color:#4cc38a55; }
+.doctor-logstatus.warn { color:#e6a23c; border-color:#e6a23c55; }
+.doctor-logstatus.fail { color:#e8443f; border-color:#e8443f55; }
+.doctor-logsum { display:block; color:var(--muted2); font-size:11px; margin-top:1px; }
+.doctor-logissue { color:var(--muted2); font-size:11.5px; margin-top:1px; word-break:break-word; }
 #gear { position:relative; }
 #gear.hasupd::after { content:''; position:absolute; top:4px; right:4px; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 2px var(--headbg); }
 .upbtn { display:block; width:100%; padding:10px; border:1px dashed var(--line2); border-radius:10px; color:var(--muted); text-align:center; cursor:pointer; font-size:13px; margin-bottom:12px; background:var(--panel2); }
@@ -2651,6 +2672,10 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <span class="doctor-state" id="doctor-state">尚未检查</span>
     </div>
     <div id="doctor-box" class="doctor-box" style="display:none"></div>
+    <div id="doctor-log" class="doctor-logsec" style="display:none">
+      <div class="doctor-loghead"><span>日志记录 <span class="doctor-logcount" id="doctor-log-count"></span></span><span class="doctor-logtools"><a href="/api/doctor/history/download" download>下载</a><button onclick="doctorLogClear()">清空</button></span></div>
+      <div id="doctor-log-box" class="doctor-box"></div>
+    </div>
   </div>
   <div id="tab-auth" style="display:none">
     <b style="font-size:13px">图标与名称</b>
@@ -7900,6 +7925,63 @@ function doctorRender(j) {
   }).join('');
   box.innerHTML = rows || '<div class="hint" style="margin:2px 0">没有检查项</div>';
   box.style.display = '';
+  doctorLogRender(j.history || []);
+}
+function doctorLogRender(list, emptyText) {
+  const sec = document.getElementById('doctor-log');
+  const box = document.getElementById('doctor-log-box');
+  const cnt = document.getElementById('doctor-log-count');
+  if (!sec || !box) return;
+  sec.style.display = '';
+  const items = (list || []).slice(0, 12);
+  if (!items.length) {
+    if (cnt) cnt.textContent = '';
+    box.innerHTML = '<div class="hint" style="margin:2px 0">' + (emptyText || '还没有记录，开始体检后会写入一条') + '</div>';
+    return;
+  }
+  if (cnt) cnt.textContent = '最近 ' + items.length + ' 次';
+  box.innerHTML = items.map(e => {
+    const fail = +(e.fail || 0), warn = +(e.warn || 0), pass = +(e.pass || 0);
+    const cls = fail ? 'fail' : (warn ? 'warn' : 'pass');
+    const status = fail ? '故障' : (warn ? '注意' : '通过');
+    const trig = e.trigger === 'manual' ? '手动' : '自动';
+    const allIssues = (e.issues || []);
+    const issues = allIssues.slice(0, 2).map(x => {
+      const t = x.title || x.id || '';
+      const d = String(x.detail || '').slice(0, 80);
+      return esc(t + (d ? '：' + d : ''));
+    }).filter(Boolean).join('；');
+    const more = allIssues.length > 2 ? ' 等 ' + allIssues.length + ' 项' : '';
+    const ms = +(e.ms || 0);
+    const checks = (e.checks || []);
+    const detail = checks.length ? '<details class="doctor-logdetails"><summary>全部 ' + checks.length + ' 项检查</summary>' +
+      checks.map(c => {
+        const lv = (c.level === 'pass' || c.level === 'warn' || c.level === 'fail') ? c.level : 'info';
+        return '<div class="doctor-logcheck"><span class="doctor-dot ' + lv + '"></span>' +
+          '<span class="doctor-title">' + esc(c.title || c.id || '') + '</span>' +
+          '<span class="doctor-group">' + esc(doctorGroupName(c.group)) + '</span>' +
+          '<div class="doctor-detail">' + esc(c.detail || '') + '</div></div>';
+      }).join('') + '</details>' : '';
+    return '<div class="doctor-logrow"><span class="doctor-dot ' + cls + '"></span>' +
+      '<div class="doctor-logmain"><div><span class="doctor-logtime">' + esc(e.at || '') + '</span>' +
+      '<span class="doctor-logstatus ' + cls + '">' + status + '</span></div>' +
+      '<div class="doctor-logsum">' + pass + ' 通过 · ' + warn + ' 注意 · ' + fail + ' 故障' +
+      (ms ? ' · ' + (ms / 1000).toFixed(1) + 's' : '') + ' · ' + trig + '</div>' +
+      (issues ? '<div class="doctor-logissue">' + issues + more + '</div>' : '') +
+      detail + '</div></div>';
+  }).join('');
+}
+async function doctorLogClear() {
+  if (!confirm('确定清空所有体检日志？此操作不可恢复。')) return;
+  try {
+    const r = await fetch('/api/doctor/history/clear', {method: 'POST', cache: 'no-store', credentials: 'same-origin'});
+    let j = null;
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j || !j.ok) throw new Error((j && j.msg) || ('HTTP ' + r.status));
+    doctorLogRender([], '体检日志已清空');
+  } catch (e) {
+    alert('清空失败: ' + (e && e.message ? e.message : '请求失败'));
+  }
 }
 async function doctorRun(force) {
   if (doctorBusy) return;
@@ -13461,9 +13543,114 @@ def _doctor_error(msg):
     }
 
 
+def _doctor_log_entry(data, trigger="auto"):
+    """把一份体检报告压缩成一行历史记录; 保留全部检查项, 方便回看。"""
+    s = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    def n(k):
+        try:
+            return int(s.get(k) or 0)
+        except Exception:
+            return 0
+    fail, warn, passn, infon = n("fail"), n("warn"), n("pass"), n("info")
+    status = data.get("status") if data.get("status") in ("pass", "warn", "fail") else (
+        "fail" if fail else ("warn" if warn else "pass"))
+    checks, issues = [], []
+    for c in data.get("checks") or []:
+        if not isinstance(c, dict):
+            continue
+        item = {
+            "id": str(c.get("id") or "")[:40],
+            "group": str(c.get("group") or "")[:20],
+            "title": str(c.get("title") or c.get("id") or "")[:80],
+            "level": c.get("level") if c.get("level") in ("pass", "warn", "fail", "info") else "info",
+            "detail": str(c.get("detail") or "")[:200],
+        }
+        checks.append(item)
+        if item["level"] in ("warn", "fail") and len(issues) < 6:
+            issues.append(item)
+    try:
+        ms = int(data.get("ms") or 0)
+    except Exception:
+        ms = 0
+    return {
+        "at": str(data.get("at") or time.strftime("%Y-%m-%d %H:%M:%S")),
+        "status": status, "ok": bool(data.get("ok")),
+        "pass": passn, "warn": warn, "fail": fail, "info": infon, "ms": ms,
+        "app_version": str(data.get("app_version") or APP_VERSION),
+        "tool_version": str(data.get("version") or ""),
+        "trigger": trigger,
+        "host": socket.gethostname(),
+        "issues": issues,
+        "checks": checks,
+    }
+
+
+def _doctor_history_append(data, trigger="auto"):
+    """每次真实体检后追加一行; 日志写失败不影响体检结果。"""
+    try:
+        line = json.dumps(_doctor_log_entry(data, trigger), ensure_ascii=False, separators=(",", ":"))
+        with open(DOCTOR_HISTORY, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        if os.path.getsize(DOCTOR_HISTORY) > 512 * 1024:
+            with open(DOCTOR_HISTORY, encoding="utf-8") as f:
+                tail = f.readlines()[-120:]
+            with open(DOCTOR_HISTORY, "w", encoding="utf-8") as f:
+                f.writelines(tail)
+    except Exception:
+        pass
+
+
+def _doctor_history_bytes():
+    try:
+        with open(DOCTOR_HISTORY, "rb") as f:
+            return f.read()
+    except Exception:
+        return b""
+
+
+def _doctor_history_clear():
+    try:
+        with _DOCTOR_LOCK:
+            os.remove(DOCTOR_HISTORY)
+        return {"ok": True, "msg": "体检日志已清空"}
+    except FileNotFoundError:
+        return {"ok": True, "msg": "没有体检日志"}
+    except Exception as ex:
+        return {"ok": False, "msg": "清空失败: " + str(ex)[:120]}
+
+
+def _doctor_history_read(limit=8):
+    """读取最近 limit 条, 新的在前; 文件不存在/损坏时返回空列表。"""
+    try:
+        with open(DOCTOR_HISTORY, encoding="utf-8") as f:
+            lines = f.readlines()[-limit:]
+    except Exception:
+        return []
+    out = []
+    for line in lines:
+        try:
+            e = json.loads(line)
+            if isinstance(e, dict) and e.get("at"):
+                out.append(e)
+        except Exception:
+            pass
+    return list(reversed(out))
+
+
+def _doctor_finish(data, record=False, trigger="auto"):
+    if record:
+        data = dict(data)
+        data["trigger"] = trigger
+        _doctor_history_append(data, trigger)
+    out = dict(data)
+    out["history"] = _doctor_history_read(12)
+    return out
+
+
 def doctor_report(force=False):
     """运行 Go 只读体检并缓存 30 秒。异常只影响本次报告, 不抛到 HTTP 线程。"""
     global _DOCTOR_CACHE
+    trigger = "manual" if force else "auto"
     now = time.time()
     if not force:
         with _DOCTOR_LOCK:
@@ -13471,15 +13658,15 @@ def doctor_report(force=False):
             if cached and now - float(_DOCTOR_CACHE.get("at") or 0) < 30:
                 out = dict(cached)
                 out["cached"] = True
-                return out
+                return _doctor_finish(out)
     if not _DOCTOR_LOCK.acquire(blocking=False):
         cached = _DOCTOR_CACHE.get("data")
         if cached:
             out = dict(cached)
             out["cached"] = True
             out["busy"] = True
-            return out
-        return _doctor_error("体检正在执行，请稍后重试")
+            return _doctor_finish(out)
+        return _doctor_finish(_doctor_error("体检正在执行，请稍后重试"))
     try:
         env = os.environ.copy()
         # 走本机回环 + 临时会话 Cookie, 兼容只有哈希密码、没有明文密码的认证配置
@@ -13493,23 +13680,23 @@ def doctor_report(force=False):
         raw = (p.stdout or "").strip()
         if not raw:
             err = (p.stderr or "").strip()[-300:] or ("exit=%d" % p.returncode)
-            return _doctor_error("体检工具无输出: " + err)
+            return _doctor_finish(_doctor_error("体检工具无输出: " + err), record=True, trigger=trigger)
         try:
             data = json.loads(raw)
         except Exception as ex:
-            return _doctor_error("体检输出不是 JSON: %s (%s)" % (str(ex)[:120], raw[:160]))
+            return _doctor_finish(_doctor_error("体检输出不是 JSON: %s (%s)" % (str(ex)[:120], raw[:160])), record=True, trigger=trigger)
         if not isinstance(data, dict) or not isinstance(data.get("checks"), list):
-            return _doctor_error("体检输出结构异常")
+            return _doctor_finish(_doctor_error("体检输出结构异常"), record=True, trigger=trigger)
         data["app_version"] = APP_VERSION
         data["cached"] = False
         _DOCTOR_CACHE = {"at": time.time(), "data": data}
-        return data
+        return _doctor_finish(data, record=True, trigger=trigger)
     except FileNotFoundError:
-        return _doctor_error("未安装体检工具: " + DOCTOR_BIN)
+        return _doctor_finish(_doctor_error("未安装体检工具: " + DOCTOR_BIN), record=True, trigger=trigger)
     except subprocess.TimeoutExpired:
-        return _doctor_error("体检超时（20 秒）")
+        return _doctor_finish(_doctor_error("体检超时（20 秒）"), record=True, trigger=trigger)
     except Exception as ex:
-        return _doctor_error("体检执行失败: " + str(ex)[:160])
+        return _doctor_finish(_doctor_error("体检执行失败: " + str(ex)[:160]), record=True, trigger=trigger)
     finally:
         _DOCTOR_LOCK.release()
 
@@ -18332,6 +18519,16 @@ class Handler(BaseHTTPRequestHandler):
             html = html.replace("<head>", "<head>" + _HEAD_BOOT, 1)
             self._send(200, html.encode())
             return
+        elif path == "/api/doctor/history/download":
+            raw = _doctor_history_bytes()
+            fname = "tsf-doctor-history-%s.jsonl" % time.strftime("%Y%m%d-%H%M%S")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % fname)
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
         elif path == "/api/doctor":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             force = q.get("refresh", ["0"])[0] in ("1", "true", "yes")
@@ -19189,6 +19386,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "info": info})
             return
         if not self._gate():
+            return
+        if p == "/api/doctor/history/clear":
+            self._json(_doctor_history_clear())
             return
         if not storage_ready() and p in {
                 "/api/fm", "/api/kick", "/api/export/burn", "/api/stitch", "/api/share/build",
