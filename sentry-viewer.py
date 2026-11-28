@@ -206,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.47"
+APP_VERSION = "3.2.48"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -543,7 +543,7 @@ def ota_check(force=False):
     out = {"ok": True, "current": cur, "latest": "", "date": "", "notes": [],
            "has_update": False, "source": "", "error": "",
            "rollback_ready": os.path.isfile(OTA_BACKUP),
-           "channel": _ota_channel(),
+           "channel": _ota_channel(), "channel_mismatch": False,
            "auto": load_settings().get("auto_update", True),
            "auto_checked": AUTO_UPD["last_check"], "auto_msg": AUTO_UPD["last_result"]}
     try:
@@ -553,7 +553,21 @@ def ota_check(force=False):
         return out
     remote_latest = str(j.get("version"))
     has_update = _vtuple(remote_latest) > _vtuple(cur)
-    # 镜像 CDN 可能缓存旧清单 (例如本机已是 3.2.45, 镜像仍返回 3.2.43)。
+    ch = _ota_channel()
+    # 稳定版渠道但本机跑着更高的测试版构建: 不能把 3.2.47 说成稳定版的最新。
+    # 显示稳定版真实最新版本, 并明确提示当前安装的是测试版, 切换渠道不会自动降级。
+    stable_ahead = ch == "stable" and _vtuple(remote_latest) < _vtuple(cur)
+    if stable_ahead:
+        latest = remote_latest
+        out.update({"latest": latest, "remote_latest": remote_latest,
+                    "date": j.get("date") or "",
+                    "notes": ["当前安装 v%s（测试版构建）；稳定版最新 v%s。切换渠道不会自动降级。"
+                              % (cur, remote_latest)],
+                    "has_update": has_update, "channel_mismatch": True,
+                    "source": urllib.parse.urlsplit(j["_base"]).netloc,
+                    "notes_source": "channel"})
+        return out
+    # 测试版镜像 CDN 可能缓存旧清单 (例如本机已是 3.2.47, 镜像仍返回 3.2.43)。
     # 不能把比本机旧的版本显示成"最新"; 保留 remote_latest 供诊断,
     # 对外 latest 至少等于本机版本, 避免页面误导。
     latest = remote_latest if (has_update or _vtuple(remote_latest) == _vtuple(cur)) else cur
@@ -8833,7 +8847,7 @@ async function otaCheck(force) {
     document.getElementById('upd-cur').textContent = 'v' + j.current;
     document.getElementById('upd-new').textContent = j.latest ? 'v' + j.latest : '—';
     tag.className = 'updtag' + (j.has_update ? ' new' : '');
-    tag.textContent = j.error ? t('检查失败') : (j.has_update ? t('有新版本') : t('已是最新'));
+    tag.textContent = j.error ? t('检查失败') : (j.has_update ? t('有新版本') : (j.channel_mismatch ? t('当前为测试版') : t('已是最新')));
     const n = document.getElementById('upd-notes');
     if (j.notes && j.notes.length) {
       n.innerHTML = j.notes.map(x => '· ' + esc(x)).join('<br>');
@@ -8844,7 +8858,9 @@ async function otaCheck(force) {
     renderAutoUpdate(j);
     msg.textContent = j.error
       ? t('连不上 GitHub') + ': ' + j.error + ' ' + t('(可稍后重试)')
-      : (t('来源') + ': ' + (j.source || '-') + (j.date ? ' · ' + j.date : '') + (j.has_update ? '' : ' · ' + t('已是最新')));
+      : (j.channel_mismatch
+          ? t('当前安装的是测试版；稳定版最新') + ' v' + j.latest
+          : (t('来源') + ': ' + (j.source || '-') + (j.date ? ' · ' + j.date : '') + (j.has_update ? '' : ' · ' + t('已是最新'))));
     document.getElementById('gear').classList.toggle('hasupd', !!j.has_update);
   } catch (e) {
     tag.className = 'updtag'; tag.textContent = t('检查失败');

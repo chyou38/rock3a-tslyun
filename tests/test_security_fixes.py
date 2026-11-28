@@ -254,6 +254,22 @@ class OtaCheckStaleTests(unittest.TestCase):
         self.assertEqual(out["notes"], local["notes"])
         self.assertEqual(out["notes_source"], "local")
 
+    def test_stable_channel_does_not_call_beta_build_stable_latest(self):
+        remote = {"version": "3.2.17", "date": "2026-11-27",
+                  "notes": ["stable"], "_base": "https://gcore.jsdelivr.net"}
+        local = {"version": "3.2.48", "date": "2026-11-28", "notes": ["beta build"]}
+        with patch.object(viewer, "APP_VERSION", "3.2.48"), \
+                patch.object(viewer, "ota_latest", return_value=remote), \
+                patch.object(viewer, "_local_manifest", return_value=local), \
+                patch.object(viewer, "load_settings", return_value={"auto_update": True}), \
+                patch.object(viewer, "_ota_channel", return_value="stable"):
+            out = viewer.ota_check(True)
+        self.assertEqual(out["latest"], "3.2.17")
+        self.assertEqual(out["remote_latest"], "3.2.17")
+        self.assertEqual(out["has_update"], False)
+        self.assertEqual(out["channel_mismatch"], True)
+        self.assertIn("测试版构建", out["notes"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
