@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.51** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.52** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -75,6 +75,13 @@
 | 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、**USB 自愈狗 1 秒级监控，车机 U 盘被弹出或异常断开时立即热挂回，失败再完整恢复；你主动点「连接」管理时自动暂停让路，并显示本次开机累计触发次数**、断电自愈。仓库另带可选的 `scripts/tsf-watch.sh`：每 10 秒心跳、异常写本地 `/opt/tesla-sentry/watch.log`；默认**不推 CmaFree 低水位飞书告警**（该值在 RK3568 上长期 0–1MB 属正常波动），需要恢复时在服务里设 `TSF_WATCH_ALERT_CMA=1`。 |
 
 ---
+
+## v3.2.52 更新（2026-11-28）
+
+- 网页补齐 PWA 配置：`manifest.webmanifest`、192/512 图标、`theme-color`、`apple-touch-icon`、`service worker`，WebToApp 可识别为 PWA。
+- PWA 名称/短名为「TSL哨兵云」/「哨兵云」，图标直接复用当前品牌 LOGO，不新增或覆盖用户图片。
+- 登录页与主页面都注入 PWA 元信息；`manifest.webmanifest`、图标、`sw.js` 免登录可访问，未登录也能安装。
+- Service Worker 不缓存页面、API、`version.json` 与媒体，避免 PWA 缓存旧版本或让通知失效。
 
 ## v3.2.51 更新（2026-11-28）
 

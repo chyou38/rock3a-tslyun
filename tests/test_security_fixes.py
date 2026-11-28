@@ -298,6 +298,38 @@ class AppNotificationQueueTests(unittest.TestCase):
             self.assertFalse(h._app_token_ok(""))
 
 
+class PwaManifestTests(unittest.TestCase):
+    def test_manifest_has_install_icons_and_name(self):
+        m = viewer.pwa_manifest()
+        self.assertEqual(m["name"], "TSL哨兵云")
+        self.assertEqual(m["short_name"], "哨兵云")
+        self.assertEqual(m["start_url"], "/")
+        self.assertEqual(m["display"], "standalone")
+        self.assertIn("theme_color", m)
+        sizes = {i["sizes"] for i in m["icons"]}
+        self.assertTrue({"192x192", "512x512"}.issubset(sizes))
+        for icon in m["icons"]:
+            self.assertTrue(icon["src"].startswith("/icon-"))
+            self.assertEqual(icon["type"], "image/png")
+
+    def test_icon_is_png_with_requested_dimensions(self):
+        for size in (192, 512):
+            data, ctype = viewer.pwa_icon_bytes(size)
+            self.assertEqual(ctype, "image/png")
+            self.assertTrue(data.startswith(b"\x89PNG\r\n\x1a\n"))
+            # PNG IHDR: width/height at bytes 16..24
+            width, height = struct.unpack(">II", data[16:24])
+            self.assertEqual((width, height), (size, size))
+
+    def test_login_and_main_pages_declare_pwa(self):
+        for page in (viewer.LOGIN_HTML, viewer.HTML):
+            for token in ('rel="manifest" href="/manifest.webmanifest"',
+                          'rel="apple-touch-icon"', 'name="theme-color"',
+                          "navigator.serviceWorker.register('/sw.js')"):
+                self.assertIn(token, page)
+        self.assertIn("application/manifest+json", Path(__file__).resolve().parents[1].joinpath("sentry-viewer.py").read_text())
+
+
 class OtaCheckStaleTests(unittest.TestCase):
     def test_older_mirror_version_is_not_shown_as_latest(self):
         remote = {"version": "3.2.43", "date": "2026-11-27",

@@ -207,7 +207,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.51"
+APP_VERSION = "3.2.52"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -1123,6 +1123,82 @@ def brand_logo_bytes():
         return b"", "image/jpeg"
 
 
+# ---------- PWA: manifest / 图标 / 最小 service worker ----------
+_PWA_ICON_CACHE = {}
+_PWA_ICON_LOCK = threading.Lock()
+
+
+def pwa_icon_bytes(size):
+    """从当前品牌 LOGO 生成方形容器 PNG; 不新增/改写用户的 LOGO 文件。
+    convert 不可用时回退 ffmpeg; 都失败则原图返回, 前端仍有图标可用。"""
+    data, ctype = brand_logo_bytes()
+    if not data:
+        return b"", "image/png"
+    try:
+        size = max(32, min(1024, int(size)))
+    except (TypeError, ValueError):
+        size = 192
+    key = (hashlib.sha256(data).hexdigest(), size)
+    with _PWA_ICON_LOCK:
+        hit = _PWA_ICON_CACHE.get(key)
+    if hit:
+        return hit
+    cmds = []
+    if shutil.which("convert"):
+        cmds.append(["convert", "-", "-auto-orient", "-resize", "%dx%d^" % (size, size),
+                     "-gravity", "center", "-extent", "%dx%d" % (size, size), "png:-"])
+    if FFMPEG_BIN:
+        cmds.append([FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+                     "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d"
+                     % (size, size, size, size), "-frames:v", "1",
+                     "-f", "image2pipe", "-vcodec", "png", "pipe:1"])
+    for cmd in cmds:
+        try:
+            r = subprocess.run(cmd, input=data, capture_output=True, timeout=15)
+            if r.returncode == 0 and r.stdout:
+                out = (r.stdout, "image/png")
+                with _PWA_ICON_LOCK:
+                    _PWA_ICON_CACHE[key] = out
+                return out
+        except Exception:
+            pass
+    return data, ctype
+
+
+def pwa_manifest():
+    """WebToApp / 浏览器识别 PWA 用的最小清单; 名称跟当前品牌走。"""
+    name = (brand_name() or "TSL哨兵云").strip() or "TSL哨兵云"
+    short = "哨兵云" if name in ("TSL哨兵云", "TSL哨兵云盘") else name[:12]
+    return {
+        "name": name,
+        "short_name": short,
+        "description": "TSL哨兵云 · 虚拟哨兵 U 盘 / 六路回放 / SEI 行车遥测",
+        "lang": "zh-CN",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "any",
+        "background_color": "#0e1216",
+        "theme_color": "#0d1219",
+        "icons": [
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    }
+
+
+PWA_SW_JS = """const TSF_PWA_VERSION = '__APP_VER__';
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil((async () => {
+  const keys = await caches.keys();
+  await Promise.all(keys.filter(k => k !== 'tsf-pwa-' + TSF_PWA_VERSION).map(k => caches.delete(k)));
+  await self.clients.claim();
+})()));
+/* 不拦截请求: 通知/OTA/页面永远走网络, 避免 PWA 缓存旧版本; 保留 fetch handler 满足可安装条件。 */
+self.addEventListener('fetch', () => {});
+"""
+
+
 def brand_name():
     """自定义标题名; 空串表示用默认名 (前端按语言取默认值)"""
     return load_settings().get("brand_name") or ""
@@ -1288,8 +1364,17 @@ def auto_update_loop():
 
 HTML = r"""<!DOCTYPE html>
 <html lang="zh"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>TSL哨兵云盘</title>
+<meta name="theme-color" content="#0d1219">
+<meta name="application-name" content="TSL哨兵云">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TSL哨兵云">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script>
 <style id="base">
 :root {
   color-scheme: dark;
@@ -20047,6 +20132,15 @@ def fail_check(ip, inc):
 LOGIN_HTML = """<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>__L_LOGIN__ · __L_BRAND__</title>
+<meta name="theme-color" content="#0d1219">
+<meta name="application-name" content="TSL哨兵云">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TSL哨兵云">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(function(){});}</script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
@@ -20332,7 +20426,8 @@ class Handler(BaseHTTPRequestHandler):
         if not AUTH_ON:
             return True
         p = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
-        if p in ("/login", "/logout", "/api/brand/logo"):
+        if p in ("/login", "/logout", "/api/brand/logo", "/manifest.webmanifest",
+                 "/icon-192.png", "/icon-512.png", "/favicon.ico", "/sw.js"):
             return True
         if self._authed():
             return True
@@ -20799,6 +20894,34 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/manifest.webmanifest":
+            body = json.dumps(pwa_manifest(), ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/manifest+json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path in ("/icon-192.png", "/icon-512.png", "/favicon.ico"):
+            size = 512 if path == "/icon-512.png" else (192 if path == "/icon-192.png" else 64)
+            data, ct = pwa_icon_bytes(size)
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if path == "/sw.js":
+            body = PWA_SW_JS.replace("__APP_VER__", APP_VERSION).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
             return
