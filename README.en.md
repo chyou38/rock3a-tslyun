@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**V3.2.54** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
+**V3.2.55** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -75,6 +75,13 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. The repo also ships an optional `scripts/tsf-watch.sh`: a 10-second heartbeat with local `/opt/tesla-sentry/watch.log`. It **does not push the CmaFree low-watermark alert to Feishu by default** (0–1 MB is normal on RK3568); set `TSF_WATCH_ALERT_CMA=1` in the service environment to restore it. |
 
 ---
+
+## What's new in v3.2.55 (2026-11-28)
+
+- Added `[APP-WS]` diagnostics for WebSocket handshakes: source, auth mode, token presence, reject code, connect/disconnect; tokens are never logged.
+- APP settings now show whether WebSocket is connected, plus an opt-in "tokenless on LAN" switch (default off, private/Tailscale sources only; public direct connections still rejected).
+- `/api/notify` exposes `app_ws_open` / `app_ws_active` for troubleshooting.
+- All 89 tests pass.
 
 ## What's new in v3.2.54 (2026-11-28)
 

@@ -26,6 +26,7 @@ import signal
 import http.client
 import ssl
 import secrets
+import ipaddress
 import zipfile
 import tempfile
 import sys
@@ -207,7 +208,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.54"
+APP_VERSION = "3.2.55"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -3050,6 +3051,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div id="tab-app" style="display:none">
     <div class="hint">给 WebToApp / PWA 的独立通知通道。飞书推送可同时保留；这里只负责把哨兵事件写入 APP 待取队列。</div>
     <label class="nrow"><span>启用 APP 通知</span><input type="checkbox" id="app-en"></label>
+    <label class="nrow"><span>内网免令牌 WebSocket</span><input type="checkbox" id="app-open"></label>
+    <div class="hint">默认关闭。仅在手机走 Tailscale/内网反代接入时生效；公网直连仍然拒绝。开启后 App 的 WebSocket 地址可不带 token，认证 Token 留空。</div>
     <div class="nrow"><span>APP 访问令牌</span><input class="ninput" id="app-token" readonly autocomplete="off"></div>
     <div class="brandrow">
       <button class="mini" onclick="appToggleEye()">显示 / 隐藏</button>
@@ -3073,6 +3076,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。<br>
       WebToApp → 通知：选「WebSocket 推送」，URL 填上面的 WebSocket 地址，认证 Token 可不填（地址里已带 token）；这样事件触发就会立即弹通知，不用等轮询。<br>
       轮询作为备用：类型选「轮询通知」，URL 填轮询地址，间隔最小 5 分钟（客户端写死）。两种方式只选一种，避免重复弹。<br>
+      如果手机端一直“连接中”，打开上面的「内网免令牌 WebSocket」保存，App 里 token 可以留空；只在 Tailscale/内网接入时有效。<br>
       手机上的 Tailscale 要保持连接，否则 App 打不开页面，也连不上 WebSocket。
     </div>
   </div>
@@ -8939,16 +8943,20 @@ async function appLoad() {
   try {
     const j = await (await fetch('/api/notify', { cache: 'no-store' })).json();
     document.getElementById('app-en').checked = !!j.app_enabled;
+    const openEl = document.getElementById('app-open');
+    if (openEl) openEl.checked = !!j.app_ws_open;
     appSetToken(j.app_token || '');
     const st = document.getElementById('app-stat');
     if (st) {
       const pending = Number(j.app_pending || 0);
       const last = j.app_last || {};
-      st.textContent = '待取 ' + pending + ' 条' + (last.title ? ' · 最近: ' + last.title : '');
+      st.textContent = '待取 ' + pending + ' 条'
+        + ' · WebSocket ' + (Number(j.app_ws_active || 0) > 0 ? '已连接' : '未连接')
+        + (last.title ? ' · 最近: ' + last.title : '');
     }
     if (m) {
       m.textContent = j.app_enabled
-        ? '已启用；WebSocket 地址用于实时推送，轮询地址作为备用。'
+        ? '已启用；优先用 WebSocket 实时推送，轮询地址作为备用。'
         : '未启用；勾选后保存会生成随机令牌。';
       m.style.color = j.app_enabled ? '#4cc38a' : '';
     }
@@ -8958,12 +8966,13 @@ async function appLoad() {
 }
 async function appSave() {
   const on = document.getElementById('app-en').checked;
+  const open = document.getElementById('app-open').checked;
   const m = document.getElementById('app-msg');
   if (m) { m.textContent = '保存中…'; m.style.color = ''; }
   try {
     const j = await (await fetch('/api/notify/save', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ app_enabled: on })
+      body: JSON.stringify({ app_enabled: on, app_ws_open: open })
     })).json();
     if (m) {
       m.textContent = (j.ok ? '✅ 已保存' : '❌ ' + (j.msg || '保存失败'));
@@ -15920,6 +15929,27 @@ def _app_ws_broadcast(item):
     return sent
 
 
+def _app_ws_active():
+    with _APP_WS_LOCK:
+        return len(_APP_WS_CLIENTS)
+
+
+def _app_ws_private_client(ip):
+    """免令牌模式只允许本机/内网/Tailscale 来源，公网直连不放行。
+
+    Tailscale Serve 会把连接反代成 127.0.0.1，所以这里 loopback 也算内网；
+    该模式必须由用户显式打开，且只应在 Tailscale 仅 tailnet 可访问时使用。
+    """
+    raw = str(ip or "").strip()
+    if raw.startswith("::ffff:"):
+        raw = raw[7:]
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        return False
+    return bool(addr.is_loopback or addr.is_private)
+
+
 def _app_ws_queue_drop(ids):
     """已通过 WebSocket 实时送达的事件从待取队列删除，避免重连后重复弹。"""
     want = {int(x) for x in (ids or []) if str(x).isdigit()}
@@ -15939,7 +15969,7 @@ _NC_DEFAULT = {
     # 巡检告警开关 (网页「推送」页里勾选; 不勾只写 watch.log, 不推飞书)
     "watch_svc": False, "watch_mem": True, "watch_mpp": True, "watch_lun": True, "watch_oom": True,
     # APP 通知: 独立于飞书的待取队列, 给 WebToApp/PWA 轮询
-    "app_enabled": False, "app_token": "",
+    "app_enabled": False, "app_token": "", "app_ws_open": False,
 }
 # 给 tsf-watch.sh 用的极简开关文件: 纯 KEY=0/1, shell 直接 source, 零解析开销
 WATCH_FLAGS_FILE = os.environ.get("TSF_WATCH_FLAGS", os.path.join(RUNTIME_DIR, "watch-flags.conf"))
@@ -17558,6 +17588,8 @@ def notify_status():
         "watch_oom": bool(conf.get("watch_oom")),
         "app_enabled": bool(conf.get("app_enabled")),
         "app_token": str(conf.get("app_token") or ""),
+        "app_ws_open": bool(conf.get("app_ws_open")),
+        "app_ws_active": _app_ws_active(),
         "app_pending": app_stats.get("pending", 0),
         "app_latest": app_stats.get("latest", 0),
         "app_last": app_stats.get("last", {}),
@@ -20575,30 +20607,55 @@ class Handler(BaseHTTPRequestHandler):
 
         WebSocket 连接只在已启用 APP 通知且令牌正确时建立；连接建立后
         服务端主动推送 title/body/url，手机端立即弹原生通知。
+        这里会打印 [APP-WS] 诊断日志（不打印令牌），方便定位手机端握手失败。
         """
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        ip = self.client_address[0] if self.client_address else "?"
+        ua = (self.headers.get("User-Agent") or "")[:100].replace("\n", " ")
         token = (q.get("token", [""])[0] or "").strip()
+        auth_mode = "query" if token else "none"
         auth = (self.headers.get("Authorization") or "").strip()
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()
+            auth_mode = "header"
         if not token:
             token = (self.headers.get("X-TSF-App-Token") or "").strip()
-        if not self._app_token_ok(token):
+            if token:
+                auth_mode = "x-header"
+        conf = notify_conf()
+        allow_open = bool(conf.get("app_ws_open")) and _app_ws_private_client(ip)
+        if token:
+            token_ok = self._app_token_ok(token)
+        else:
+            token_ok = bool(allow_open and conf.get("app_enabled"))
+            if token_ok:
+                auth_mode = "open"
+        print("[APP-WS] attempt ip=%s auth=%s token=%s open=%s ua=%s"
+              % (ip, auth_mode, "yes" if token else "no",
+                 "yes" if allow_open else "no", ua), flush=True)
+        if not token_ok:
+            print("[APP-WS] reject ip=%s auth=%s code=401" % (ip, auth_mode), flush=True)
             self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
             return
 
         key = (self.headers.get("Sec-WebSocket-Key") or "").strip()
         upgrade = (self.headers.get("Upgrade") or "").strip().lower()
         if upgrade != "websocket" or not key:
+            print("[APP-WS] reject ip=%s auth=%s code=400 reason=not-upgrade"
+                  % (ip, auth_mode), flush=True)
             self._json({"ok": False, "msg": "需要 WebSocket Upgrade"}, 400)
             return
         ver = (self.headers.get("Sec-WebSocket-Version") or "13").strip()
         if ver != "13":
+            print("[APP-WS] reject ip=%s auth=%s code=426 reason=version-%s"
+                  % (ip, auth_mode, ver), flush=True)
             self._json({"ok": False, "msg": "仅支持 WebSocket 13"}, 426)
             return
 
         with _APP_WS_LOCK:
             if len(_APP_WS_CLIENTS) >= _APP_WS_MAX:
+                print("[APP-WS] reject ip=%s auth=%s code=503 reason=full"
+                      % (ip, auth_mode), flush=True)
                 self._json({"ok": False, "msg": "WebSocket 连接数已满"}, 503)
                 return
 
@@ -20625,6 +20682,9 @@ class Handler(BaseHTTPRequestHandler):
         client = _AppWSClient(self.connection)
         with _APP_WS_LOCK:
             _APP_WS_CLIENTS.add(client)
+            active = len(_APP_WS_CLIENTS)
+        print("[APP-WS] connected ip=%s auth=%s active=%d"
+              % (ip, auth_mode, active), flush=True)
         try:
             client.send_json({"type": "hello", "ok": True,
                               "app": "TSL哨兵云", "version": APP_VERSION})
@@ -20662,7 +20722,9 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             with _APP_WS_LOCK:
                 _APP_WS_CLIENTS.discard(client)
+                active = len(_APP_WS_CLIENTS)
             client.close()
+            print("[APP-WS] disconnected ip=%s active=%d" % (ip, active), flush=True)
 
     def _gate(self):
         """未登录: 页面跳登录页, 媒体/接口直接 401。返回 True 表示可继续"""
