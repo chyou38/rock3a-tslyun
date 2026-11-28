@@ -207,7 +207,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.53"
+APP_VERSION = "3.2.54"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -3057,8 +3057,10 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
       <button class="mini" onclick="appRotate()">重新生成</button>
     </div>
     <div class="nrow"><span>轮询地址</span><input class="ninput" id="app-url" readonly autocomplete="off"></div>
+    <div class="nrow"><span>WebSocket 地址</span><input class="ninput" id="app-ws" readonly autocomplete="off"></div>
     <div class="brandrow">
       <button class="mini" onclick="appCopyUrl()">复制轮询地址</button>
+      <button class="mini" onclick="appCopyWs()">复制 WebSocket 地址</button>
       <button class="mini primary" onclick="appTest()">发送测试通知</button>
     </div>
     <div class="hint" id="app-msg"></div>
@@ -3068,9 +3070,10 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div class="stabsec sep">WebToApp 配置</div>
     <div class="hint">
-      目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。不要选「网页通知」，哨兵云用的是 URL 轮询。<br>
-      WebToApp → 通知：开启通知权限，类型选「轮询通知」，URL 填上面的地址；间隔填 5 分钟（WebToApp 客户端最小 5 分钟，不能填 15–30 秒）。<br>
-      手机上的 Tailscale 要保持连接，否则 App 打不开页面，也轮询不到通知。
+      目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。<br>
+      WebToApp → 通知：选「WebSocket 推送」，URL 填上面的 WebSocket 地址，认证 Token 可不填（地址里已带 token）；这样事件触发就会立即弹通知，不用等轮询。<br>
+      轮询作为备用：类型选「轮询通知」，URL 填轮询地址，间隔最小 5 分钟（客户端写死）。两种方式只选一种，避免重复弹。<br>
+      手机上的 Tailscale 要保持连接，否则 App 打不开页面，也连不上 WebSocket。
     </div>
   </div>
   <div id="tab-doctor" style="display:none">
@@ -8893,7 +8896,7 @@ async function ntTest() {
 }
 
 /* ---------- APP 设置: WebToApp / PWA 轮询通道 ---------- */
-let appReal = '', appHidden = true, appBase = '';
+let appReal = '', appHidden = true, appBase = '', appWsBase = '';
 function appSetToken(v) {
   appReal = String(v || '');
   const el = document.getElementById('app-token');
@@ -8902,6 +8905,10 @@ function appSetToken(v) {
   if (url) url.value = appReal
     ? appBase + (appHidden ? '?token=••••••••' : '?token=' + encodeURIComponent(appReal))
     : appBase;
+  const ws = document.getElementById('app-ws');
+  if (ws) ws.value = appReal
+    ? appWsBase + (appHidden ? '?token=••••••••' : '?token=' + encodeURIComponent(appReal))
+    : appWsBase;
 }
 function appToggleEye() {
   appHidden = !appHidden;
@@ -8909,6 +8916,9 @@ function appToggleEye() {
 }
 function appUrlFull() {
   return appBase + (appReal ? '?token=' + encodeURIComponent(appReal) : '');
+}
+function appWsFull() {
+  return appWsBase + (appReal ? '?token=' + encodeURIComponent(appReal) : '');
 }
 function appCopyToken() {
   if (!appReal) { toast('请先保存并启用 APP 通知'); return; }
@@ -8918,8 +8928,13 @@ function appCopyUrl() {
   if (!appReal) { toast('请先保存并启用 APP 通知'); return; }
   copyText(appUrlFull(), '轮询地址已复制');
 }
+function appCopyWs() {
+  if (!appReal) { toast('请先保存并启用 APP 通知'); return; }
+  copyText(appWsFull(), 'WebSocket 地址已复制');
+}
 async function appLoad() {
   appBase = location.origin + '/api/app/poll';
+  appWsBase = location.origin.replace(/^http/, 'ws') + '/api/app/ws';
   const m = document.getElementById('app-msg');
   try {
     const j = await (await fetch('/api/notify', { cache: 'no-store' })).json();
@@ -8933,7 +8948,7 @@ async function appLoad() {
     }
     if (m) {
       m.textContent = j.app_enabled
-        ? '已启用；手机端用上面的轮询地址。'
+        ? '已启用；WebSocket 地址用于实时推送，轮询地址作为备用。'
         : '未启用；勾选后保存会生成随机令牌。';
       m.style.color = j.app_enabled ? '#4cc38a' : '';
     }
@@ -15809,6 +15824,113 @@ APP_STATE_FILE = os.environ.get("TSF_APP_STATE", os.path.join(RUNTIME_DIR, "app-
 APP_QUEUE_MAX = 200
 APP_QUEUE_TTL = 7 * 86400
 _APPQ_LOCK = threading.Lock()
+
+# WebToApp「WebSocket 推送」服务端。轮询最小间隔被客户端写死为 5 分钟，
+# 这里用长连接补实时性；车机/盒子只维持 1~2 条手机连接，成本很低。
+_APP_WS_LOCK = threading.Lock()
+_APP_WS_CLIENTS = set()
+_APP_WS_MAX = 8
+_APP_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def _ws_frame(opcode, payload=b""):
+    """服务端 -> 客户端帧，不掩码。只用于小通知，不支持分片。"""
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8")
+    n = len(payload)
+    first = bytes([0x80 | (opcode & 0x0F)])
+    if n < 126:
+        return first + bytes([n]) + payload
+    if n < 65536:
+        return first + bytes([126]) + struct.pack("!H", n) + payload
+    return first + bytes([127]) + struct.pack("!Q", n) + payload
+
+
+def _ws_read_exact(rfile, n):
+    data = b""
+    while len(data) < n:
+        chunk = rfile.read(n - len(data))
+        if not chunk:
+            raise EOFError("websocket closed")
+        data += chunk
+    return data
+
+
+def _ws_read_frame(rfile):
+    """读一帧客户端数据（客户端帧必须带 mask；测试客户端未掩码也兼容）。"""
+    head = _ws_read_exact(rfile, 2)
+    b1, b2 = head[0], head[1]
+    opcode = b1 & 0x0F
+    masked = bool(b2 & 0x80)
+    ln = b2 & 0x7F
+    if ln == 126:
+        ln = struct.unpack("!H", _ws_read_exact(rfile, 2))[0]
+    elif ln == 127:
+        ln = struct.unpack("!Q", _ws_read_exact(rfile, 8))[0]
+    if ln > 2 * 1024 * 1024:
+        raise ValueError("websocket frame too large")
+    mask = _ws_read_exact(rfile, 4) if masked else b""
+    payload = _ws_read_exact(rfile, ln) if ln else b""
+    if masked:
+        payload = bytes(v ^ mask[i & 3] for i, v in enumerate(payload))
+    return opcode, payload
+
+
+class _AppWSClient:
+    def __init__(self, conn):
+        self.conn = conn
+        self._lock = threading.Lock()
+        self.alive = True
+
+    def send_frame(self, opcode, payload=b""):
+        if not self.alive:
+            return False
+        try:
+            with self._lock:
+                self.conn.sendall(_ws_frame(opcode, payload))
+            return True
+        except Exception:
+            self.alive = False
+            return False
+
+    def send_json(self, obj):
+        return self.send_frame(0x1, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+
+    def close(self):
+        self.alive = False
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
+
+def _app_ws_broadcast(item):
+    """向已连接的 APP 推送一条通知；返回成功送达的客户端数。"""
+    with _APP_WS_LOCK:
+        clients = list(_APP_WS_CLIENTS)
+    if not clients:
+        return 0
+    sent = 0
+    for c in clients:
+        if c.send_json(item):
+            sent += 1
+        else:
+            with _APP_WS_LOCK:
+                _APP_WS_CLIENTS.discard(c)
+    return sent
+
+
+def _app_ws_queue_drop(ids):
+    """已通过 WebSocket 实时送达的事件从待取队列删除，避免重连后重复弹。"""
+    want = {int(x) for x in (ids or []) if str(x).isdigit()}
+    if not want:
+        return
+    with _APPQ_LOCK:
+        q = _appq_load()
+        ev = [e for e in (q.get("events") or []) if int(e.get("id") or 0) not in want]
+        if len(ev) != len(q.get("events") or []):
+            q["events"] = ev
+            _appq_save(q)
 FEISHU_API = "https://open.feishu.cn/open-apis"
 _NC_DEFAULT = {
     "enabled": False, "mode": "dm", "webhook": "", "app_id": "", "app_secret": "",
@@ -16987,14 +17109,23 @@ def _appq_append(kind, title, body, url="", key=""):
             return True
         qid = int(q.get("next_id") or 1)
         q["next_id"] = qid + 1
-        q.setdefault("events", []).append({
+        event = {
             "id": qid, "ts": int(time.time()), "kind": str(kind or "event"),
             "title": str(title or "TSL哨兵云")[:120],
             "body": str(body or "")[:500],
             "url": str(url or "")[:500], "key": str(key or "")[:200],
-        })
+        }
+        q.setdefault("events", []).append(event)
         if not _appq_save(q):
             return False
+    # 锁外推送，避免手机网络慢时把队列锁住。已实时送达就从队列移除；
+    # 没有 WebSocket 客户端时保留，轮询客户端仍能取到。
+    try:
+        sent = _app_ws_broadcast(event)
+    except Exception:
+        sent = 0
+    if sent:
+        _app_ws_queue_drop([qid])
     return True
 
 
@@ -20439,6 +20570,100 @@ class Handler(BaseHTTPRequestHandler):
         return bool(conf.get("app_enabled") and expected and got
                     and hmac.compare_digest(got.encode(), expected.encode()))
 
+    def _app_ws_serve(self):
+        """给 WebToApp「WebSocket 推送」用的最小 RFC6455 服务端。
+
+        WebSocket 连接只在已启用 APP 通知且令牌正确时建立；连接建立后
+        服务端主动推送 title/body/url，手机端立即弹原生通知。
+        """
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        token = (q.get("token", [""])[0] or "").strip()
+        auth = (self.headers.get("Authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+        if not token:
+            token = (self.headers.get("X-TSF-App-Token") or "").strip()
+        if not self._app_token_ok(token):
+            self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+            return
+
+        key = (self.headers.get("Sec-WebSocket-Key") or "").strip()
+        upgrade = (self.headers.get("Upgrade") or "").strip().lower()
+        if upgrade != "websocket" or not key:
+            self._json({"ok": False, "msg": "需要 WebSocket Upgrade"}, 400)
+            return
+        ver = (self.headers.get("Sec-WebSocket-Version") or "13").strip()
+        if ver != "13":
+            self._json({"ok": False, "msg": "仅支持 WebSocket 13"}, 426)
+            return
+
+        with _APP_WS_LOCK:
+            if len(_APP_WS_CLIENTS) >= _APP_WS_MAX:
+                self._json({"ok": False, "msg": "WebSocket 连接数已满"}, 503)
+                return
+
+        accept = base64.b64encode(
+            hashlib.sha1((key + _APP_WS_GUID).encode("ascii")).digest()
+        ).decode("ascii")
+        # 手动写 101：BaseHTTPRequestHandler 默认 protocol_version=HTTP/1.0，
+        # 而 WebSocket 客户端按 HTTP/1.1 握手；这里显式用 1.1，避免 OkHttp 拒绝。
+        self.wfile.write(
+            ("HTTP/1.1 101 Switching Protocols\r\n"
+             "Upgrade: websocket\r\n"
+             "Connection: Upgrade\r\n"
+             "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode("ascii"))
+        try:
+            self.wfile.flush()
+        except Exception:
+            pass
+        self.close_connection = True
+        try:
+            self.connection.settimeout(90)   # 客户端每 30s 发 ping
+        except OSError:
+            pass
+
+        client = _AppWSClient(self.connection)
+        with _APP_WS_LOCK:
+            _APP_WS_CLIENTS.add(client)
+        try:
+            client.send_json({"type": "hello", "ok": True,
+                              "app": "TSL哨兵云", "version": APP_VERSION})
+            # 连接瞬间先补发离线期间积压的通知；送达后才从队列移除。
+            items, _latest, _pending = app_poll_webtoapp(5, peek=True)
+            sent_ids = []
+            for item in items:
+                if not client.send_json(item):
+                    break
+                sent_ids.append(item.get("id"))
+            if sent_ids:
+                app_ack(sent_ids)
+            while client.alive:
+                try:
+                    opcode, payload = _ws_read_frame(self.rfile)
+                except (socket.timeout, TimeoutError):
+                    break
+                if opcode == 0x8:             # close
+                    client.send_frame(0x8, payload)
+                    break
+                if opcode == 0x9:             # ping
+                    client.send_frame(0xA, payload)
+                    continue
+                if opcode == 0xA:
+                    continue
+                if opcode == 0x1 and payload:
+                    try:
+                        j = json.loads(payload.decode("utf-8", "replace"))
+                    except Exception:
+                        j = None
+                    if isinstance(j, dict) and str(j.get("type") or "").lower() == "ping":
+                        client.send_json({"type": "pong", "ts": int(time.time() * 1000)})
+        except (EOFError, ConnectionResetError, BrokenPipeError, OSError, ValueError):
+            pass
+        finally:
+            with _APP_WS_LOCK:
+                _APP_WS_CLIENTS.discard(client)
+            client.close()
+
     def _gate(self):
         """未登录: 页面跳登录页, 媒体/接口直接 401。返回 True 表示可继续"""
         if not AUTH_ON:
@@ -20952,6 +21177,10 @@ class Handler(BaseHTTPRequestHandler):
             peek = q.get("peek", ["0"])[0] in ("1", "true", "yes")
             items, latest, pending = app_poll_webtoapp(5, peek)
             self._json(items)
+            return
+        if path == "/api/app/ws":
+            # WebToApp「WebSocket 推送」专用：长连接 + 服务端主动推。
+            self._app_ws_serve()
             return
         if path == "/api/app/notifications":
             # APP 轮询: 用 notify.json 里的独立令牌鉴权, 不要求登录 cookie。

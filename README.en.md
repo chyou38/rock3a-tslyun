@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**V3.2.53** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
+**V3.2.54** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -75,6 +75,13 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. The repo also ships an optional `scripts/tsf-watch.sh`: a 10-second heartbeat with local `/opt/tesla-sentry/watch.log`. It **does not push the CmaFree low-watermark alert to Feishu by default** (0–1 MB is normal on RK3568); set `TSF_WATCH_ALERT_CMA=1` in the service environment to restore it. |
 
 ---
+
+## What's new in v3.2.54 (2026-11-28)
+
+- Added a real-time WebSocket channel for the WebToApp APK: `GET /api/app/ws` pushes `title` / `body` / `url` as soon as a Sentry event arrives, instead of waiting for the client's 5-minute polling floor.
+- WebSocket uses the independent APP token (`?token=` or `Authorization: Bearer`), replays queued events on connect, and removes delivered events to avoid duplicate notifications.
+- The APP settings page now exposes a WebSocket URL with one-click copy. Select WebSocket push in WebToApp and paste that URL; polling remains available as a fallback.
+- Added WebSocket frame/handshake/delivery tests; all 89 tests pass.
 
 ## What's new in v3.2.53 (2026-11-28)
 

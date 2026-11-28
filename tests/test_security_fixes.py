@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import struct
@@ -358,6 +359,42 @@ class PwaManifestTests(unittest.TestCase):
                           "navigator.serviceWorker.register('/sw.js')"):
                 self.assertIn(token, page)
         self.assertIn("application/manifest+json", Path(__file__).resolve().parents[1].joinpath("sentry-viewer.py").read_text())
+
+
+class AppWebSocketTests(unittest.TestCase):
+    def test_server_frame_and_masked_client_roundtrip(self):
+        payload = b"hello"
+        frame = viewer._ws_frame(0x1, payload)
+        self.assertEqual(frame[:2], b"\x81\x05")
+        # 模拟客户端掩码帧: FIN=1, opcode=1, mask=1, len=5
+        mask = b"abcd"
+        masked = bytes([0x81, 0x80 | len(payload)]) + mask + bytes(
+            v ^ mask[i & 3] for i, v in enumerate(payload))
+        opcode, got = viewer._ws_read_frame(io.BytesIO(masked))
+        self.assertEqual((opcode, got), (0x1, payload))
+
+    def test_extended_lengths(self):
+        self.assertEqual(viewer._ws_frame(0x1, b"x" * 126)[:4],
+                         b"\x81\x7e\x00\x7e")
+        self.assertEqual(viewer._ws_frame(0x1, b"x" * 70000)[1:2], b"\x7f")
+
+    def test_live_websocket_delivery_dequeues(self):
+        class FakeClient:
+            def __init__(self):
+                self.items = []
+            def send_json(self, item):
+                self.items.append(item)
+                return True
+        c = FakeClient()
+        with tempfile.TemporaryDirectory() as td:
+            qf = Path(td) / "app-notifications.json"
+            with patch.object(viewer, "APP_QUEUE_FILE", str(qf)), \
+                    patch.object(viewer, "notify_conf",
+                                 return_value={"app_enabled": True, "app_token": "tok"}), \
+                    patch.object(viewer, "_APP_WS_CLIENTS", {c}):
+                self.assertTrue(viewer.app_enqueue_test())
+                self.assertEqual(len(c.items), 1)
+                self.assertEqual(viewer._appq_stats()["pending"], 0)
 
 
 class OtaCheckStaleTests(unittest.TestCase):

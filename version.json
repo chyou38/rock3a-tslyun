@@ -1,14 +1,15 @@
 {
-  "version": "3.2.53",
+  "version": "3.2.54",
   "date": "2026-11-28",
   "notes": [
-    "新增 WebToApp「轮询通知」专用接口 GET /api/app/poll：返回裸 JSON 数组，字段 title/body/url；取走即出队，避免重复通知",
-    "APP 设置里的轮询地址改为 /api/app/poll；WebToApp 通知类型选「轮询通知」，间隔填 5 分钟（客户端最小 5 分钟）",
-    "保留原有 /api/app/notifications 增量接口与 ack 回执，自定义客户端不受影响",
-    "APP 通知测试与队列测试补充；WebToApp 轮询不再把对象响应误当成空通知"
+    "新增 WebToApp「WebSocket 推送」实时通道：GET /api/app/ws，连接建立后服务端主动推送 title/body/url，事件触发即弹通知，不再受客户端 5 分钟轮询限制",
+    "WebSocket 使用独立 APP 令牌鉴权；支持 ?token= 或 Authorization: Bearer，连接上限 8 条，客户端 30 秒 ping 保活",
+    "连接建立时自动补发离线期间积压的通知并在送达后出队；实时送达的事件不再留在轮询队列，避免重复弹",
+    "APP 设置页新增 WebSocket 地址和一键复制；WebToApp 选「WebSocket 推送」填该地址即可，轮询仍作为备用",
+    "补充 WebSocket 帧、握手和实时送达出队测试；全量 89 项测试通过"
   ],
   "sha256": {
-    "sentry-viewer.py": "26439c793819468fa8435ac1c39d636e92ff7f21e3d6a124ce39432c2b000b0a",
+    "sentry-viewer.py": "7645180243861af7a5328839a60e057128addc08f9d4e5e3806fe221f223e1b3",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -16,5 +17,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "Kst82EAvnbA6uJDHfV5u+OH8hoaYW3x2bl6x7miv+llbm492OCvwVHV1XEX9BdHsYJn6KvtX9TvSM4v03lMiCA=="
+  "sig": "3WXgLndjep8xnVITHRnhz0v4mo5X5ldVeWVVtJjNNymZA04q4XT5PnMH7Vad8siOy0bIZwfHYFlxmKuVMSbtCw=="
 }

@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.53** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.54** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -75,6 +75,13 @@
 | 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、**USB 自愈狗 1 秒级监控，车机 U 盘被弹出或异常断开时立即热挂回，失败再完整恢复；你主动点「连接」管理时自动暂停让路，并显示本次开机累计触发次数**、断电自愈。仓库另带可选的 `scripts/tsf-watch.sh`：每 10 秒心跳、异常写本地 `/opt/tesla-sentry/watch.log`；默认**不推 CmaFree 低水位飞书告警**（该值在 RK3568 上长期 0–1MB 属正常波动），需要恢复时在服务里设 `TSF_WATCH_ALERT_CMA=1`。 |
 
 ---
+
+## v3.2.54 更新（2026-11-28）
+
+- 新增 WebToApp「WebSocket 推送」实时通道：`GET /api/app/ws`，连接建立后服务端主动推送 `title` / `body` / `url`，哨兵事件触发即弹通知，不再受客户端 5 分钟轮询限制。
+- WebSocket 使用独立 APP 令牌鉴权，支持 `?token=` 或 `Authorization: Bearer`；连接时自动补发离线积压通知，送达后出队，避免重连重复弹。
+- APP 设置页新增 WebSocket 地址与一键复制；WebToApp 通知类型选「WebSocket 推送」并填入该地址即可，轮询仍作为备用。
+- 补充 WebSocket 帧、握手和实时送达出队测试；全量 89 项测试通过。
 
 ## v3.2.53 更新（2026-11-28）
 
