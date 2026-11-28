@@ -206,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.46"
+APP_VERSION = "3.2.47"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -242,6 +242,8 @@ def _ota_sources_for(branch):
 OTA_SOURCES = _ota_sources_for(_OTA_CHANNEL_DEFAULT)
 OTA_BACKUP = os.environ.get("TSF_OTA_BACKUP", os.path.join(RUNTIME_DIR, "sentry-viewer.bak.py"))
 OTA_STATE = os.environ.get("TSF_OTA_STATE", os.path.join(RUNTIME_DIR, "ota-state.json"))
+# 本机已安装版本的清单: 镜像 CDN 缓存旧版本时, 用它展示本机的更新说明。
+OTA_LOCAL_MANIFEST = os.environ.get("TSF_OTA_MANIFEST", os.path.join(RUNTIME_DIR, "version.json"))
 # 主程序回滚时不能只回滚 sentry-viewer.py: 配套脚本也可能已换新, 必须一起回退。
 OTA_SIDECAR_STATE = os.environ.get("TSF_OTA_SIDECAR_STATE", os.path.join(RUNTIME_DIR, "ota-sidecar-state.json"))
 OTA_SRC_PREF = os.path.join(os.path.dirname(OTA_STATE) or ".", "ota-src.json")  # 记住上次最快的源
@@ -526,6 +528,16 @@ def ota_latest(force=False):
     return j
 
 
+def _local_manifest():
+    """读取本机 version.json; 只用于展示已安装版本的说明, 不作为升级依据。"""
+    try:
+        with open(OTA_LOCAL_MANIFEST, encoding="utf-8") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) and str(j.get("version") or "").strip() else None
+    except (OSError, ValueError):
+        return None
+
+
 def ota_check(force=False):
     cur = APP_VERSION
     out = {"ok": True, "current": cur, "latest": "", "date": "", "notes": [],
@@ -545,11 +557,14 @@ def ota_check(force=False):
     # 不能把比本机旧的版本显示成"最新"; 保留 remote_latest 供诊断,
     # 对外 latest 至少等于本机版本, 避免页面误导。
     latest = remote_latest if (has_update or _vtuple(remote_latest) == _vtuple(cur)) else cur
+    local = None if has_update else _local_manifest()
+    show_local = bool(local and _vtuple(local.get("version")) == _vtuple(cur))
     out.update({"latest": latest, "remote_latest": remote_latest,
-                "date": (j.get("date") or "") if latest == remote_latest else "",
-                "notes": (j.get("notes") or []) if latest == remote_latest else [],
+                "date": (local.get("date") or "") if show_local else (j.get("date") or ""),
+                "notes": (local.get("notes") or []) if show_local else ((j.get("notes") or []) if latest == remote_latest else []),
                 "has_update": has_update,
-                "source": urllib.parse.urlsplit(j["_base"]).netloc})
+                "source": urllib.parse.urlsplit(j["_base"]).netloc,
+                "notes_source": "local" if show_local else ("remote" if latest == remote_latest else "none")})
     return out
 
 

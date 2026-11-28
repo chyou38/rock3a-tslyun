@@ -241,15 +241,18 @@ class OtaCheckStaleTests(unittest.TestCase):
     def test_older_mirror_version_is_not_shown_as_latest(self):
         remote = {"version": "3.2.43", "date": "2026-11-27",
                   "notes": ["old mirror"], "_base": "https://gcore.jsdelivr.net"}
+        local = {"version": "3.2.46", "date": "2026-11-28", "notes": ["本机已安装 v3.2.46 的更新说明"]}
         with patch.object(viewer, "APP_VERSION", "3.2.46"), \
                 patch.object(viewer, "ota_latest", return_value=remote), \
+                patch.object(viewer, "_local_manifest", return_value=local), \
                 patch.object(viewer, "load_settings", return_value={"auto_update": True}), \
                 patch.object(viewer, "_ota_channel", return_value="beta"):
             out = viewer.ota_check(True)
-        self.assertEqual(out["latest"] == "3.2.46", True)
-        self.assertEqual(out["remote_latest"] == "3.2.43", True)
+        self.assertEqual(out["latest"], "3.2.46")
+        self.assertEqual(out["remote_latest"], "3.2.43")
         self.assertEqual(out["has_update"], False)
-        self.assertEqual(out["notes"], [])
+        self.assertEqual(out["notes"], local["notes"])
+        self.assertEqual(out["notes_source"], "local")
 
 
 if __name__ == "__main__":

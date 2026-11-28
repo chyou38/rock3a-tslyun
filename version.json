@@ -1,5 +1,5 @@
 {
-  "version": "3.2.46",
+  "version": "3.2.47",
   "date": "2026-11-28",
   "notes": [
     "OTA 安全升级: version.json 使用 Ed25519 签名 + 每个发布文件 SHA-256 校验; 镜像/CDN 被换包时拒绝下载执行",
@@ -14,10 +14,11 @@
     "幽灵簇回收改写位图/FAT 前先写恢复日志并 fsync; 中途断电下次启动按日志回放",
     "上传按接口设置上限(皮肤/音频 3MB)且超限在读 body 前拒绝, 避免小接口先收 100MB",
     "登录失败表只读检查不再插入新 IP, 过期条目自动清理, 并设 4096 条硬上限防轮换 IP 撑爆",
-    "OTA 页面不再把比本机旧的镜像缓存版本(如 3.2.43)显示成最新; 保留 remote_latest 供诊断"
+    "OTA 页面不再把比本机旧的镜像缓存版本(如 3.2.43)显示成最新; 保留 remote_latest 供诊断",
+    "旧镜像缓存比本机旧时, 更新页改用本机 version.json 的版本说明; 不再把更新说明清空"
   ],
   "sha256": {
-    "sentry-viewer.py": "5ef0d301e691da7293787853c4bae3973d30f1df14bdb2394d03653212323d85",
+    "sentry-viewer.py": "676460945efb3e7eca08b1aa37a75c664e957c0be975fbbc6c274b036532e3dd",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -25,5 +26,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "qW8cpnWHaWgOTCUaPhWIKxKI+IrBKfj386nhiqDi9KYEePDLFIuTZdNUxLyPpB72qgOw8li41mCvRsJb/f84Dg=="
+  "sig": "70Py4KZdpnZm1EUZbGwo+pdEMvmyTpVWTv5u8d5xPW048+JVn/GV3cxXpo+ubE1W/a3UFNtQjrO9WexFEsf3Aw=="
 }
