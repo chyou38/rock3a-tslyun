@@ -208,7 +208,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.56"
+APP_VERSION = "3.2.59"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -17132,7 +17132,7 @@ def _appq_stats():
             "last": ev[-1] if ev else {}}
 
 
-def _appq_append(kind, title, body, url="", key=""):
+def _appq_append(kind, title, body, url="", key="", cat="", name=""):
     """写一条待取通知; 同一 key 只入队一次, 防止扫描/重试重复。"""
     conf = notify_conf()
     if not conf.get("app_enabled") or not str(conf.get("app_token") or "").strip():
@@ -17149,6 +17149,10 @@ def _appq_append(kind, title, body, url="", key=""):
             "body": str(body or "")[:500],
             "url": str(url or "")[:500], "key": str(key or "")[:200],
         }
+        if cat:
+            event["cat"] = str(cat)[:80]
+        if name:
+            event["name"] = str(name)[:160]
         q.setdefault("events", []).append(event)
         if not _appq_save(q):
             return False
@@ -17191,7 +17195,8 @@ def _app_event_payload(cat, name):
 
 def app_enqueue_event(cat, name, key=""):
     title, body, url = _app_event_payload(cat, name)
-    return _appq_append("sentry" if cat == "SentryClips" else "saved", title, body, url, key or (cat + "/" + name))
+    return _appq_append("sentry" if cat == "SentryClips" else "saved", title, body, url,
+                        key or (cat + "/" + name), cat=cat, name=name)
 
 
 def app_enqueue_test():
@@ -17246,6 +17251,95 @@ def app_ack(ids):
         q["events"] = [e for e in (q.get("events") or []) if int(e.get("id") or 0) not in want]
         _appq_save(q)
     return before - len(q.get("events") or [])
+
+
+def _app_net_up(name):
+    """轻量读网卡状态; tailscale0 的 operstate 常见为 unknown, 存在且非 down 即视为可用。"""
+    try:
+        with open("/sys/class/net/%s/operstate" % name) as f:
+            state = f.read().strip().lower()
+        return state not in ("down", "notpresent", "lowerlayerdown")
+    except OSError:
+        return False
+
+
+def _app_service_checks(live):
+    """给 APP 首页/设备页的轻量服务项, 不跑全量体检 (doctor 仍留给设备页按需拉)。"""
+    conf = notify_conf()
+    items = []
+
+    def add(name, ok, detail=""):
+        items.append({"name": name, "ok": bool(ok), "detail": str(detail or "")})
+
+    running = bool((live or {}).get("running"))
+    ago = (live or {}).get("ago")
+    add("哨兵监听", True, "服务在线")
+    add("最近同步", running and (ago is None or ago < 300),
+        "心跳 %s" % ("未知" if ago is None else "%ds" % int(ago)))
+    add("USB 设备", bool(usb_attached), "已连接" if usb_attached else "未连接")
+    add("归档", os.path.isdir(ARCHIVE), ARCHIVE if os.path.isdir(ARCHIVE) else "目录不可用")
+    add("通知", bool(conf.get("app_enabled") and str(conf.get("app_token") or "").strip()),
+        "APP 通道已开" if conf.get("app_enabled") else "APP 通道未开")
+    add("Wi-Fi", _app_net_up("wlp1s0"), "wlp1s0")
+    add("Tailscale", _app_net_up("tailscale0"), "tailscale0")
+    add("存储", storage_ready(), "可读" if storage_ready() else "未就绪")
+    ok = sum(1 for x in items if x["ok"])
+    return {"ok": ok, "total": len(items), "items": items}
+
+
+def _app_event_summary(cat, ev):
+    meta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+    vids = ev.get("videos") if isinstance(ev.get("videos"), list) else []
+    cams = []
+    for v in vids:
+        cam = str(v.get("cam") or "")
+        if cam and cam not in cams:
+            cams.append(cam)
+    return {
+        "cat": cat,
+        "name": str(ev.get("name") or ""),
+        "videos": len(vids),
+        "cams": cams,
+        "size": int(ev.get("size") or 0),
+        "meta": meta,
+        "first_video": (vids[0].get("url") if vids else ""),
+    }
+
+
+def app_overview():
+    """APP 首页一次拉齐: 同步/存储/CPU 温度/服务项 + 三类计数 + 最新哨兵摘要。"""
+    live = live_status()
+    events = list_events()
+    counts = {c: len(events.get(c) or []) for c in CATS}
+    latest = None
+    for ev in (events.get("SentryClips") or []):
+        latest = _app_event_summary("SentryClips", ev)
+        break
+    drive = {}
+    try:
+        _state = write_cat_state()
+        drive = {
+            "on": drive_lock_on(),
+            "locked": car_active_for_usb(),
+            "car_writing": car_writing(),
+            "sentry_writing": sentry_writing_only(),
+            "parked_recording": parked_recording(),
+            "attached": bool(usb_attached),
+            "driving": _state.get("driving"),
+            "recent": bool(_state.get("recent")),
+        }
+    except Exception:
+        drive = {"on": False, "locked": False, "attached": bool(usb_attached)}
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "server_time": int(time.time()),
+        "live": live,
+        "drive": drive,
+        "counts": counts,
+        "latest_sentry": latest,
+        "services": _app_service_checks(live),
+    }
 
 
 def notify_push(cat, name, test=False, force_thumb=None):
@@ -20738,6 +20832,16 @@ class Handler(BaseHTTPRequestHandler):
         if p in ("/login", "/logout", "/api/brand/logo", "/manifest.webmanifest",
                  "/icon-192.png", "/icon-512.png", "/favicon.ico", "/sw.js"):
             return True
+        # 原生 APP 只读直连: 用 notify.json 里的独立令牌, 不要求网页登录 cookie。
+        # 仅放行只读事件/状态/缩略图/媒体, 设置、OTA、售后等写接口仍然必须登录。
+        app_token = (self.headers.get("X-TSF-App-Token") or "").strip()
+        if app_token and (p in ("/api/events", "/api/events_meta", "/api/live",
+                                "/api/live/status", "/api/drive_lock", "/api/doctor",
+                                "/api/ovthumb", "/api/variant_state",
+                                "/api/composite/stream") or p.startswith("/thumb/")
+                          or p.startswith("/media/")):
+            if self._app_token_ok(app_token):
+                return True
         if self._authed():
             return True
         if p in ("/", "/index.html") or "text/html" in (self.headers.get("Accept") or ""):
@@ -21263,6 +21367,20 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit = 50
             self._json(app_notifications(after, limit))
+            return
+        if path == "/api/app/overview":
+            # APP 首页聚合接口: 必须带 APP 令牌, 不依赖网页登录 cookie。
+            token = (self.headers.get("X-TSF-App-Token") or "").strip()
+            if not token:
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                token = (q.get("token", [""])[0] or "").strip()
+            if not self._app_token_ok(token):
+                self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+                return
+            try:
+                self._json(app_overview())
+            except Exception as ex:
+                self._json({"ok": False, "msg": "聚合状态失败: %s" % str(ex)[:120]}, 500)
             return
         if not self._gate():
             return
