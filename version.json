@@ -1,5 +1,5 @@
 {
-  "version": "3.2.49",
+  "version": "3.2.50",
   "date": "2026-11-28",
   "notes": [
     "OTA 安全升级: version.json 使用 Ed25519 签名 + 每个发布文件 SHA-256 校验; 镜像/CDN 被换包时拒绝下载执行",
@@ -17,10 +17,11 @@
     "OTA 页面不再把比本机旧的镜像缓存版本(如 3.2.43)显示成最新; 保留 remote_latest 供诊断",
     "旧镜像缓存比本机旧时, 更新页改用本机 version.json 的版本说明; 不再把更新说明清空",
     "稳定版渠道不再把已安装的测试版构建显示成稳定版最新; 明确提示切换渠道不会自动降级",
-    "OTA 新增 fastly.jsdelivr 镜像源; gcore 缓存旧清单时仍可读到稳定版最新"
+    "OTA 新增 fastly.jsdelivr 镜像源; gcore 缓存旧清单时仍可读到稳定版最新",
+    "OTA 增加 testingcf 镜像; 稳定版清单可即时读取, 不再受 gcore 旧缓存影响"
   ],
   "sha256": {
-    "sentry-viewer.py": "1b03cc9b9bad15e7b3024c2956a08b75be0f7510b603448fab7df1bf98e9db01",
+    "sentry-viewer.py": "cff291e3de9f2b9e194f9a9324c26fe6c7199a4ff20aa1dc50f7a398a7a353fd",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -28,5 +29,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "E4w/vJEKnuMqyN01RUisDi1oVNSqfZ33OquAocwkmKaE6x3rMl7eQTH/83zEtpbWeE/w5Llz5/mzbrs2dp3uAg=="
+  "sig": "B2jVotk6uIrthA4BB2NeSrxVhg4644wqlxHAhW0jAmGmk3/CVeMAsqOMwe57SqShC0GjwK1a+B4vGM46yJ+WBA=="
 }

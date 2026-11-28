@@ -206,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.49"
+APP_VERSION = "3.2.50"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -233,6 +233,7 @@ def _ota_sources_for(branch):
         ",".join([
             "https://ghfast.top/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),       # 1.1s
             "https://fastly.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                              # 实测 gcore 缓存旧版时仍能取新清单
+            "https://testingcf.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                           # 实测可绕过 gcore 缓存, 稳定版即时可见
             "https://gcore.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                              # 1.1s
             "https://ghproxy.net/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),      # 2.4s
             "https://gh-proxy.org/https://raw.githubusercontent.com/%s/%s" % (OTA_REPO, branch),     # 3.2s
