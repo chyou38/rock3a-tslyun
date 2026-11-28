@@ -1,18 +1,28 @@
 {
-  "version": "3.2.43",
-  "date": "2026-11-27",
+  "version": "3.2.44",
+  "date": "2026-11-28",
   "notes": [
-    "飞书视频转码在归档搬运期间也回落到缩略图卡片",
-    "断连后哨兵状态立即复位: 以OTG主机实际连接为准; get_variant总闸: 车机写入/归档搬运时不启动新转码",
-    "修复车机断开USB后仍显示哨兵写入: write-cat定时刷新不代表车机在写; 视频转码在车机写入时统一切到缩略图卡片, 预缓冲取消补上usb_sync_busy",
-    "哨兵只解一帧缩略图/封面, 即使推送配置为 video 也不转码哨兵视频",
-    "哨兵缩略图优先: SentryClips 的列表/飞书封面在车机写入期间也允许解帧, 不再一刀切让路; 飞书推送前校验归档 pending, 归档完成后再推",
-    "飞书告警失败重试修复: 网络/4G 路由短时故障不再 3 次就永久记 seen; 保留 pending, 按 30s→15min 退避重试到事件 6 小时; 配套 Feishu 专用 4G 路由",
-    "修复主循环 state 被 write-cat 覆盖: 哨兵事件 pending 签名被反复清空、永远待确认且反复重扫; 改用独立 cat_state 后两轮签名确认恢复, 常规归档状态同样修复",
-    "自动化测试补充: probe_loop/drive_watch_loop 支持停止事件; 生产行为不变",
-    "新增即时 SEI 复检: 网页连接车机U盘前写 sei-probe.req, 同步服务下一轮强制复检并回写 sei_ts, 不再拿最多 60 秒前的 driving=false 放行",
-    "连接时复检为真行车/未判定/超时一律拒绝; 页面旧的 locked 快照不再直接拦住用户, 由后端复检裁决",
-    "已连接U盘期间车机一有新写入就做即时复检, 变成行车/未判定立即卸载归还车机, 不等 60 秒探针周期",
-    "停车哨兵/手动保存仍允许连接管理; 常规归档与哨兵自动归档的分类不变"
-  ]
+    "OTA 安全升级: version.json 使用 Ed25519 签名 + 每个发布文件 SHA-256 校验; 镜像/CDN 被换包时拒绝下载执行",
+    "配置 --dir 自定义安装时, settings.json/auth.conf/notify/OTA/日志/缓存等状态统一跟随 TSF_DIR; 不再静默关闭认证",
+    "自动/手动升级都会检查车机是否正在写 U 盘; 写入期间升级推迟, 不重启 viewer/live-sync",
+    "归档盘与镜像分离时, 水位清理回退到归档盘自身 statvfs; 低于水位不再永远删 0 个",
+    "飞书 app_id/app_secret 变更后旧 tenant token 立即失效; token 缓存同时绑定应用凭据",
+    "OTA 回滚同时恢复主程序与配套脚本; 更新 sidecar 前先备份, 回滚不再留下新脚本配旧 viewer",
+    "登录 next 跳转拒绝 CR/LF 等控制字符与 //、跨站地址, 防响应头注入",
+    "合成/导出/分享任务 id 只允许文件名安全字符, 防止事件名拼进临时路径造成目录穿越",
+    "网络修改的 90 秒回滚快照落盘; 进程或盒子重启后仍能恢复错误 netplan 配置",
+    "幽灵簇回收改写位图/FAT 前先写恢复日志并 fsync; 中途断电下次启动按日志回放",
+    "上传按接口设置上限(皮肤/音频 3MB)且超限在读 body 前拒绝, 避免小接口先收 100MB",
+    "登录失败表只读检查不再插入新 IP, 过期条目自动清理; 不再被每次 Basic 认证请求撑大"
+  ],
+  "sha256": {
+    "sentry-viewer.py": "e8d43b7ff8e1df5f0ea16e4dd2027b856e44f923e521e556173b18cc8b25897f",
+    "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
+    "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
+    "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
+    "scripts/tesla-img.sh": "b3f949f47eb4f47a6997311e0f3d87603a3b2f149e329798006ec7165762f047",
+    "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
+    "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
+  },
+  "sig": "Z+JKq34CQqPTETQgG5oh8KLSCkz6BOKa6T4jIL1r0n7pfKv0Uua9QUx8c3SQ3eXv8T6o+0prKfyTLdPcjTHFCg=="
 }

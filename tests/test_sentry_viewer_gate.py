@@ -180,6 +180,9 @@ class NotifyRetryTests(unittest.TestCase):
             patch.object(viewer, "ARCHIVE", str(self.archive)),
             patch.object(viewer, "NOTIFY_CONF", str(self.conf)),
             patch.object(viewer, "NOTIFY_STATE", str(self.state)),
+            # 用例目录名固定为 2026-11-27; 超过 24h 后会被“历史回灌”规则记账不推。
+            # 这里把事件时间固定为 1 分钟前, 只测试 pending/退避逻辑, 不依赖跑测试的日期。
+            patch.object(viewer, "_ev_ts", return_value=time.time() - 60),
             patch.object(viewer, "LIVE_STATE", str(root / "live-state.json")),
             patch.object(viewer, "LIVE_STATE", str(self.live_state)),
         ]

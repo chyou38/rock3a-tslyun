@@ -213,6 +213,8 @@ say "写入配置 $CONF ..."
 cat > "$CONF" <<EOF
 # TSL Sentry Box (ROCK 3A) 配置 (由 install.sh 生成)
 TSF_DIR=$TSF_DIR
+TSF_SETTINGS=$TSF_DIR/settings.json
+TSF_AUTH_FILE=$TSF_DIR/auth.conf
 TSF_IMG=$IMG
 TSF_ARCHIVE=$ARCHIVE
 TSF_MNT=/tmp/teslamnt

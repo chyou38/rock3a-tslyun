@@ -58,6 +58,10 @@ def _load_conf(path="/etc/tesla-sentry.conf"):
 
 _load_conf()
 
+# 安装根目录统一入口: --dir 自定义目录时所有状态文件都必须跟着走。
+# 不能只依赖 /opt/tesla-sentry 默认值, 否则 auth.conf/settings.json 会和安装目录分家。
+RUNTIME_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
+
 # 路径/端口优先取环境变量 (缺失时已由 _load_conf 从 conf 补齐), 便于改归档区、端口等
 ARCHIVE = os.environ.get("TSF_ARCHIVE", "/archive")
 SKIN_DIR = os.path.join(ARCHIVE, ".skins")
@@ -66,9 +70,9 @@ AUDIO_DONE = os.path.join(ARCHIVE, "boombox-done")
 FILES_DIR = os.path.join(ARCHIVE, "files")
 PORT = int(os.environ.get("TSF_PORT", "80"))
 # Go 只读体检工具: 独立二进制, 不影响主服务; 未安装时接口会返回明确失败项
-DOCTOR_BIN = os.environ.get("TSF_DOCTOR_BIN", "/opt/tesla-sentry/bin/tsf-doctor")
-DOCTOR_HISTORY = os.environ.get("TSF_DOCTOR_HISTORY", "/opt/tesla-sentry/doctor-history.jsonl")
-DOCTOR_LOG_DIR = os.environ.get("TSF_LOG_DIR", "/opt/tesla-sentry")
+DOCTOR_BIN = os.environ.get("TSF_DOCTOR_BIN", os.path.join(RUNTIME_DIR, "bin", "tsf-doctor"))
+DOCTOR_HISTORY = os.environ.get("TSF_DOCTOR_HISTORY", os.path.join(RUNTIME_DIR, "doctor-history.jsonl"))
+DOCTOR_LOG_DIR = os.environ.get("TSF_LOG_DIR", RUNTIME_DIR)
 DOCTOR_WATCH_LOG = os.path.join(DOCTOR_LOG_DIR, "watch.log")
 DOCTOR_GADGET_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-gadget.log")
 DOCTOR_SYNC_LOG = os.path.join(DOCTOR_LOG_DIR, "tesla-sync.log")
@@ -202,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.43"
+APP_VERSION = "3.2.44"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -236,10 +240,81 @@ def _ota_sources_for(branch):
             "https://cdn.jsdelivr.net/gh/%s@%s" % (OTA_REPO, branch),                                # 海外线路
         ])).split(",") if s.strip()]
 OTA_SOURCES = _ota_sources_for(_OTA_CHANNEL_DEFAULT)
-OTA_BACKUP = os.environ.get("TSF_OTA_BACKUP", "/opt/tesla-sentry/sentry-viewer.bak.py")
-OTA_STATE = os.environ.get("TSF_OTA_STATE", "/opt/tesla-sentry/ota-state.json")
+OTA_BACKUP = os.environ.get("TSF_OTA_BACKUP", os.path.join(RUNTIME_DIR, "sentry-viewer.bak.py"))
+OTA_STATE = os.environ.get("TSF_OTA_STATE", os.path.join(RUNTIME_DIR, "ota-state.json"))
+# 主程序回滚时不能只回滚 sentry-viewer.py: 配套脚本也可能已换新, 必须一起回退。
+OTA_SIDECAR_STATE = os.environ.get("TSF_OTA_SIDECAR_STATE", os.path.join(RUNTIME_DIR, "ota-sidecar-state.json"))
 OTA_SRC_PREF = os.path.join(os.path.dirname(OTA_STATE) or ".", "ota-src.json")  # 记住上次最快的源
 _OTA_CACHE = {}   # 按渠道缓存: {"stable": {"t":..,"data":..}, "beta": {...}}
+
+# OTA 清单签名公钥 (Ed25519)。私钥只离线保存, 不进仓库; 发布时用 scripts/ota-sign.py 签名。
+# 设备端只认这把公钥: 镜像站/CDN 被换包时, 版本号再高也不会被下载执行。
+OTA_PUBKEY_PEM = b"""-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAYxZ5PsvVvOfspKmmr0w6dTldk7EM5e9RBJGJO/NEs3I=
+-----END PUBLIC KEY-----
+"""
+_OTA_VERIFY_CACHE = {}
+
+
+def _ota_manifest_payload(j):
+    """签名覆盖的规范字节: 去掉给内部用的 _ 前缀字段和 sig 本身, 排序后紧凑 JSON。
+    发布端 scripts/ota-sign.py 必须用完全相同的规则, 否则设备验签失败。"""
+    body = {k: v for k, v in j.items() if k != "sig" and not str(k).startswith("_")}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _ota_verify_sig(payload, sig_b64):
+    """用系统 openssl 验 Ed25519 签名。设备上没有 openssl 时一律按不可信处理。"""
+    try:
+        sig = base64.b64decode(str(sig_b64).strip(), validate=True)
+    except Exception:
+        return False
+    if len(sig) != 64:
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="tsf-ota-") as td:
+            pp = os.path.join(td, "payload.bin")
+            sp = os.path.join(td, "sig.bin")
+            kp = os.path.join(td, "pub.pem")
+            with open(pp, "wb") as f:
+                f.write(payload)
+            with open(sp, "wb") as f:
+                f.write(sig)
+            with open(kp, "wb") as f:
+                f.write(OTA_PUBKEY_PEM)
+            r = subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", kp,
+                                "-rawin", "-in", pp, "-sigfile", sp],
+                               capture_output=True, timeout=8)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _ota_manifest_trust(raw):
+    """返回 (可信, 原因)。升级到更高版本必须签名; 比本机旧的清单允许无签名,
+    这样切到新代码的首个版本不会因为上一版清单没签名而整页报错。"""
+    try:
+        j = json.loads(raw.decode("utf-8", "replace")) if isinstance(raw, (bytes, bytearray)) else dict(raw)
+    except Exception:
+        return False, "清单不是合法 JSON"
+    if not isinstance(j, dict) or not str(j.get("version") or "").strip():
+        return False, "清单缺少版本号"
+    sig = j.get("sig")
+    if sig:
+        payload = _ota_manifest_payload(j)
+        ck = hashlib.sha256(payload).hexdigest()
+        ok = _OTA_VERIFY_CACHE.get(ck)
+        if ok is None:
+            ok = _ota_verify_sig(payload, sig)
+            if len(_OTA_VERIFY_CACHE) > 64:
+                _OTA_VERIFY_CACHE.clear()
+            _OTA_VERIFY_CACHE[ck] = bool(ok)
+        if ok:
+            return True, ""
+        return False, "清单签名校验失败"
+    if _vtuple(j.get("version")) <= _vtuple(APP_VERSION):
+        return True, ""          # 旧清单不产生升级动作, 只用于展示/回退判断
+    return False, "新版本清单缺少有效签名"
 
 
 def _http_get(url, timeout=10, limit=8 << 20):
@@ -379,7 +454,7 @@ def ota_latest(force=False):
     def ok(raw):
         try:
             j = json.loads(raw.decode("utf-8", "replace"))
-            return bool(str(j.get("version") or "").strip())
+            return bool(str(j.get("version") or "").strip()) and _ota_manifest_trust(raw)[0]
         except Exception:
             return False
 
@@ -389,7 +464,7 @@ def ota_latest(force=False):
 
     def api_worker():
         j = _api_manifest(branch=branch)
-        if j and str(j.get("version") or "").strip():
+        if j and str(j.get("version") or "").strip() and _ota_manifest_trust(j)[0]:
             fresh.append(j)
 
     apith = threading.Thread(target=api_worker, daemon=True)
@@ -409,7 +484,7 @@ def ota_latest(force=False):
             jj = json.loads(r.decode("utf-8", "replace"))
         except Exception:
             continue
-        if str(jj.get("version") or "").strip():
+        if str(jj.get("version") or "").strip() and _ota_manifest_trust(jj)[0]:
             parsed.append((b, jj))
     if parsed:
         # 镜像 CDN 会缓存旧清单 (实测 ghfast.top 拿到过 2.8.10 而仓库已是 2.8.13),
@@ -422,7 +497,7 @@ def ota_latest(force=False):
     else:
         # 一个源都没给出可用清单: 走 GitHub API 兜底, 再不行就把各源的失败原因报上去
         j2 = _api_manifest(timeout=6, branch=branch)
-        if j2 and str(j2.get("version") or "").strip():
+        if j2 and str(j2.get("version") or "").strip() and _ota_manifest_trust(j2)[0]:
             raced, base = j2, "https://api.github.com"
         else:
             raise RuntimeError(err or "下载源返回的清单无法解析")
@@ -432,7 +507,7 @@ def ota_latest(force=False):
         apith.join(timeout=2.5 if stale else 1.2)
     if not fresh and stale:
         j2 = _api_manifest(timeout=3, branch=branch)
-        if j2 and str(j2.get("version") or "").strip():
+        if j2 and str(j2.get("version") or "").strip() and _ota_manifest_trust(j2)[0]:
             fresh.append(j2)
     # 镜像 CDN 按分支缓存清单, 常出现「版本号已是新版、notes 仍是旧内容」的情况。
     # 只要 GitHub API 拿到同版本或更新的清单, 就以它为准(实时, 无 CDN 缓存)。
@@ -474,7 +549,7 @@ def ota_check(force=False):
 def _self_paths():
     """需要一起覆盖的程序文件 (只认正式安装位置; 临时副本只改它自己)"""
     here = os.path.realpath(__file__)
-    known = ("/opt/tesla-sentry/sentry-viewer.py", "/root/sentry-viewer.py")
+    known = (os.path.join(RUNTIME_DIR, "sentry-viewer.py"), "/root/sentry-viewer.py")
     paths = [here]
     if here not in known:
         return paths
@@ -513,26 +588,57 @@ OTA_SIDECARS = (
 )
 
 
-def _ota_sidecars(base):
+def _ota_restart_live():
+    """在线同步脚本换了必须重启常驻进程, 否则跑的还是旧代码"""
+    try:
+        if os.path.isfile("/etc/init.d/tesla-live"):
+            subprocess.Popen(["/etc/init.d/tesla-live", "restart"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif shutil.which("systemctl"):
+            subprocess.Popen(["systemctl", "restart", "tesla-live.service"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def _ota_sidecar_backup_dir(version):
+    return os.path.join(RUNTIME_DIR, "backup-sidecar-%s" % re.sub(r"[^\w.\-]", "_", str(version)))
+
+
+def _ota_sidecars(base, manifest, latest):
     """主程序升级后顺带更新配套脚本; 返回 (已更新列表, 跳过/失败数)。
-    只覆盖设备上已存在的同名文件; 单个失败不阻断主升级。"""
-    d = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
+    只覆盖设备上已存在的同名文件; 单个失败不阻断主升级。
+    每个脚本都必须命中清单里的 SHA-256, 且替换前备份旧文件供回滚。"""
+    d = RUNTIME_DIR
     if not os.path.isdir(d):
         return [], len(OTA_SIDECARS)
-    updated, failed = [], 0
+    hashes = (manifest.get("sha256") or {}) if isinstance(manifest, dict) else {}
+    bkdir = _ota_sidecar_backup_dir(latest)
+    updated, failed, backed = [], 0, []
     for rel, name, sig, minsz in OTA_SIDECARS:
         dest = os.path.join(d, name)
         if not os.path.isfile(dest):
             failed += 1
             continue
         try:
+            want = str(hashes.get(rel) or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", want):
+                raise ValueError("清单缺少有效 SHA-256")
             data = _http_get("%s/%s?ts=%d" % (base, rel, int(time.time())),
                              timeout=8, limit=512 << 10)
             if len(data) < minsz or sig not in data:
                 raise ValueError("内容校验未通过")
+            if hashlib.sha256(data).hexdigest() != want:
+                raise ValueError("SHA-256 不匹配")
             with open(dest, "rb") as f:
                 if f.read() == data:
-                    continue                      # 内容一致, 不重写也不重启
+                    continue                      # 内容一致, 不重写也不必再次备份
+            # 先备份旧文件; 备份失败就不替换, 保证回滚有东西可回
+            os.makedirs(bkdir, exist_ok=True)
+            bk = os.path.join(bkdir, name)
+            if not os.path.isfile(bk):
+                shutil.copy2(dest, bk)
+                backed.append(name)
             tmp = dest + ".ota-tmp"
             with open(tmp, "wb") as f:
                 f.write(data)
@@ -549,18 +655,54 @@ def _ota_sidecars(base):
             except OSError:
                 pass
             print("ota sidecar skip %s: %s" % (name, ex))
-    # 在线同步脚本换了必须重启常驻进程, 否则跑的还是旧代码
-    if "tesla-live-sync.py" in updated:
+    if updated:
         try:
-            if os.path.isfile("/etc/init.d/tesla-live"):
-                subprocess.Popen(["/etc/init.d/tesla-live", "restart"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif shutil.which("systemctl"):
-                subprocess.Popen(["systemctl", "restart", "tesla-live.service"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            with open(OTA_SIDECAR_STATE, "w", encoding="utf-8") as f:
+                json.dump({"version": latest, "dir": bkdir,
+                           "files": sorted(set(backed) | set(updated)),
+                           "at": int(time.time())}, f, ensure_ascii=False)
+        except OSError as ex:
+            print("ota sidecar state write failed: %s" % ex)
+    if "tesla-live-sync.py" in updated:
+        _ota_restart_live()
+    return updated, failed
+
+
+def _ota_sidecar_rollback():
+    """按 ota-sidecar-state.json 把上一版配套脚本放回去; 返回恢复的文件名列表。"""
+    try:
+        with open(OTA_SIDECAR_STATE, encoding="utf-8") as f:
+            st = json.load(f)
+        bkdir = str(st.get("dir") or "")
+        files = [str(x) for x in (st.get("files") or [])]
+        if not bkdir or not os.path.isdir(bkdir):
+            return []
+        restored = []
+        for name in files:
+            # 状态文件只应该由本程序写; 仍校验文件名, 防止被改成 ../ 越界回滚
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name in (".", ".."):
+                continue
+            bk = os.path.join(bkdir, name)
+            dest = os.path.join(RUNTIME_DIR, name)
+            if not os.path.isfile(bk):
+                continue
+            tmp = dest + ".ota-rb-tmp"
+            shutil.copy2(bk, tmp)
+            try:
+                os.chmod(tmp, 0o755 if name.endswith(".sh") else 0o644)
+            except OSError:
+                pass
+            os.replace(tmp, dest)
+            restored.append(name)
+        try:
+            os.unlink(OTA_SIDECAR_STATE)
         except OSError:
             pass
-    return updated, failed
+        if "tesla-live-sync.py" in restored:
+            _ota_restart_live()
+        return restored
+    except (OSError, ValueError):
+        return []
 
 
 def _ota_restart():
@@ -595,6 +737,12 @@ def _ota_restart():
 
 def ota_apply():
     """下载并安装最新版; 返回 (成功?, 提示/错误)"""
+    # 升级会重启 viewer/live-sync, 车机正在写U盘时一律不打断; 自动/手动都适用。
+    try:
+        if car_active_for_background():
+            return False, "车机正在写入U盘, 升级已推迟; 请等写入结束后再试"
+    except Exception:
+        pass
     try:
         j = ota_latest(True)
     except Exception as ex:
@@ -605,15 +753,21 @@ def ota_apply():
     # 下载也走多源竞速: 清单来源的镜像突然挂了, 其它源照样能补位
     # 必须锁定清单所属渠道的分支, 否则切到测试版后仍会下到 main 的稳定版文件
     branch = str(j.get("_branch") or _ota_branch())
+    want_main = str(((j.get("sha256") or {}) if isinstance(j, dict) else {}).get("sentry-viewer.py") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", want_main):
+        return False, "清单缺少 sentry-viewer.py 的 SHA-256, 拒绝安装"
     try:
         data, base = _race_get("/sentry-viewer.py?ts=%d" % int(time.time()), timeout=60, limit=8 << 20,
-                               validate=lambda d: len(d) > 50000 and b"APP_VERSION" in d,
+                               validate=lambda d: len(d) > 50000 and b"APP_VERSION" in d
+                               and hashlib.sha256(d).hexdigest() == want_main,
                                sources=_ota_sources_for(branch))
     except Exception as ex:
         return False, "下载失败: %s" % ex
-    # 1) 完整性校验: 大小 + 特征串 + 内嵌版本号必须与清单一致
+    # 1) 完整性校验: 大小 + 特征串 + 内嵌版本号 + 清单 SHA-256 必须一致
     if len(data) < 50000:
         return False, "下载不完整 (%d 字节)" % len(data)
+    if hashlib.sha256(data).hexdigest() != want_main:
+        return False, "SHA-256 校验失败, 拒绝安装"
     if b"APP_VERSION" not in data or b"--ota-check" not in data or b"/api/events" not in data:
         return False, "文件校验失败: 不是有效的查看器程序"
     m = re.search(rb'APP_VERSION\s*=\s*"([^"]+)"', data)
@@ -653,7 +807,7 @@ def ota_apply():
         return False, "写入失败: %s" % ex
     # 3.5) 配套脚本一并升级 (单个失败不影响主程序; 内容一致则跳过不重写)
     try:
-        upd, skipped = _ota_sidecars(base)
+        upd, skipped = _ota_sidecars(base, j, latest)
     except Exception as ex:
         upd, skipped = [], len(OTA_SIDECARS)
         print("ota sidecars error:", ex)
@@ -672,35 +826,45 @@ def ota_apply():
 
 
 def ota_rollback():
-    if not os.path.isfile(OTA_BACKUP):
+    """主程序与配套脚本一起回滚; 只回主程序会让新 sidecar 继续跑在旧 viewer 上。"""
+    has_main = os.path.isfile(OTA_BACKUP)
+    has_side = os.path.isfile(OTA_SIDECAR_STATE)
+    if not has_main and not has_side:
         return False, "没有可用的备份 (还没升级过)"
-    try:
-        with open(OTA_BACKUP, "rb") as f:
-            data = f.read()
-    except OSError as ex:
-        return False, "读取备份失败: %s" % ex
-    if len(data) < 50000:
-        return False, "备份文件不完整, 已放弃回滚"
-    try:
-        _write_each(_self_paths(), data)
-    except Exception as ex:
-        return False, "写入失败: %s" % ex
+    restored_side = []
+    if has_side:
+        restored_side = _ota_sidecar_rollback()
+    if has_main:
+        try:
+            with open(OTA_BACKUP, "rb") as f:
+                data = f.read()
+        except OSError as ex:
+            return False, "读取备份失败: %s" % ex
+        if len(data) < 50000:
+            return False, "备份文件不完整, 已放弃回滚"
+        try:
+            _write_each(_self_paths(), data)
+        except Exception as ex:
+            return False, "写入失败: %s" % ex
     threading.Timer(1.0, _ota_restart).start()
-    return True, "已回滚到上一版本, 服务正在重启…"
+    msg = "已回滚到上一版本, 服务正在重启…"
+    if restored_side:
+        msg += " 配套脚本已回滚: " + ", ".join(restored_side)
+    return True, msg
 
 
 # ---------- 自动更新 ----------
 # 设置存在 settings.json (与 auth.conf 同目录), 默认开启: 每 5 分钟看一次有没有新版本,
 # 有就等"没人在看视频/没有导出任务"的窗口自动升级 (升级只重启本服务, 约 5 秒)
-SETTINGS_FILE = os.environ.get("TSF_SETTINGS", "/opt/tesla-sentry/settings.json")
+SETTINGS_FILE = os.environ.get("TSF_SETTINGS", os.path.join(RUNTIME_DIR, "settings.json"))
 # 同步服务每 8 秒写入: 哪个分类正在写 (RecentClips=行车中, SentryClips/SavedClips=哨兵/手动保存)
-WRITE_CAT_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "write-cat.json")
+WRITE_CAT_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or RUNTIME_DIR, "write-cat.json")
 # 与 tesla-live-sync.py 约定: 写这个文件请求一次即时 SEI 复检(不等 60 秒周期)
-SEI_REQ_FILE = os.path.join(os.path.dirname(WRITE_CAT_FILE) or "/opt/tesla-sentry", "sei-probe.req")
+SEI_REQ_FILE = os.path.join(os.path.dirname(WRITE_CAT_FILE) or RUNTIME_DIR, "sei-probe.req")
 AUTO_UPD = {"last_check": 0, "last_result": "", "last_apply": 0, "next_try": 0}
 
 # ---- 标题栏标识 (logo + 名称): 默认内置这张图, 设置里可换成自己的 ----
-BRAND_DIR = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "brand")
+BRAND_DIR = os.path.join(os.path.dirname(SETTINGS_FILE) or RUNTIME_DIR, "brand")
 BRAND_NAME_MAX = 24
 BRAND_NAME_DEFAULT = "TSL哨兵云盘"
 # 168x168 JPEG, 已缩到够 34px 显示 3 倍屏用; 内嵌避免设备上没有图片文件
@@ -986,9 +1150,15 @@ def brand_save_logo(data):
 
 
 def _update_window_ok():
-    """自动升级前探一下: 有人在拉视频/正在导出时先不动, 免得把人正在看的东西打断"""
+    """自动升级前探一下: 有人在拉视频/正在导出/车机正在写U盘时先不动,
+    升级重启会打断车机写入, 必须先让路。"""
     try:
         if MEDIA_ACTIVE[0] > 0:
+            return False
+    except Exception:
+        pass
+    try:
+        if car_active_for_background():
             return False
     except Exception:
         pass
@@ -9763,7 +9933,7 @@ def amap_key():
     return AMAP_KEY
 
 
-GEO_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/geo"
+GEO_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/geo"
 GEO_LOCK = threading.Lock()
 GEO_BUSY = set()
 GEO_SEM = threading.Semaphore(4)       # 最多 4 个高德反查线程, 防事件多时线程/请求暴涨
@@ -10414,9 +10584,95 @@ def fan_apply(mode, manual):
 
 # ---------- 网络设置 (netplan -> systemd-networkd) ----------
 NETPLAN_FILE = "/etc/netplan/10-dhcp-all-interfaces.yaml"
+# 网络改错后的 90 秒回滚计时器不能只放内存: 进程/盒子重启后必须还能恢复。
+NET_ROLL_STATE = os.environ.get("TSF_NET_ROLL_STATE", os.path.join(RUNTIME_DIR, "net-rollback.json"))
+NET_ROLL_SECS = 90
 _net_roll_timer = None
 _net_roll_snap = None
 _net_lock = threading.Lock()
+
+
+def _net_roll_read():
+    try:
+        with open(NET_ROLL_STATE, encoding="utf-8") as f:
+            st = json.load(f)
+        if isinstance(st, dict) and str(st.get("config") or ""):
+            return st
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _net_roll_save(snap, deadline):
+    os.makedirs(os.path.dirname(NET_ROLL_STATE) or ".", exist_ok=True)
+    tmp = NET_ROLL_STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"config": snap, "deadline": float(deadline),
+                   "path": NETPLAN_FILE, "at": int(time.time())}, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, NET_ROLL_STATE)
+
+
+def _net_roll_clear():
+    try:
+        os.unlink(NET_ROLL_STATE)
+    except OSError:
+        pass
+
+
+def _net_restore(snap):
+    try:
+        with open(NETPLAN_FILE, "w") as f:
+            f.write(snap)
+        subprocess.run(["netplan", "apply"], capture_output=True, timeout=60)
+        return True
+    except (OSError, subprocess.TimeoutExpired) as ex:
+        print("net rollback error:", ex, flush=True)
+        return False
+
+
+def _net_rollback():
+    global _net_roll_timer, _net_roll_snap
+    with _net_lock:
+        snap = _net_roll_snap
+        _net_roll_snap = None
+        _net_roll_timer = None
+        if snap is None:
+            st = _net_roll_read()
+            snap = str((st or {}).get("config") or "")
+        if not snap:
+            _net_roll_clear()
+            return
+        if _net_restore(snap):
+            _net_roll_clear()
+            print("net rollback: restored previous netplan config", flush=True)
+
+
+def _net_roll_recover():
+    """进程重启后恢复未确认的网络配置: 已过截止时间就立即回滚, 没到就续上计时器。"""
+    global _net_roll_timer, _net_roll_snap
+    st = _net_roll_read()
+    if not st:
+        return
+    snap = str(st.get("config") or "")
+    dl = float(st.get("deadline") or 0)
+    if not snap:
+        _net_roll_clear()
+        return
+    with _net_lock:
+        _net_roll_snap = snap
+        remain = max(1.0, dl - time.time())
+        if _net_roll_timer:
+            _net_roll_timer.cancel()
+        _net_roll_timer = threading.Timer(remain, _net_rollback)
+        _net_roll_timer.daemon = True
+        _net_roll_timer.start()
+    print("net rollback: resumed pending rollback in %.0fs" % remain, flush=True)
 
 
 def _netplan_cfg():
@@ -10431,23 +10687,6 @@ def _netplan_cfg():
     net.setdefault("version", 2)
     net.setdefault("renderer", "networkd")
     return cfg
-
-
-def _net_rollback():
-    global _net_roll_timer, _net_roll_snap
-    with _net_lock:
-        snap = _net_roll_snap
-        _net_roll_snap = None
-        _net_roll_timer = None
-        if snap is None:
-            return
-        try:
-            with open(NETPLAN_FILE, "w") as f:
-                f.write(snap)
-            subprocess.run(["netplan", "apply"], capture_output=True, timeout=60)
-            print("net rollback: restored previous netplan config")
-        except OSError as ex:
-            print("net rollback error:", ex)
 
 
 def _netplan_apply(cfg):
@@ -10469,34 +10708,40 @@ def _netplan_apply(cfg):
             os.replace(tmp, NETPLAN_FILE)
             r = subprocess.run(["netplan", "apply"], capture_output=True, text=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired) as ex:
+            if snap is not None:
+                _net_restore(snap)
             return False, "应用失败: %s" % ex
         if r.returncode != 0:
             if snap is not None:
-                try:
-                    with open(NETPLAN_FILE, "w") as f:
-                        f.write(snap)
-                    subprocess.run(["netplan", "apply"], capture_output=True, timeout=60)
-                except OSError:
-                    pass
+                _net_restore(snap)
             return False, (r.stderr or r.stdout).strip()[-200:]
         if snap is not None:
+            # 先把回滚快照落盘, 再挂内存计时器; 进程/盒子重启后还能恢复。
+            try:
+                _net_roll_save(snap, time.time() + NET_ROLL_SECS)
+            except OSError as ex:
+                _net_restore(snap)
+                return False, "无法保存网络回滚状态: %s" % ex
             _net_roll_snap = snap
             if _net_roll_timer:
                 _net_roll_timer.cancel()
-            _net_roll_timer = threading.Timer(90, _net_rollback)
+            _net_roll_timer = threading.Timer(NET_ROLL_SECS, _net_rollback)
             _net_roll_timer.daemon = True
             _net_roll_timer.start()
+        else:
+            _net_roll_clear()
         return True, "ok"
 
 
 def net_confirm():
     global _net_roll_timer, _net_roll_snap
     with _net_lock:
-        had = _net_roll_timer is not None
+        had = _net_roll_timer is not None or _net_roll_read() is not None
         if _net_roll_timer:
             _net_roll_timer.cancel()
         _net_roll_timer = None
         _net_roll_snap = None
+        _net_roll_clear()
         return had
 
 
@@ -10726,7 +10971,7 @@ def _nm_con_get(con, keys):
 
 
 def net_state():
-    st = {"ok": True, "roll_pending": _net_roll_timer is not None, "wired": {}, "wifi": {}}
+    st = {"ok": True, "roll_pending": _net_roll_timer is not None or _net_roll_read() is not None, "wired": {}, "wifi": {}}
     n = _wired_iface()
     w = st["wired"]
     w["iface"] = n
@@ -11287,7 +11532,7 @@ def bt_remove(mac):
 
 # ---------- 设备连接与物理存储盘管理 ----------
 STORAGE_MNT = "/mnt/tsf-storage"
-TSF_RUNTIME_DIR = os.environ.get("TSF_DIR", "/opt/tesla-sentry")
+TSF_RUNTIME_DIR = RUNTIME_DIR
 STORAGE_USE_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-use.sh")
 STORAGE_INIT_SCRIPT = os.path.join(TSF_RUNTIME_DIR, "storage-init.sh")
 
@@ -11745,7 +11990,7 @@ def _usb_guard_log(msg):
     except Exception:
         pass
     try:
-        log_dir = os.environ.get("TSF_LOG_DIR") or os.environ.get("TSF_DIR") or "/opt/tesla-sentry"
+        log_dir = os.environ.get("TSF_LOG_DIR") or RUNTIME_DIR
         with open(os.path.join(log_dir, "tesla-gadget.log"), "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
@@ -11910,7 +12155,7 @@ def _usb_guard_replug():
 
 
 def _usb_guard_full_on():
-    helper = os.path.join(os.environ.get("TSF_DIR") or "/opt/tesla-sentry", "tesla-gadget.sh")
+    helper = os.path.join(RUNTIME_DIR, "tesla-gadget.sh")
     if not os.path.isfile(helper):
         return False, "找不到 tesla-gadget.sh"
     try:
@@ -12280,6 +12525,75 @@ RECLAIM_MIN_MB = int(os.environ.get("TSF_RECLAIM_MIN_MB", "0"))       # 0=关闭
 RECLAIM_IDLE_S = int(os.environ.get("TSF_RECLAIM_IDLE_S", "180"))    # 与 tesla-sync.sh 的空闲门槛一致
 RECLAIM_EVERY_S = 4 * 3600                                            # 两次回收至少间隔 4 小时
 _reclaim_ts = [0.0]
+# 改写位图前先把原始字节写进日志; 断电/被杀后下次启动按日志回放, 避免留下半新半旧位图。
+RECLAIM_JOURNAL = os.environ.get("TSF_RECLAIM_JOURNAL", IMG + ".reclaim-journal")
+RECLAIM_JOURNAL_MAGIC = b"TSRJ"
+
+
+def _reclaim_journal_write(writes):
+    """writes: [(offset, original_bytes, new_bytes)]。先完整落盘日志, 再返回。"""
+    parts, blob = [], bytearray()
+    for off, orig, _new in writes:
+        parts.append({"off": int(off), "len": len(orig)})
+        blob.extend(orig)
+    hdr = json.dumps({"parts": parts, "at": int(time.time()),
+                      "image": IMG}, ensure_ascii=False).encode()
+    tmp = RECLAIM_JOURNAL + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(RECLAIM_JOURNAL_MAGIC)
+        f.write(struct.pack("<I", len(hdr)))
+        f.write(hdr)
+        f.write(bytes(blob))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, RECLAIM_JOURNAL)
+    try:
+        dfd = os.open(os.path.dirname(RECLAIM_JOURNAL) or ".", os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:
+        pass
+
+
+def _reclaim_recover():
+    """回放未完成回收的原始位图/FAT 字节。返回 True 表示做过恢复。"""
+    if not os.path.isfile(RECLAIM_JOURNAL):
+        return False
+    if not os.path.isfile(IMG):
+        return False
+    try:
+        with open(RECLAIM_JOURNAL, "rb") as f:
+            if f.read(4) != RECLAIM_JOURNAL_MAGIC:
+                raise ValueError("bad journal magic")
+            n = struct.unpack("<I", f.read(4))[0]
+            if n <= 0 or n > 1 << 20:
+                raise ValueError("bad journal header")
+            hdr = json.loads(f.read(n).decode("utf-8", "replace"))
+            parts = hdr.get("parts") or []
+            if not isinstance(parts, list) or len(parts) > 4096:
+                raise ValueError("bad journal parts")
+            fd = os.open(IMG, os.O_RDWR)
+            try:
+                for p in parts:
+                    off = int(p.get("off"))
+                    ln = int(p.get("len"))
+                    if off < 0 or ln <= 0 or ln > 64 << 20:
+                        raise ValueError("bad journal part")
+                    data = f.read(ln)
+                    if len(data) != ln:
+                        raise ValueError("journal truncated")
+                    os.pwrite(fd, data, off)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        os.unlink(RECLAIM_JOURNAL)
+        print("reclaim: recovered unfinished bitmap/FAT journal", flush=True)
+        return True
+    except Exception as ex:
+        print("reclaim journal recovery skipped: %s" % ex, flush=True)
+        return False
 
 
 def _exf_collect_refs(fd):
@@ -12469,6 +12783,12 @@ def _exf_orphan_count(bm_data, refs, g):
 
 def reclaim_ghost_allocations():
     """回收位图里的幽灵占用。返回释放的字节数 (0 = 本次没动手)。"""
+    # 上次写盘中断的恢复日志优先回放; 即使回收功能已关闭也要把镜像还原到一致状态
+    if os.path.isfile(RECLAIM_JOURNAL) and os.path.exists(IMG):
+        if os.path.ismount(MNT) or usb_img_age() < RECLAIM_IDLE_S:
+            return 0
+        if not _reclaim_recover():
+            return 0
     if RECLAIM_MIN_MB <= 0 or not os.path.exists(IMG):
         return 0
     now = time.time()
@@ -12527,22 +12847,38 @@ def reclaim_ghost_allocations():
                     new_bm[(c - 2) >> 3] |= 1 << ((c - 2) & 7)
                 # 2) 清掉被释放簇上的 FAT 陈旧项, 让 FAT 与位图一致
                 cl_max = g["cl_max"]
+                fat_orig = list(fat)
                 dirty = [c for c in range(2, cl_max)
-                         if fat[c] != 0 and c not in refs]
-                fat_out = None
-                if dirty:
-                    for c in dirty:
-                        fat[c] = 0
-                    fat_out = struct.pack("<%dI" % len(fat), *fat)
-                # 内容全部在内存备好后再落盘 (避免写一半失败留下半新半旧的位图)
+                         if fat_orig[c] != 0 and c not in refs]
+                writes = []
                 off = 0
                 for c in bm_chain:
-                    os.pwrite(fd, bytes(new_bm[off:off + g["csz"]]),
-                              (g["heap_off"] + (c - 2) * g["spc"]) * g["bps"])
+                    pos = (g["heap_off"] + (c - 2) * g["spc"]) * g["bps"]
+                    chunk = bytes(new_bm[off:off + g["csz"]])
+                    orig = os.pread(fd, len(chunk), pos)
+                    if len(orig) != len(chunk):
+                        raise ValueError("bitmap read short")
+                    writes.append((pos, orig, chunk))
                     off += g["csz"]
-                if fat_out:
-                    os.pwrite(fd, fat_out, g["fat_off"] * g["bps"])
+                if dirty:
+                    fat_out = bytearray(struct.pack("<%dI" % len(fat_orig), *fat_orig))
+                    for c in dirty:
+                        fat_out[c * 4:c * 4 + 4] = b"\0\0\0\0"
+                    pos = g["fat_off"] * g["bps"]
+                    orig = os.pread(fd, len(fat_out), pos)
+                    if len(orig) != len(fat_out):
+                        raise ValueError("FAT read short")
+                    writes.append((pos, orig, bytes(fat_out)))
+                # 先把原始字节写进恢复日志并 fsync, 再改镜像;
+                # 断电/被杀后下次启动按日志回放, 不会留下半新半旧位图。
+                _reclaim_journal_write(writes)
+                for pos, _orig, new in writes:
+                    os.pwrite(fd, new, pos)
                 os.fsync(fd)
+                try:
+                    os.unlink(RECLAIM_JOURNAL)
+                except OSError as ex:
+                    print("reclaim journal unlink failed: %s" % ex)
                 print("reclaim: freed %d clusters (%.2f GB), fat cleaned %d"
                       % (ghosts, ghosts * g["csz"] / 1073741824, len(dirty)))
                 return ghosts * g["csz"]
@@ -13262,7 +13598,7 @@ def active_skin():
 # ---------------- 多路合成导出 (ffmpeg) ----------------
 FFMPEG_BIN = os.environ.get("TSF_FFMPEG") or "ffmpeg"
 FFPROBE_BIN = os.environ.get("TSF_FFPROBE") or "ffprobe"
-STITCH_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
+STITCH_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/stitch-tmp"  # 不用 /tmp: tmpfs 占内存, 大视频会挤爆 RAM
 STITCH_JOBS = {}
 _STITCH_SEEN = {}
 
@@ -13622,7 +13958,7 @@ def _ramp_release():
     with _RAMP_LOCK:
         _RAMP["n"] = max(0, _RAMP["n"] - 1)
 PLAYBACK_TTL = 30
-THUMB_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/thumbs"
+THUMB_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/thumbs"
 THUMB_SEM = threading.BoundedSemaphore(3)
 THUMB_W = 400
 THUMB_QUOTA = 2 * 1024 * 1024 * 1024      # 列表/触发封面单独 2G, 不挤占预缓冲 30G
@@ -13933,15 +14269,15 @@ RES_FPS = {"360p": 24, "480p": 24, "720p": 24, "1080p": 24}
 # v8: RGA/setsar 重置 SAR=1(旧产物 SAR 2353:2345/20996:21105, 浏览器显示成 963x624/1440x933)。
 # v9: 码控分档(360p/480p CBR, 720p+ VBR+QP 限幅) + 1080p 试 HEVC(hvc1) -> 旧档必须重建。
 RES_ENC_VER = "9"
-RES_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/res-cache"
+RES_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
-PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", "/opt/tesla-sentry/preview-cache")
+PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", os.path.join(RUNTIME_DIR, "preview-cache"))
 PREVIEW_QUOTA = 30 * 1024 * 1024 * 1024   # 预缓冲视频单独 30G; 缩略图另算, 不再挤占这个额度
 PREVIEW_TTL = 30 * 86400       # 预缓冲保留 30 天; 源视频被删则立即清对应缓存
 PREVIEW_ORPHAN_AGE = 7 * 86400 # 没有 .src 无法核对源文件的老缓存, 7 天后清掉
 PREVIEW_HOT = {}               # 最近正在被点播的预缓冲路径 -> 最后访问时间, 水位淘汰时跳过
 _PREVIEW_CLEAN_LAST = {"t": 0.0}  # 预缓冲全量扫描节流, 避免每 15 秒翻 2000+ 个文件
-VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", "/opt/tesla-sentry/tsf-vpu-transcode.sh")
+VPU_TRANSCODE = os.environ.get("TSF_VPU_TRANSCODE", os.path.join(RUNTIME_DIR, "tsf-vpu-transcode.sh"))
 # 目录延迟到 ensure_dirs() 且确认外接盘已挂载后创建, 避免模块加载时写入系统盘。
 # 并发上限保持 3 (不是越高越好): RK3568 只有一路硬编实例, 实测单路 720p 7.5s,
 # 4 路同时跑每路都拖到 48s、总吞吐反而下降, 排队(3 槽)比全放开更快; 内存也只在排队时可控。
@@ -14323,15 +14659,29 @@ def roll_box():
     return n
 
 
+def _archive_capacity():
+    """统一返回 (容量, 已用, 是否物理盘口径)。
+    分离盘时 _archive_quota() 必然为 0, 这里必须回退到归档盘自己的 statvfs,
+    否则「低于水位」永远不会触发清理。"""
+    quota = _archive_quota()
+    if quota > 0:
+        return quota, min(archive_size(), quota), False
+    try:
+        du = shutil.disk_usage(ARCHIVE)
+    except OSError:
+        return 0, 0, True
+    return du.total, du.total - du.free, True
+
+
 def roll_archive_capacity():
     """容量滚动: 归档剩余低于页面设定水位时, 跨分类按事件时间从最旧开始删,
     删到剩余 >= 水位+5%。页面水位 0=关闭; 只删盒子归档副本; 1 小时内有改动的目录跳过。
-    行车记录(RecentClips)也在这里一起管, 不再单独按 60 分钟滚动删除。"""
-    quota = _archive_quota()
+    行车记录(RecentClips)也在这里一起管, 不再单独按 60 分钟滚动删除。
+    归档盘和镜像不同设备时, 用归档盘自身的 statvfs 兜底, 不再静默返回 0。"""
+    quota, used, _physical = _archive_capacity()
     threshold = archive_low_water_pct()
     if quota <= 0 or threshold <= 0:
         return 0
-    used = archive_size()
     free_pct = (quota - used) * 100.0 / quota
     target = min(50.0, threshold + 5.0)
     if free_pct >= threshold:
@@ -14422,7 +14772,7 @@ def emergency_cleanup():
 def health_logger():
     """每分钟记一条 内存/负载/ffmpeg 进程数 到持久日志 (环形, 最多 2000 行)。
     内核 lockup 重启会把 dmesg 清空, 这里是唯一能复盘"死前发生了什么"的证据。"""
-    fp = "/opt/tesla-sentry/health.log"
+    fp = os.path.join(RUNTIME_DIR, "health.log")
     while True:
         try:
             mem = load = "?"
@@ -15178,8 +15528,8 @@ def disk_guard():
 # ---------- 飞书推送: 哨兵触发时把信息和触发画面推到群里 ----------
 # 机器人 webhook 只能发文字卡片; 要带封面图必须配「自建应用」的 app_id/app_secret
 # (应用需开机器人能力 + im:message/im:resource 权限), 由本程序换取 token 上传图片拿 img_key。
-NOTIFY_CONF = os.environ.get("TSF_NOTIFY_CONF", "/opt/tesla-sentry/notify.json")
-NOTIFY_STATE = os.environ.get("TSF_NOTIFY_STATE", "/opt/tesla-sentry/notify-state.json")
+NOTIFY_CONF = os.environ.get("TSF_NOTIFY_CONF", os.path.join(RUNTIME_DIR, "notify.json"))
+NOTIFY_STATE = os.environ.get("TSF_NOTIFY_STATE", os.path.join(RUNTIME_DIR, "notify-state.json"))
 FEISHU_API = "https://open.feishu.cn/open-apis"
 _NC_DEFAULT = {
     "enabled": False, "mode": "dm", "webhook": "", "app_id": "", "app_secret": "",
@@ -15189,10 +15539,10 @@ _NC_DEFAULT = {
     "watch_svc": False, "watch_mem": True, "watch_mpp": True, "watch_lun": True, "watch_oom": True,
 }
 # 给 tsf-watch.sh 用的极简开关文件: 纯 KEY=0/1, shell 直接 source, 零解析开销
-WATCH_FLAGS_FILE = os.environ.get("TSF_WATCH_FLAGS", "/opt/tesla-sentry/watch-flags.conf")
+WATCH_FLAGS_FILE = os.environ.get("TSF_WATCH_FLAGS", os.path.join(RUNTIME_DIR, "watch-flags.conf"))
 _WATCH_KEYS = (("watch_svc", "W_SVC"), ("watch_mem", "W_MEM"), ("watch_mpp", "W_MPP"),
                ("watch_lun", "W_LUN"), ("watch_oom", "W_OOM"))
-_TOK = {"v": "", "exp": 0}
+_TOK = {"v": "", "exp": 0, "app": ""}
 CAM_NUM = {0: "前视", 3: "左B柱", 4: "右B柱", 5: "左翼子板", 6: "右翼子板", 7: "后视"}
 # 相机英文名 -> 中文 (和网页 CAM_NAME 保持一致, 飞书卡片里不再出现 front/left_repeater 这种英文)
 CAM_CN = {"front": "前视", "back": "后视", "left_repeater": "左B柱", "right_repeater": "右B柱",
@@ -15228,6 +15578,8 @@ def notify_conf():
 
 def notify_save(patch):
     c = notify_conf()
+    old_id = str(c.get("app_id") or "")
+    old_secret = str(c.get("app_secret") or "")
     for k, v in (patch or {}).items():
         if k in _NC_DEFAULT:
             c[k] = v
@@ -15243,6 +15595,9 @@ def notify_save(patch):
         os.replace(tmp, NOTIFY_CONF)
     except OSError:
         pass
+    # 改了应用凭据后旧 token 属于旧应用, 必须立即失效, 否则要等最长 2 小时
+    if str(c.get("app_id") or "") != old_id or str(c.get("app_secret") or "") != old_secret:
+        _TOK.update({"v": "", "exp": 0, "app": ""})
     return c
 
 
@@ -15390,13 +15745,16 @@ def _http_post(url, body, headers=None, timeout=12):
 
 
 def _feishu_token(conf):
-    if _TOK["v"] and _TOK["exp"] > time.time() + 60:
+    aid = str(conf.get("app_id") or "")
+    asec = str(conf.get("app_secret") or "")
+    if _TOK["v"] and _TOK.get("app") == (aid + "\0" + asec) and _TOK["exp"] > time.time() + 60:
         return _TOK["v"]
     j = _post_json(FEISHU_API + "/auth/v3/tenant_access_token/internal",
-                   {"app_id": conf.get("app_id", ""), "app_secret": conf.get("app_secret", "")})
+                   {"app_id": aid, "app_secret": asec})
     if j.get("code") != 0 or not j.get("tenant_access_token"):
         raise RuntimeError("取 token 失败: %s" % (j.get("msg") or j))
     _TOK["v"] = j["tenant_access_token"]
+    _TOK["app"] = aid + "\0" + asec
     _TOK["exp"] = time.time() + max(600, int(j.get("expire") or 7200) - 300)
     return _TOK["v"]
 
@@ -15423,7 +15781,7 @@ def _feishu_upload(conf, jpg):
 
 VID_Q = {"1080p": (1080, 2600), "720p": (720, 1500), "480p": (480, 800), "360p": (360, 500)}   # 输出高度, 目标码率 kbps
 
-FONT_DIR = os.environ.get("TSF_FONTS") or "/opt/tesla-sentry/fonts"
+FONT_DIR = os.environ.get("TSF_FONTS") or os.path.join(RUNTIME_DIR, "fonts")
 FONT_EXTS = (".ttf", ".otf", ".ttc")
 # 字体兜底搜索: 有的盒子把中文字体装在系统目录里, 只要找得到就能烧水印,
 # 不必非得放在我们的 FONT_DIR (install.sh 那步失败过很多次, 用户直接覆盖 py 升级也不会带字体)
@@ -17475,8 +17833,8 @@ def archive_cleanup(days=None):
 
 # 归档调度 (个性化→虚拟硬盘→归档区): 间隔默认10分钟可自定义; 立即归档写触发文件,
 # 由 tesla-live-sync.py 在车机空闲时执行; 状态读它写的 archive-sched.json。
-ARCHIVE_SCHED_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "archive-sched.json")
-ARCHIVE_NOW_FLAG = os.path.join(os.path.dirname(SETTINGS_FILE) or "/opt/tesla-sentry", "archive-now.flag")
+ARCHIVE_SCHED_FILE = os.path.join(os.path.dirname(SETTINGS_FILE) or RUNTIME_DIR, "archive-sched.json")
+ARCHIVE_NOW_FLAG = os.path.join(os.path.dirname(SETTINGS_FILE) or RUNTIME_DIR, "archive-now.flag")
 
 
 def archive_interval_min():
@@ -17520,20 +17878,12 @@ def _archive_events():
 
 
 def archive_water_level():
-    """归档区自己的剩余水位: 有分配额度按额度算, 没额度才退回整盘。
+    """归档区自己的剩余水位: 有分配额度按额度算, 没额度(例如归档在独立盘)按归档盘物理容量算。
        车机U盘占满是镜像内部增长, 不能把整盘剩余算成归档区剩余, 否则明明归档区还空着就误删。"""
-    try:
-        quota = _archive_quota()
-    except Exception:
-        quota = 0
+    quota, used, _physical = _archive_capacity()
     if quota > 0:
-        used = min(archive_size(), quota)
         return max(0, quota - used) * 100.0 / quota, used, quota
-    try:
-        du = shutil.disk_usage(ARCHIVE)
-    except OSError:
-        return None, 0, 0
-    return du.free * 100.0 / du.total, du.total - du.free, du.total
+    return None, 0, 0
 
 
 def archive_cleanup_watermark():
@@ -18037,6 +18387,12 @@ def ov_thumb(cat, name):
     return out if os.path.isfile(out) and os.path.getsize(out) > 0 else None
 
 
+def _job_component(s):
+    """任务 id 只允许 ASCII 文件名安全字符: 事件名可能来自目录, 不能直接拼进临时路径。"""
+    v = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(s or "")).strip("._")
+    return v[:80] or "job"
+
+
 def start_stitch(cat, name, cams, push=False):
     """创建合成任务, 返回 (job_id, 错误信息)"""
     # 历史: 软解软编 4 路 1080p 会把 1.4G 内存吃光并触发内核 lockup -> panic=5 重启,
@@ -18081,7 +18437,7 @@ def start_stitch(cat, name, cams, push=False):
             pass
     # 同一事件 + 同一路数复用已有合成结果: 总览页反复点开/导出时不再重复转码
     # 先看临时缓存, 再看「我的作品库」里已入库的同名成品(合成完会自动入库, 缓存文件被移走)
-    cache_name = "%s__%s__%d.mp4" % (cat, name, len(paths))
+    cache_name = "%s__%s__%d.mp4" % (_job_component(cat), _job_component(name), len(paths))
     cache_fp = os.path.join(STITCH_DIR, cache_name)
     hit_fp = cache_fp if (os.path.isfile(cache_fp) and os.path.getsize(cache_fp) > 0) else None
     if not hit_fp:
@@ -18094,14 +18450,14 @@ def start_stitch(cat, name, cams, push=False):
                     hit_fp = p2
                     break
     if hit_fp:
-        jid = "hit-" + os.path.basename(hit_fp)[:-4]
+        jid = "hit-" + _job_component(os.path.basename(hit_fp)[:-4])
         with STITCH_LOCK:
             STITCH_JOBS[jid] = {"state": "done", "pct": 100, "path": hit_fp,
                                 "name": "%s_%d路.mp4" % (name, len(paths)), "total": 0,
                                 "cams": list(cams or []), "cat": cat, "src_name": name,
                                 "push": bool(push), "size": os.path.getsize(hit_fp)}
         return jid, None
-    job_id = "%s-%d" % (name.replace(":", "-"), int(time.time() * 1000) % 1000000)
+    job_id = "%s-%d" % (_job_component(name), int(time.time() * 1000) % 1000000)
     out_path = cache_fp
     total = probe_duration(paths[0])
     with STITCH_LOCK:
@@ -18652,7 +19008,7 @@ def start_export(cat, name, cams, wm=True, q="720p", files=None, push=False):
                 os.unlink(p)
         except OSError:
             pass
-    job_id = "%s-ex%d" % (name.replace(":", "-"), int(now * 1000) % 1000000)
+    job_id = "%s-ex%d" % (_job_component(name), int(now * 1000) % 1000000)
     out_path = os.path.join(STITCH_DIR, job_id + ".mp4")
     # 进度分母: 多段拼一起时按总时长算, 否则进度条一下子冲到 99%
     total = 0.0
@@ -18703,7 +19059,7 @@ def start_share_build(cat, name, cam, files):
                 os.unlink(p)
         except OSError:
             pass
-    job_id = "%s-sh%d" % (name.replace(":", "-"), int(now * 1000) % 1000000)
+    job_id = "%s-sh%d" % (_job_component(name), int(now * 1000) % 1000000)
     out_path = os.path.join(STITCH_DIR, job_id + ".mp4")
     dur = 0.0
     for f in picked:
@@ -18790,7 +19146,7 @@ def _share_worker(job_id, evdir, files, out_path, dur, cat, name, cam):
 #   1 version, 2 gear(0P/1D/2R/3N), 3 frame_seq, 4 speed_mps, 5 油门%,
 #   6 方向盘角度, 7/8 左右转向灯, 9 刹车, 10 AP状态, 11/12 经纬度,
 #   13 航向, 14/15/16 三轴加速度
-TEL_DIR = os.environ.get("TSF_CACHE", "/opt/tesla-sentry/cache") + "/tel-cache"
+TEL_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/tel-cache"
 TEL_SEM = threading.BoundedSemaphore(int(os.environ.get("TSF_TEL_CONN", "1")))
 
 
@@ -19072,8 +19428,8 @@ def telemetry_cached(fp):
 # 默认关闭; 只要配了密码 (auth.conf 里的 pass= 或 sha256=) 就全站开启。
 # 除登录页外, 页面/媒体流/下载/接口全部要过认证; 用 HMAC 签名 cookie (默认 30 天) 记住登录,
 # 这样 <video>、缩略图、zip 下载这些子请求不会反复弹窗; 同时兼容 HTTP Basic 方便 curl。
-# 配置文件: /opt/tesla-sentry/auth.conf  (user= / pass= / sha256= / secret= / ttl=)
-AUTH_FILE = os.environ.get("TSF_AUTH_FILE", "/opt/tesla-sentry/auth.conf")
+# 配置文件: <TSF_DIR>/auth.conf  (user= / pass= / sha256= / secret= / ttl=)
+AUTH_FILE = os.environ.get("TSF_AUTH_FILE", os.path.join(RUNTIME_DIR, "auth.conf"))
 
 
 AUTH_CONF_ERR = None   # 非空 = auth.conf 异常, 启动时拒绝运行, 避免静默变成无认证
@@ -19233,14 +19589,25 @@ def sess_ok(tok):
 
 
 def fail_check(ip, inc):
-    """同一 IP 10 分钟内连错 8 次就锁 5 分钟, 防爆破"""
+    """同一 IP 10 分钟内连错 8 次就锁 5 分钟, 防爆破。
+    只读检查绝不写入新键; 过期条目顺手清掉, 避免被 Basic 认证/每次请求把表撑大。"""
     now = time.time()
     with FAIL_LOCK:
-        cnt, t0 = FAILS.get(ip, [0, now])
-        if now - t0 > 600:
+        ent = FAILS.get(ip)
+        if ent and now - ent[1] > 600:
+            FAILS.pop(ip, None)
+            ent = None
+        if len(FAILS) > 512:
+            for k, v in list(FAILS.items()):
+                if now - v[1] > 600:
+                    FAILS.pop(k, None)
+        if not inc:
+            return bool(ent) and ent[0] >= 8
+        if ent:
+            cnt, t0 = ent
+        else:
             cnt, t0 = 0, now
-        if inc:
-            cnt += 1
+        cnt += 1
         FAILS[ip] = [cnt, t0]
         return cnt >= 8
 
@@ -19291,7 +19658,7 @@ COMPOSITE_LOCK = threading.Lock()
 COMPOSITE_STATE = {"proc": None, "started": 0.0}
 # 合成结果缓存在 eMMC (不碰车机写的那块 U 盘): 同一片段/同一画质第二次看直接给文件,
 # 省掉 6 路解码+合成, 首帧从 ~2.5s 降到几十毫秒, 也能正常拖动进度。
-COMP_CACHE_DIR = "/opt/tesla-sentry/.compcache"
+COMP_CACHE_DIR = os.path.join(RUNTIME_DIR, ".compcache")
 COMP_CACHE_MAX = 60 * 1024 * 1024     # 只留最近几段, 超了删最旧的
 
 
@@ -19465,12 +19832,22 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return False
 
+    def _safe_next(self, v):
+        """登录后跳转只允许本站绝对路径; 任何控制字符直接拒绝, 防响应头注入。"""
+        raw = str(v or "/")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+            return "/"
+        s = raw.strip()
+        if not s.startswith("/") or s.startswith("//"):
+            return "/"
+        return s
+
     def _login_page(self, msg="", nxt="/", code=200):
         lang = "zh"
         days = str(max(1, AUTH_TTL // 86400))
         foot = tr("仅限本人访问", lang) + " · " + tr("登录状态保留", lang) + " " + days + " " + tr("天", lang)
         html = (LOGIN_HTML.replace("__USER__", AUTH_USER)
-                .replace("__NEXT__", nxt.replace('"', "&quot;"))
+                .replace("__NEXT__", self._safe_next(nxt).replace('"', "&quot;"))
                 .replace("__MSG__", tr(msg, lang))
                 .replace("__L_BRAND__", (brand_name() or BRAND_NAME_DEFAULT)
                  .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
@@ -19488,9 +19865,7 @@ class Handler(BaseHTTPRequestHandler):
             f = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8", "ignore"))
         except Exception:
             f = {}
-        nxt = (f.get("next", ["/"])[0] or "/")
-        if not nxt.startswith("/") or nxt.startswith("//"):
-            nxt = "/"
+        nxt = self._safe_next(f.get("next", ["/"])[0] or "/")
         ip = self.client_address[0] if self.client_address else "?"
         if fail_check(ip, False):
             self._login_page("尝试次数过多，请 5 分钟后再试", nxt, 429)
@@ -19612,15 +19987,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return None
 
-    def _read_upload(self):
-        """解析 multipart: 返回 (文件名, 文件数据, 普通字段dict)"""
+    def _read_upload(self, max_body=None):
+        """解析 multipart: 返回 (文件名, 文件数据, 普通字段dict)。
+        调用方按接口给 max_body, 避免皮肤/音频接口先收 100MB 再报“超过 3MB”。"""
         ctype = self.headers.get("Content-Type", "")
         mm = re.search(r'boundary=([^;]+)', ctype)
         if "multipart/form-data" not in ctype or not mm:
             return None, None, {}
         boundary = mm.group(1).strip('"').encode()
         length = int(self.headers.get("Content-Length", 0))
-        if length > MAX_UPLOAD:
+        cap = MAX_UPLOAD if max_body is None else max(1, int(max_body))
+        if length > cap:
             return "TOOBIG", None, {}
         body = self.rfile.read(length)
         fields = {}
@@ -21410,7 +21787,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "msg": msg}, 200 if ok else 500)
             return
         if path == "/api/font/upload":
-            fn, data, _f = self._read_upload()
+            fn, data, _f = self._read_upload(MAX_UPLOAD)
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "字体文件过大 (上限 100MB)"}, 413)
                 return
@@ -21523,7 +21900,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "id": jid})
             return
         if path == "/api/upload/skin":
-            fn, data, _f = self._read_upload()
+            fn, data, _f = self._read_upload(3 * 1024 * 1024)
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "文件超过 3MB"}, 400)
                 return
@@ -21550,7 +21927,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "name": nm or BRAND_NAME_DEFAULT})
         elif path == "/api/brand/preview":
             # 先把上传的图(含 HEIC)转成 PNG 返回给前端做裁切预览, 不落盘
-            fn, data, _f = self._read_upload()
+            fn, data, _f = self._read_upload(3 * 1024 * 1024)
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "文件超过 3MB"}, 400)
                 return
@@ -21595,7 +21972,7 @@ class Handler(BaseHTTPRequestHandler):
                     except OSError:
                         pass
         elif path == "/api/upload/brand-logo":
-            fn, data, _f = self._read_upload()
+            fn, data, _f = self._read_upload(3 * 1024 * 1024)
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "文件超过 3MB"}, 400)
                 return
@@ -21609,7 +21986,7 @@ class Handler(BaseHTTPRequestHandler):
             brand_clear_files()
             self._json({"ok": True, "msg": "已恢复默认图标与名称"})
         elif path == "/api/upload/audio":
-            fn, data, _f = self._read_upload()
+            fn, data, _f = self._read_upload(3 * 1024 * 1024)
             if fn == "TOOBIG":
                 self._json({"ok": False, "msg": "文件超过 3MB (车机要求 <1MB)"}, 400)
                 return
@@ -21939,6 +22316,17 @@ if __name__ == "__main__":
     # 不再启动预热：进入体检页或服务启动都不自动生成日志，
     # 只有用户点「立即检查」并写入手动记录时才按需构建。
     print("auth: %s (%s)" % ("ON, user=" + AUTH_USER if AUTH_ON else "OFF - 公网可直接访问!", AUTH_FILE))
+    # 上次改网络后没确认就重启: 恢复回滚快照/续上计时器, 避免错误 netplan 永久生效
+    threading.Thread(target=_net_roll_recover, daemon=True).start()
+    # 上次幽灵簇回收中途断电: 在车机没在写、镜像未挂载时回放原始位图/FAT
+    try:
+        if os.path.isfile(RECLAIM_JOURNAL):
+            if os.path.ismount(MNT) or (os.path.isfile(IMG) and usb_img_age() < 60):
+                print("reclaim journal deferred: USB busy or car writing", flush=True)
+            else:
+                _reclaim_recover()
+    except Exception as ex:
+        print("reclaim journal startup check skipped: %s" % ex, flush=True)
     # 清理上次进程中断遗留的导出临时包: /tmp 是 tmpfs, 大 zip 会吃内存并被换进 zram。
     # 端口已绑定成功 = 单实例, 此刻所有 exp_*.zip 都是孤儿, 直接删。
     try:
