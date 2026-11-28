@@ -1,15 +1,14 @@
 {
-  "version": "3.2.52",
+  "version": "3.2.53",
   "date": "2026-11-28",
   "notes": [
-    "网页补齐 PWA 配置: manifest、192/512 图标、theme-color、apple-touch-icon 与最小 service worker；WebToApp 分析登录页即可识别",
-    "PWA 名称/短名使用「TSL哨兵云」/「哨兵云」；图标直接复用当前品牌 LOGO，不新增或覆盖用户图片",
-    "登录页与主页面均注入 PWA 元信息；manifest/图标/sw.js 免登录可访问，未登录状态也能安装",
-    "Service Worker 不缓存页面、API、version.json 与媒体，避免 PWA 缓存旧版本或让通知失效",
-    "APP 通知通道保持不变，新增 PWA 测试；全量自动化测试通过"
+    "新增 WebToApp「轮询通知」专用接口 GET /api/app/poll：返回裸 JSON 数组，字段 title/body/url；取走即出队，避免重复通知",
+    "APP 设置里的轮询地址改为 /api/app/poll；WebToApp 通知类型选「轮询通知」，间隔填 5 分钟（客户端最小 5 分钟）",
+    "保留原有 /api/app/notifications 增量接口与 ack 回执，自定义客户端不受影响",
+    "APP 通知测试与队列测试补充；WebToApp 轮询不再把对象响应误当成空通知"
   ],
   "sha256": {
-    "sentry-viewer.py": "9844421900429ce225b240fea90591f3c3cd2fce947edebed099decdfd22bc2d",
+    "sentry-viewer.py": "26439c793819468fa8435ac1c39d636e92ff7f21e3d6a124ce39432c2b000b0a",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -17,5 +16,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "UEBrrBvwtXhjoZ9TUNMV45PK3QE10QxmiwhRd757Fnb+yybLFQRx+jOuIuAynUYea2kTwA0T4ykEd94j+qGcAg=="
+  "sig": "Kst82EAvnbA6uJDHfV5u+OH8hoaYW3x2bl6x7miv+llbm492OCvwVHV1XEX9BdHsYJn6KvtX9TvSM4v03lMiCA=="
 }

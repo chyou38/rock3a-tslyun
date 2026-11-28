@@ -207,7 +207,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.52"
+APP_VERSION = "3.2.53"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -3068,8 +3068,8 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     </div>
     <div class="stabsec sep">WebToApp 配置</div>
     <div class="hint">
-      目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。<br>
-      WebToApp → 通知：开启通知权限，URL 轮询填上面的地址，间隔 15–30 秒；通知点击跳到对应事件。<br>
+      目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。不要选「网页通知」，哨兵云用的是 URL 轮询。<br>
+      WebToApp → 通知：开启通知权限，类型选「轮询通知」，URL 填上面的地址；间隔填 5 分钟（WebToApp 客户端最小 5 分钟，不能填 15–30 秒）。<br>
       手机上的 Tailscale 要保持连接，否则 App 打不开页面，也轮询不到通知。
     </div>
   </div>
@@ -8919,7 +8919,7 @@ function appCopyUrl() {
   copyText(appUrlFull(), '轮询地址已复制');
 }
 async function appLoad() {
-  appBase = location.origin + '/api/app/notifications';
+  appBase = location.origin + '/api/app/poll';
   const m = document.getElementById('app-msg');
   try {
     const j = await (await fetch('/api/notify', { cache: 'no-store' })).json();
@@ -17043,6 +17043,24 @@ def app_enqueue_watch(msg):
                         (link + "/") if link else "", key)
 
 
+def app_poll_webtoapp(limit=5, peek=False):
+    """WebToApp 轮询格式：顶层 JSON 数组，每项只保留 title/body/url。
+    客户端没有 ack 接口，所以默认取走即出队；peek=1 仅用于调试。
+    返回 (items, latest, pending)。"""
+    with _APPQ_LOCK:
+        q = _appq_prune(_appq_load())
+        ev = list(q.get("events") or [])
+        take = ev[:max(1, min(int(limit or 5), 5))]
+        if not peek:
+            q["events"] = ev[len(take):]
+        _appq_save(q)
+    items = [{"id": int(e.get("id") or 0),
+              "title": str(e.get("title") or ""),
+              "body": str(e.get("body") or ""),
+              "url": str(e.get("url") or "")} for e in take]
+    return items, int(q.get("next_id") or 1) - 1, len(q.get("events") or [])
+
+
 def app_notifications(after=0, limit=50):
     with _APPQ_LOCK:
         q = _appq_prune(_appq_load())
@@ -20924,6 +20942,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/app/poll":
+            # WebToApp「轮询通知」专用：裸数组 + 取走即出队；不要求登录 cookie。
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if not self._app_token_ok(q.get("token", [""])[0]):
+                self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+                return
+            peek = q.get("peek", ["0"])[0] in ("1", "true", "yes")
+            items, latest, pending = app_poll_webtoapp(5, peek)
+            self._json(items)
             return
         if path == "/api/app/notifications":
             # APP 轮询: 用 notify.json 里的独立令牌鉴权, 不要求登录 cookie。

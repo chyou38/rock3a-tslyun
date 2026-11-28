@@ -289,6 +289,36 @@ class AppNotificationQueueTests(unittest.TestCase):
                 self.assertIn("哨兵", out["events"][0]["title"])
                 self.assertIn("合肥", out["events"][0]["body"])
 
+    def test_webtoapp_poll_returns_bare_array_and_dequeues(self):
+        with tempfile.TemporaryDirectory() as td:
+            qf = Path(td) / "app-notifications.json"
+            qf.write_text(json.dumps({"next_id": 7, "events": [
+                {"id": 1, "ts": int(time.time()), "title": "A", "body": "a", "url": "/?ev=A"},
+                {"id": 2, "ts": int(time.time()), "title": "B", "body": "b", "url": "/?ev=B"},
+                {"id": 3, "ts": int(time.time()), "title": "C", "body": "c", "url": "/?ev=C"},
+                {"id": 4, "ts": int(time.time()), "title": "D", "body": "d", "url": "/?ev=D"},
+                {"id": 5, "ts": int(time.time()), "title": "E", "body": "e", "url": "/?ev=E"},
+                {"id": 6, "ts": int(time.time()), "title": "F", "body": "f", "url": "/?ev=F"},
+            ]}, ensure_ascii=False), encoding="utf-8")
+            with patch.object(viewer, "APP_QUEUE_FILE", str(qf)):
+                items, latest, pending = viewer.app_poll_webtoapp()
+                self.assertEqual(len(items), 5)
+                self.assertEqual([i["title"] for i in items], ["A", "B", "C", "D", "E"])
+                self.assertEqual(pending, 1)
+                self.assertEqual(latest, 6)
+                self.assertIn("url", items[0])
+                # 第二次只剩 F
+                items2, _, pending2 = viewer.app_poll_webtoapp()
+                self.assertEqual([i["title"] for i in items2], ["F"])
+                self.assertEqual(pending2, 0)
+                # peek 不取走
+                with patch.object(viewer, "APP_QUEUE_FILE", str(qf)):
+                    qf.write_text(json.dumps({"next_id": 2, "events": [
+                        {"id": 1, "ts": int(time.time()), "title": "P", "body": "p", "url": ""}]}), encoding="utf-8")
+                    items3, _, pending3 = viewer.app_poll_webtoapp(peek=True)
+                    self.assertEqual([i["title"] for i in items3], ["P"])
+                    self.assertEqual(pending3, 1)
+
     def test_token_compare_rejects_wrong_value(self):
         h = object.__new__(viewer.Handler)
         with patch.object(viewer, "notify_conf",

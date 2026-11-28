@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.52** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.53** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -76,6 +76,13 @@
 
 ---
 
+## v3.2.53 更新（2026-11-28）
+
+- 新增 WebToApp「轮询通知」专用接口 `GET /api/app/poll`：返回裸 JSON 数组，字段 `title` / `body` / `url`，取走即出队。
+- APP 设置里的轮询地址改为该接口；WebToApp 通知类型选「轮询通知」，间隔填 5 分钟（客户端最小 5 分钟）。
+- 保留原有 `GET /api/app/notifications` 增量接口与 `POST /api/app/notifications/ack`，自定义客户端不受影响。
+- 修复 WebToApp 把对象响应误解析成空通知的问题。
+
 ## v3.2.52 更新（2026-11-28）
 
 - 网页补齐 PWA 配置：`manifest.webmanifest`、192/512 图标、`theme-color`、`apple-touch-icon`、`service worker`，WebToApp 可识别为 PWA。
@@ -86,7 +93,7 @@
 ## v3.2.51 更新（2026-11-28）
 
 - 个性化新增「APP 设置」：独立 APP 通知开关、随机访问令牌、轮询地址、测试通知；不替代飞书，可同时开启。
-- 新增 APP 待取通知接口：`GET /api/app/notifications?token=...&after=...` 增量拉取，`POST /api/app/notifications/ack` 已读回执；支持 Tailscale 内网访问。
+- APP 待取通知：`GET /api/app/notifications?token=...&after=...` 增量拉取，`POST /api/app/notifications/ack` 已读回执；WebToApp 用 `GET /api/app/poll?token=...` 取裸数组（取走即出队）。均支持 Tailscale 内网访问。
 - 哨兵 / 手动保存 / 巡检事件可写入 APP 队列，通知深链直接打开对应事件；WebToApp 用 URL 轮询即可。
 - 82 项自动化测试通过。
 

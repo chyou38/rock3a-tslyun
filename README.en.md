@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**V3.2.52** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
+**V3.2.53** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -76,6 +76,13 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 
 ---
 
+## What's new in v3.2.53 (2026-11-28)
+
+- Added a WebToApp polling endpoint `GET /api/app/poll`: returns a bare JSON array with `title` / `body` / `url`, and removes delivered items from the queue.
+- The App settings polling URL now points to this endpoint; in WebToApp choose **Polling notification** and set the interval to **5 minutes** (the client minimum).
+- The original `GET /api/app/notifications` incremental API and `POST /api/app/notifications/ack` remain unchanged for custom clients.
+- Fixed WebToApp parsing an object response as an empty notification.
+
 ## What's new in v3.2.52 (2026-11-28)
 
 - The web UI now ships a complete PWA setup: `manifest.webmanifest`, 192/512 icons, `theme-color`, `apple-touch-icon` and a minimal service worker, so WebToApp can detect it as a PWA.
@@ -86,7 +93,7 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 ## What's new in v3.2.51 (2026-11-28)
 
 - Personalization now has an **App settings** tab: independent App notification toggle, random access token, polling URL and test notification. Feishu can stay enabled at the same time.
-- New App pending-notification API: `GET /api/app/notifications?token=...&after=...` for incremental polling and `POST /api/app/notifications/ack` for acknowledgements; works over Tailscale.
+- App pending notifications: `GET /api/app/notifications?token=...&after=...` for incremental polling and `POST /api/app/notifications/ack`; WebToApp uses `GET /api/app/poll?token=...` for a bare array (delivered items are dequeued). Both work over Tailscale.
 - Sentry / manual-save / watchdog events can be queued for the App, with deep links opening the matching event; WebToApp can consume it with URL polling.
 - 82 automated tests pass.
 
