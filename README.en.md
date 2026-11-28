@@ -85,36 +85,36 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 ## What's new in v3.2.55 (2026-11-28)
 
 - Added `[APP-WS]` diagnostics for WebSocket handshakes: source, auth mode, token presence, reject code, connect/disconnect; tokens are never logged.
-- APP settings now show whether WebSocket is connected, plus an opt-in "tokenless on LAN" switch (default off, private/Tailscale sources only; public direct connections still rejected).
+- Notification settings now show whether WebSocket is connected, plus an opt-in "tokenless on LAN" switch (default off, private/Tailscale sources only; public direct connections still rejected).
 - `/api/notify` exposes `app_ws_open` / `app_ws_active` for troubleshooting.
 - All 89 tests pass.
 
 ## What's new in v3.2.54 (2026-11-28)
 
-- Added a real-time WebSocket channel for the WebToApp APK: `GET /api/app/ws` pushes `title` / `body` / `url` as soon as a Sentry event arrives, instead of waiting for the client's 5-minute polling floor.
-- WebSocket uses the independent APP token (`?token=` or `Authorization: Bearer`), replays queued events on connect, and removes delivered events to avoid duplicate notifications.
-- The APP settings page now exposes a WebSocket URL with one-click copy. Select WebSocket push in WebToApp and paste that URL; polling remains available as a fallback.
+- Added a real-time WebSocket channel for an external notification client: `GET /api/app/ws` pushes `title` / `body` / `url` as soon as a Sentry event arrives, instead of waiting for the client's 5-minute polling floor.
+- WebSocket uses the independent notification token (`?token=` or `Authorization: Bearer`), replays queued events on connect, and removes delivered events to avoid duplicate notifications.
+- The Notification settings page now exposes a WebSocket URL with one-click copy. Select WebSocket push in an external notification client and paste that URL; polling remains available as a fallback.
 - Added WebSocket frame/handshake/delivery tests; all 89 tests pass.
 
 ## What's new in v3.2.53 (2026-11-28)
 
-- Added a WebToApp polling endpoint `GET /api/app/poll`: returns a bare JSON array with `title` / `body` / `url`, and removes delivered items from the queue.
-- The App settings polling URL now points to this endpoint; in WebToApp choose **Polling notification** and set the interval to **5 minutes** (the client minimum).
+- Added an external notification client polling endpoint `GET /api/app/poll`: returns a bare JSON array with `title` / `body` / `url`, and removes delivered items from the queue.
+- The Notification settings polling URL now points to this endpoint; in an external notification client choose **Polling notification** and set the interval to **5 minutes** (the client minimum).
 - The original `GET /api/app/notifications` incremental API and `POST /api/app/notifications/ack` remain unchanged for custom clients.
-- Fixed WebToApp parsing an object response as an empty notification.
+- Fixed an external notification client parsing an object response as an empty notification.
 
 ## What's new in v3.2.52 (2026-11-28)
 
-- The web UI now ships a complete PWA setup: `manifest.webmanifest`, 192/512 icons, `theme-color`, `apple-touch-icon` and a minimal service worker, so WebToApp can detect it as a PWA.
+- The web UI now ships a complete PWA setup: `manifest.webmanifest`, 192/512 icons, `theme-color`, `apple-touch-icon` and a minimal service worker, so an external notification client can detect it as a PWA.
 - PWA name/short name are “TSL哨兵云” / “哨兵云”; icons reuse the current brand logo without adding or overwriting any user image.
 - Both the login page and the main page carry PWA metadata; `manifest.webmanifest`, icons and `sw.js` are reachable without login, so the app can be installed before signing in.
 - The service worker caches no HTML, API, `version.json` or media, avoiding stale PWA builds or broken notifications.
 
 ## What's new in v3.2.51 (2026-11-28)
 
-- Personalization now has an **App settings** tab: independent App notification toggle, random access token, polling URL and test notification. Feishu can stay enabled at the same time.
-- App pending notifications: `GET /api/app/notifications?token=...&after=...` for incremental polling and `POST /api/app/notifications/ack`; WebToApp uses `GET /api/app/poll?token=...` for a bare array (delivered items are dequeued). Both work over Tailscale.
-- Sentry / manual-save / watchdog events can be queued for the App, with deep links opening the matching event; WebToApp can consume it with URL polling.
+- Personalization now has an **Notification settings** tab: independent notification toggle, random access token, polling URL and test notification. Feishu can stay enabled at the same time.
+- Pending notifications: `GET /api/app/notifications?token=...&after=...` for incremental polling and `POST /api/app/notifications/ack`; an external notification client uses `GET /api/app/poll?token=...` for a bare array (delivered items are dequeued). Both work over Tailscale.
+- Sentry / manual-save / watchdog events can be queued for the client, with deep links opening the matching event; an external notification client can consume it with URL polling.
 - 82 automated tests pass.
 
 ---

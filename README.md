@@ -92,36 +92,36 @@
 ## v3.2.55 更新（2026-11-28）
 
 - 新增 `[APP-WS]` 诊断日志：记录 WebSocket 握手来源、鉴权方式、是否带 token、拒绝码、连接/断开，不打印令牌。
-- APP 设置页显示 WebSocket 是否已连接；新增「内网免令牌 WebSocket」开关，默认关闭，仅内网/Tailscale 来源生效，公网直连仍拒绝。
+- 通知设置页显示 WebSocket 是否已连接；新增「内网免令牌 WebSocket」开关，默认关闭，仅内网/Tailscale 来源生效，公网直连仍拒绝。
 - `/api/notify` 增加 `app_ws_open` / `app_ws_active`，可直接确认手机端有没有连上来。
 - 全量 89 项测试通过。
 
 ## v3.2.54 更新（2026-11-28）
 
-- 新增 WebToApp「WebSocket 推送」实时通道：`GET /api/app/ws`，连接建立后服务端主动推送 `title` / `body` / `url`，哨兵事件触发即弹通知，不再受客户端 5 分钟轮询限制。
-- WebSocket 使用独立 APP 令牌鉴权，支持 `?token=` 或 `Authorization: Bearer`；连接时自动补发离线积压通知，送达后出队，避免重连重复弹。
-- APP 设置页新增 WebSocket 地址与一键复制；WebToApp 通知类型选「WebSocket 推送」并填入该地址即可，轮询仍作为备用。
+- 新增外部通知客户端「WebSocket 推送」实时通道：`GET /api/app/ws`，连接建立后服务端主动推送 `title` / `body` / `url`，哨兵事件触发即弹通知，不再受客户端 5 分钟轮询限制。
+- WebSocket 使用独立通知令牌鉴权，支持 `?token=` 或 `Authorization: Bearer`；连接时自动补发离线积压通知，送达后出队，避免重连重复弹。
+- 通知设置页新增 WebSocket 地址与一键复制；外部通知客户端通知类型选「WebSocket 推送」并填入该地址即可，轮询仍作为备用。
 - 补充 WebSocket 帧、握手和实时送达出队测试；全量 89 项测试通过。
 
 ## v3.2.53 更新（2026-11-28）
 
-- 新增 WebToApp「轮询通知」专用接口 `GET /api/app/poll`：返回裸 JSON 数组，字段 `title` / `body` / `url`，取走即出队。
-- APP 设置里的轮询地址改为该接口；WebToApp 通知类型选「轮询通知」，间隔填 5 分钟（客户端最小 5 分钟）。
+- 新增外部通知客户端「轮询通知」专用接口 `GET /api/app/poll`：返回裸 JSON 数组，字段 `title` / `body` / `url`，取走即出队。
+- 通知设置里的轮询地址改为该接口；外部通知客户端通知类型选「轮询通知」，间隔填 5 分钟（客户端最小 5 分钟）。
 - 保留原有 `GET /api/app/notifications` 增量接口与 `POST /api/app/notifications/ack`，自定义客户端不受影响。
-- 修复 WebToApp 把对象响应误解析成空通知的问题。
+- 修复外部通知客户端把对象响应误解析成空通知的问题。
 
 ## v3.2.52 更新（2026-11-28）
 
-- 网页补齐 PWA 配置：`manifest.webmanifest`、192/512 图标、`theme-color`、`apple-touch-icon`、`service worker`，WebToApp 可识别为 PWA。
+- 网页补齐 PWA 配置：`manifest.webmanifest`、192/512 图标、`theme-color`、`apple-touch-icon`、`service worker`，外部通知客户端可识别为 PWA。
 - PWA 名称/短名为「TSL哨兵云」/「哨兵云」，图标直接复用当前品牌 LOGO，不新增或覆盖用户图片。
 - 登录页与主页面都注入 PWA 元信息；`manifest.webmanifest`、图标、`sw.js` 免登录可访问，未登录也能安装。
 - Service Worker 不缓存页面、API、`version.json` 与媒体，避免 PWA 缓存旧版本或让通知失效。
 
 ## v3.2.51 更新（2026-11-28）
 
-- 个性化新增「APP 设置」：独立 APP 通知开关、随机访问令牌、轮询地址、测试通知；不替代飞书，可同时开启。
-- APP 待取通知：`GET /api/app/notifications?token=...&after=...` 增量拉取，`POST /api/app/notifications/ack` 已读回执；WebToApp 用 `GET /api/app/poll?token=...` 取裸数组（取走即出队）。均支持 Tailscale 内网访问。
-- 哨兵 / 手动保存 / 巡检事件可写入 APP 队列，通知深链直接打开对应事件；WebToApp 用 URL 轮询即可。
+- 个性化新增「通知设置」：独立通知开关、随机访问令牌、轮询地址、测试通知；不替代飞书，可同时开启。
+- 待取通知：`GET /api/app/notifications?token=...&after=...` 增量拉取，`POST /api/app/notifications/ack` 已读回执；外部通知客户端用 `GET /api/app/poll?token=...` 取裸数组（取走即出队）。均支持 Tailscale 内网访问。
+- 哨兵 / 手动保存 / 巡检事件可写入通知队列，通知深链直接打开对应事件；外部通知客户端用 URL 轮询即可。
 - 82 项自动化测试通过。
 
 ---
