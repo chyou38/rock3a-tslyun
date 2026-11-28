@@ -1,4 +1,4 @@
-# TeslaBox v3.2.37 实时验证日志摘录
+# tslbox v3.2.37 实时验证日志摘录
 
 抓取时间：2026-11-27 19:43（CST）  
 设备：Radxa ROCK3 Model A（RK3568，Debian 12，`tsl-sentry`）

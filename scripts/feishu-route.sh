@@ -1,5 +1,5 @@
 #!/bin/sh
-# TeslaBox: 飞书 API 专用路由，走 4G(end1)。
+# tslbox: 飞书 API 专用路由，走 4G(end1)。
 # 盒子默认路由在 wlp1s0 上；该网络当前无外网时，飞书 API 会报 No route to host。
 # 这里只把飞书 CDN 的 112.28/112.29 网段固定到 4G 网关，不影响局域网/Tailscale。
 set -u

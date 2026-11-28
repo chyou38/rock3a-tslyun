@@ -1,5 +1,5 @@
 [Unit]
-Description=TeslaBox system status cache (Go)
+Description=tslbox system status cache (Go)
 After=network.target systemd-journald.service
 Documentation=https://github.com/chyou38/rock3a-tslyun
 

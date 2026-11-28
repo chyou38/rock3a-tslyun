@@ -30,3 +30,6 @@ _*
 hw*.png
 *.exp-*
 ROCK3A-*方案*.md
+
+# Go 编译产物
+tools/tsf-settings/tsf-settings

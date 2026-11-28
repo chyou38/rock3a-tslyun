@@ -208,7 +208,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.59"
+APP_VERSION = "3.2.65"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -14570,6 +14570,7 @@ RES_ENC_VER = "9"
 RES_DIR = os.environ.get("TSF_CACHE", os.path.join(RUNTIME_DIR, "cache")) + "/res-cache"
 # 10 秒预缓冲单独放系统盘, 体积小、可让外接盘空闲待机; 完整转码缓存仍走 RES_DIR。
 PREVIEW_DIR = os.environ.get("TSF_PREVIEW_CACHE", os.path.join(RUNTIME_DIR, "preview-cache"))
+APP_LOG_DIR = os.environ.get("TSF_APP_LOG_DIR", os.path.join(RUNTIME_DIR, "app-logs"))
 PREVIEW_QUOTA = 30 * 1024 * 1024 * 1024   # 预缓冲视频单独 30G; 缩略图另算, 不再挤占这个额度
 PREVIEW_TTL = 30 * 86400       # 预缓冲保留 30 天; 源视频被删则立即清对应缓存
 PREVIEW_ORPHAN_AGE = 7 * 86400 # 没有 .src 无法核对源文件的老缓存, 7 天后清掉
@@ -17306,6 +17307,48 @@ def _app_event_summary(cat, ev):
     }
 
 
+def app_log_save(body, remote=""):
+    """APP 主动上传的诊断日志: 只落本地, 不发外部; 返回可检索的短 id。"""
+    if not isinstance(body, dict):
+        return False, "参数错误", ""
+    logs = body.get("logs")
+    if not isinstance(logs, str):
+        return False, "logs 必须是文本", ""
+    logs = logs[:512 * 1024]
+    try:
+        conf = notify_conf()
+        tok = str(conf.get("app_token") or "")
+        if tok:
+            logs = logs.replace(tok, "<app_token>")
+        os.makedirs(APP_LOG_DIR, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        lid = stamp + "-" + secrets.token_hex(3)
+        rec = {
+            "id": lid,
+            "received": int(time.time()),
+            "remote": str(remote or "")[:120],
+            "app": str(body.get("app") or "")[:80],
+            "version": str(body.get("version") or "")[:40],
+            "device": str(body.get("device") or "")[:120],
+            "android": str(body.get("android") or "")[:80],
+            "size": len(logs),
+            "logs": logs,
+        }
+        fp = os.path.join(APP_LOG_DIR, lid + ".json")
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(rec, f, ensure_ascii=False, indent=1)
+        try:
+            rows = [x for x in os.listdir(APP_LOG_DIR) if x.endswith(".json")]
+            rows.sort(reverse=True)
+            for old in rows[200:]:
+                os.unlink(os.path.join(APP_LOG_DIR, old))
+        except Exception:
+            pass
+        return True, "已保存", lid
+    except Exception as ex:
+        return False, "保存失败: %s" % ex, ""
+
+
 def app_overview():
     """APP 首页一次拉齐: 同步/存储/CPU 温度/服务项 + 三类计数 + 最新哨兵摘要。"""
     live = live_status()
@@ -17421,7 +17464,7 @@ def watch_alert_push(msg):
             _WATCH_ALERT_LAST["msg"] = msg
             return True, "已写入 APP 队列"
         return False, "推送未启用"
-    text = "⚠️ TeslaBox 巡检告警\n" + msg + "\n" + time.strftime("%Y-%m-%d %H:%M:%S")
+    text = "⚠️ tslbox 巡检告警\n" + msg + "\n" + time.strftime("%Y-%m-%d %H:%M:%S")
     hook = str(conf.get("webhook") or "").strip()
     use_dm = _dm_ready(conf) and (conf.get("mode") != "group" or not hook)
     try:
@@ -20835,6 +20878,10 @@ class Handler(BaseHTTPRequestHandler):
         # 原生 APP 只读直连: 用 notify.json 里的独立令牌, 不要求网页登录 cookie。
         # 仅放行只读事件/状态/缩略图/媒体, 设置、OTA、售后等写接口仍然必须登录。
         app_token = (self.headers.get("X-TSF-App-Token") or "").strip()
+        if not app_token:
+            # 兼容 libVLC 等原生播放器: 某些 Android 版本不会透传自定义请求头, 允许仅对只读媒体/接口用 query token。
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            app_token = (q.get("token", [""])[0] or "").strip()
         if app_token and (p in ("/api/events", "/api/events_meta", "/api/live",
                                 "/api/live/status", "/api/drive_lock", "/api/doctor",
                                 "/api/ovthumb", "/api/variant_state",
@@ -21281,7 +21328,47 @@ class Handler(BaseHTTPRequestHandler):
                 if COMPOSITE_STATE.get("proc") is proc:
                     COMPOSITE_STATE["proc"] = None
 
+
+    def _proxy_settings(self):
+        """同源代理到本机 Go 设置网关 (只暴露 /api/app/settings 前缀)。"""
+        n = int(self.headers.get("Content-Length") or 0)
+        body = None
+        if self.command in ("POST", "PUT", "PATCH", "DELETE") and n:
+            body = self.rfile.read(min(n, 2 * 1024 * 1024))
+        headers = {}
+        for k in ("Authorization", "Content-Type", "Content-Length", "Accept", "User-Agent"):
+            v = self.headers.get(k)
+            if v:
+                headers[k] = v
+        conn = None
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", 8097, timeout=40)
+            conn.request(self.command, self.path, body=body, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            self.send_response(resp.status)
+            self.send_header("Content-Type", resp.getheader("Content-Type") or "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(data)
+        except (OSError, http.client.HTTPException) as e:
+            data = json.dumps({"ok": False, "msg": "设置网关不可用: " + str(e)}, ensure_ascii=False).encode()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        finally:
+            if conn is not None:
+                conn.close()
+
     def do_GET(self):
+        if urllib.parse.urlsplit(self.path).path.startswith("/api/app/settings"):
+            self._proxy_settings()
+            return
         path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         if path == "/login":
             if not AUTH_ON:
@@ -21367,6 +21454,38 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 limit = 50
             self._json(app_notifications(after, limit))
+            return
+        if path == "/api/app/prepare":
+            # APP 画质准备: 只把目标档排进后台转码队列, 不阻塞播放器打开。
+            token = (self.headers.get("X-TSF-App-Token") or "").strip()
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if not token:
+                token = (q.get("token", [""])[0] or "").strip()
+            if not self._app_token_ok(token):
+                self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+                return
+            u = (q.get("u", [""])[0] or "").strip()
+            qv = (q.get("q", ["480p"])[0] or "").strip()
+            m = re.match(r"^/media/([\w-]+)/([\w\-. ]+)/([\w\-. ]+)$", u.split("?", 1)[0])
+            if not m or qv not in RES_SCALE:
+                self._json({"ok": False, "msg": "画质或路径无效"}, 400)
+                return
+            fp = safe_media_path(m.group(1), m.group(2), m.group(3))
+            if not fp:
+                self._json({"ok": False, "msg": "文件不存在"}, 404)
+                return
+            if qv == "orig":
+                self._json({"ok": True, "full": True, "queued": False})
+                return
+            full = _variant_ready(fp, qv)
+            if not full:
+                if car_active_for_background() or usb_sync_busy():
+                    self._json({"ok": True, "full": False, "queued": False,
+                                "blocked": "car_writing",
+                                "msg": "车机正在写入，转码已让路"})
+                    return
+                spawn_variant(fp, qv, urgent=True)
+            self._json({"ok": True, "full": bool(full), "queued": not bool(full)})
             return
         if path == "/api/app/overview":
             # APP 首页聚合接口: 必须带 APP 令牌, 不依赖网页登录 cookie。
@@ -22326,6 +22445,9 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self):
+        if urllib.parse.urlsplit(self.path).path.startswith("/api/app/settings"):
+            self._proxy_settings()
+            return
         p = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         if p == "/login" and AUTH_ON:
             self._do_login()
@@ -22342,6 +22464,18 @@ class Handler(BaseHTTPRequestHandler):
                 msg = ""
             ok, info = watch_alert_push(msg)
             self._json({"ok": ok, "info": info})
+            return
+        if p == "/api/app/log":
+            tok = (self.headers.get("X-TSF-App-Token") or "").strip()
+            if not self._app_token_ok(tok):
+                self._json({"ok": False, "msg": "APP 令牌无效"}, 401)
+                return
+            body = self._read_json(limit=768 * 1024)
+            if body == "TOOBIG":
+                self._json({"ok": False, "msg": "日志过大"}, 413)
+                return
+            ok, msg, lid = app_log_save(body, self.client_address[0] if self.client_address else "")
+            self._json({"ok": ok, "msg": msg, "id": lid}, 200 if ok else 400)
             return
         if p == "/api/app/notifications/ack":
             # APP 已读回执: 也只用 APP 令牌, 不走浏览器登录。
@@ -22632,7 +22766,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             patch = {}
             for k in ("enabled", "saved", "watch_svc", "watch_mem", "watch_mpp",
-                      "watch_lun", "watch_oom", "app_enabled"):
+                      "watch_lun", "watch_oom", "app_enabled", "app_ws_open"):
                 if k in body:
                     patch[k] = bool(body.get(k))
             for k in ("mode", "media", "quality", "webhook", "app_id", "receive_id",

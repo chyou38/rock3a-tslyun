@@ -1,4 +1,4 @@
-// tsf-doctor: TeslaBox 只读体检工具。
+// tsf-doctor: tslbox 只读体检工具。
 //
 // 设计边界：
 //   - 只读：不写业务文件、不重启服务、不改配置；

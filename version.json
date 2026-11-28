@@ -1,13 +1,13 @@
 {
-  "version": "3.2.59",
+  "version": "3.2.65",
   "date": "2026-11-28",
   "notes": [
-    "APP 令牌只读放行 /api/events、/api/live、/api/drive_lock、/api/doctor、/api/ovthumb、/api/variant_state、/api/composite/stream、缩略图与 /media，原生 App 不再依赖网页登录 cookie",
-    "新增 /api/app/overview 聚合接口：同步/存储/CPU 温度/服务项/三类计数/最新哨兵一次返回，最新哨兵摘要补充 cams 列表",
-    "APP 通知事件补充 cat/name 字段，通知点击可直接定位事件；保留原 url 兼容旧客户端"
+    "修复通知设置未接收 app_ws_open 的问题：内网免令牌 WebSocket 开关现在能真正保存",
+    "新增本机设置上传代理：品牌图标、锁车音频、Wraps 图片可经本机网关直接上传",
+    "设置中心补齐上传/删除/存储初始化/清空 TeslaCam 入口"
   ],
   "sha256": {
-    "sentry-viewer.py": "9145e17b034c364857d0ca4b2e9c2c08c9c5aca769f4aaf515c0d7dfe9ce988c",
+    "sentry-viewer.py": "a3a5e1e1a85ff918ea149f9f98cebeaa764fb86ec5b6fdffa11ac993c0e5327e",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -15,5 +15,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "eITguxEi5u2W1gFgTXVRIKHl4fwhKVfZVknd/5eBpROJzKgUEOa/T+ua57IgeVxlpD5QPEFbtqPuFP0IS/myDw=="
+  "sig": "NZWkGf28AyWMPdA8X2ABwM2xiH/i24blK/v+a6wr6m9CukQvMzojN4TOtrbxs34e1MPUdLkzu6UMyhXSNnb3AA=="
 }

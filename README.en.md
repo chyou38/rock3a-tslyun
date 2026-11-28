@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**V3.2.56** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
+**V3.2.65** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -80,7 +80,7 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 
 - Tokenless WebSocket now accepts Tailscale's `100.64.0.0/10` CGNAT range, so a phone can connect directly to the tailnet IP without a token.
 - Added CGNAT source tests; all 90 tests pass.
-- Direct fallback: `ws://100.105.113.40/api/app/ws`, bypassing Tailscale Serve TLS/DNS.
+- Direct fallback: `ws://192.168.1.100/api/app/ws`, bypassing Tailscale Serve TLS/DNS.
 
 ## What's new in v3.2.55 (2026-11-28)
 

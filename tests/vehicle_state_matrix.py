@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TeslaBox 车辆状态门禁仿真矩阵 (v3.2.36).
+"""tslbox 车辆状态门禁仿真矩阵 (v3.2.36).
 
 用临时镜像/临时 write-cat/settings 跑真实门禁函数, 不挂载真实 U 盘, 不改盒子状态。
 每个场景:

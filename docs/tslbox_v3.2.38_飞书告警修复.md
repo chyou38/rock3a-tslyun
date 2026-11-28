@@ -1,4 +1,4 @@
-# TeslaBox v3.2.38 飞书告警漏发修复
+# tslbox v3.2.38 飞书告警漏发修复
 
 ## 本次漏发结论
 
@@ -28,7 +28,7 @@
 ## 验证
 
 - `/api/ver` 返回 `3.2.38`；`tesla-live`、`sentry-viewer`、`tesla-feishu-route` 均 active。
-- `ip route get 112.29.213.208` 返回 `via 192.168.70.1 dev end1 src 192.168.70.138`。
+- `ip route get 112.29.x.x` 返回 `via 192.168.70.1 dev end1 src 192.168.70.10`。
 - 飞书 tenant token 获取成功（42 字符）。
 - 本次事件已手动补发到飞书私聊；`notify-state.last.ok=true`。
 - 自动化测试 35 项通过，新增“网络失败保留 pending、恢复后成功”回归用例。

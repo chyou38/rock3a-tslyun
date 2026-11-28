@@ -1,5 +1,5 @@
 [Unit]
-Description=TeslaBox stability watch (10s heartbeat + ALERT log)
+Description=tslbox stability watch (10s heartbeat + ALERT log)
 After=multi-user.target
 
 [Service]

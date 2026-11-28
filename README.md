@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.56** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.65** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -76,11 +76,18 @@
 
 ---
 
+## v3.2.65 更新（2026-11-28）
+
+- 修复通知设置未接收 `app_ws_open` 的问题：内网免令牌 WebSocket 开关现在能真正保存。
+- 新增本机设置上传代理：品牌图标、锁车音频、Wraps 图片可经本机网关直接上传。
+- 设置中心补齐上传、删除、存储初始化、清空 `TeslaCam` 入口。
+- 全量自动化测试通过，OTA 清单已重新签名。
+
 ## v3.2.56 更新（2026-11-28）
 
 - 内网免令牌 WebSocket 放行 Tailscale `100.64.0.0/10` 网段；手机直连 tailnet IP 时不再需要令牌。
 - 新增 CGNAT 来源测试；全量 90 项测试通过。
-- 可用直连地址 `ws://100.105.113.40/api/app/ws` 绕开 Tailscale Serve 的 TLS/DNS 路径。
+- 可用直连地址 `ws://192.168.1.100/api/app/ws` 绕开 Tailscale Serve 的 TLS/DNS 路径。
 
 ## v3.2.55 更新（2026-11-28）
 

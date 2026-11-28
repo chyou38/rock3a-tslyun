@@ -1,4 +1,4 @@
-# TeslaBox 车机U盘 / 归档区 / 哨兵联动逻辑
+# tslbox 车机U盘 / 归档区 / 哨兵联动逻辑
 
 版本：v3.2.37 beta  
 范围：`tesla-live-sync.py`、`sentry-viewer.py`、`write-cat.json`  

@@ -270,7 +270,7 @@ class AppNotificationQueueTests(unittest.TestCase):
             (ev / "event.json").write_text(json.dumps({
                 "reason": "sentry_aware_object_detection", "camera": "0",
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "city": "合肥", "street": "测试路"}), encoding="utf-8")
+                "city": "示例市", "street": "示例路"}), encoding="utf-8")
             (ev / "front.mp4").write_bytes(b"x")
             old = time.time() - 30
             os.utime(ev / "front.mp4", (old, old))
@@ -288,7 +288,7 @@ class AppNotificationQueueTests(unittest.TestCase):
                 out = viewer.app_notifications(0)
                 self.assertEqual(len(out["events"]), 1)
                 self.assertIn("哨兵", out["events"][0]["title"])
-                self.assertIn("合肥", out["events"][0]["body"])
+                self.assertIn("示例市", out["events"][0]["body"])
 
     def test_webtoapp_poll_returns_bare_array_and_dequeues(self):
         with tempfile.TemporaryDirectory() as td:
@@ -363,9 +363,9 @@ class PwaManifestTests(unittest.TestCase):
 
 class AppWebSocketTests(unittest.TestCase):
     def test_tokenless_private_client_accepts_tailscale_cgnat(self):
-        self.assertTrue(viewer._app_ws_private_client("100.118.214.88"))
-        self.assertTrue(viewer._app_ws_private_client("100.105.113.40"))
-        self.assertTrue(viewer._app_ws_private_client("192.168.100.24"))
+        self.assertTrue(viewer._app_ws_private_client("100.64.0.10"))
+        self.assertTrue(viewer._app_ws_private_client("100.127.255.1"))
+        self.assertTrue(viewer._app_ws_private_client("192.168.1.10"))
         self.assertTrue(viewer._app_ws_private_client("127.0.0.1"))
         self.assertFalse(viewer._app_ws_private_client("8.8.8.8"))
 
