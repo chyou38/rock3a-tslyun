@@ -1,7 +1,11 @@
 {
-  "version": "3.2.50",
+  "version": "3.2.51",
   "date": "2026-11-28",
   "notes": [
+    "个性化新增「APP 设置」页: 独立随机令牌、轮询地址、测试通知；WebToApp/PWA 可直接接入",
+    "APP 通知队列独立于飞书: 哨兵/手动保存/巡检事件写入待取队列，支持 after 增量拉取与已读回执",
+    "APP 接口使用独立令牌鉴权，支持 Tailscale 内网访问；飞书推送可同时保留，互不影响",
+    "修复飞书巡检重试时 APP 重复入队；通知深链直接打开对应事件；82 项自动化测试通过",
     "OTA 安全升级: version.json 使用 Ed25519 签名 + 每个发布文件 SHA-256 校验; 镜像/CDN 被换包时拒绝下载执行",
     "配置 --dir 自定义安装时, settings.json/auth.conf/notify/OTA/日志/缓存等状态统一跟随 TSF_DIR; 不再静默关闭认证",
     "自动/手动升级都会检查车机写入、live-sync 搬录像和未确认的网络回滚; 任一占用时升级推迟, 不重启 viewer/live-sync",
@@ -21,7 +25,7 @@
     "OTA 增加 testingcf 镜像; 稳定版清单可即时读取, 不再受 gcore 旧缓存影响"
   ],
   "sha256": {
-    "sentry-viewer.py": "cff291e3de9f2b9e194f9a9324c26fe6c7199a4ff20aa1dc50f7a398a7a353fd",
+    "sentry-viewer.py": "53266a95886ff8b9ef9f5095200e1abf1be94a4ee927bfe6d498cd1fb034d7ed",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -29,5 +33,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "B2jVotk6uIrthA4BB2NeSrxVhg4644wqlxHAhW0jAmGmk3/CVeMAsqOMwe57SqShC0GjwK1a+B4vGM46yJ+WBA=="
+  "sig": "zk5NVnEPhvKE1vKlP3P3oDVQwZKK8zoQTawM+ffvnGmiqrhxbLGEeU70m8uXBWlFCFOEXD6u2sd3vxiOc9u5DA=="
 }

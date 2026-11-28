@@ -237,6 +237,67 @@ class UploadCapTests(unittest.TestCase):
         self.assertEqual(h._read_upload(3 * 1024 * 1024)[0], "TOOBIG")
 
 
+class AppNotificationQueueTests(unittest.TestCase):
+    def test_queue_dedup_poll_and_ack(self):
+        with tempfile.TemporaryDirectory() as td:
+            qf = Path(td) / "app-notifications.json"
+            with patch.object(viewer, "APP_QUEUE_FILE", str(qf)), \
+                    patch.object(viewer, "notify_conf",
+                                 return_value={"app_enabled": True, "app_token": "tok"}):
+                self.assertTrue(viewer.app_enqueue_test())
+                self.assertTrue(viewer.app_enqueue_test())   # 同一秒同一 key 去重
+                out = viewer.app_notifications(0)
+                self.assertEqual(len(out["events"]), 1)
+                eid = out["events"][0]["id"]
+                self.assertEqual(viewer.app_ack([eid]), 1)
+                self.assertEqual(viewer.app_notifications(0)["pending"], 0)
+
+    def test_enable_generates_token(self):
+        with tempfile.TemporaryDirectory() as td:
+            conf = Path(td) / "notify.json"
+            with patch.object(viewer, "NOTIFY_CONF", str(conf)):
+                viewer.notify_save({"app_enabled": True})
+                j = json.loads(conf.read_text(encoding="utf-8"))
+                self.assertTrue(j["app_token"])
+                self.assertGreaterEqual(len(j["app_token"]), 20)
+
+    def test_scan_enqueues_recent_sentry_event(self):
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "archive"
+            ev = archive / "SentryClips" / time.strftime("%Y-%m-%d_%H-%M-%S")
+            ev.mkdir(parents=True)
+            (ev / "event.json").write_text(json.dumps({
+                "reason": "sentry_aware_object_detection", "camera": "0",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "city": "合肥", "street": "测试路"}), encoding="utf-8")
+            (ev / "front.mp4").write_bytes(b"x")
+            old = time.time() - 30
+            os.utime(ev / "front.mp4", (old, old))
+            os.utime(ev / "event.json", (old, old))
+            state = Path(td) / "app-state.json"
+            state.write_text(json.dumps({"init": 1, "seen": {}}), encoding="utf-8")
+            with patch.object(viewer, "ARCHIVE", str(archive)), \
+                 patch.object(viewer, "APP_QUEUE_FILE", str(Path(td) / "q.json")), \
+                 patch.object(viewer, "APP_STATE_FILE", str(state)), \
+                 patch.object(viewer, "_archive_event_pending", return_value=False), \
+                 patch.object(viewer, "notify_conf",
+                              return_value={"app_enabled": True, "app_token": "tok",
+                                            "delay": 20, "saved": False}):
+                self.assertEqual(viewer.app_scan(), 1)
+                out = viewer.app_notifications(0)
+                self.assertEqual(len(out["events"]), 1)
+                self.assertIn("哨兵", out["events"][0]["title"])
+                self.assertIn("合肥", out["events"][0]["body"])
+
+    def test_token_compare_rejects_wrong_value(self):
+        h = object.__new__(viewer.Handler)
+        with patch.object(viewer, "notify_conf",
+                          return_value={"app_enabled": True, "app_token": "secret-token"}):
+            self.assertTrue(h._app_token_ok("secret-token"))
+            self.assertFalse(h._app_token_ok("wrong"))
+            self.assertFalse(h._app_token_ok(""))
+
+
 class OtaCheckStaleTests(unittest.TestCase):
     def test_older_mirror_version_is_not_shown_as_latest(self):
         remote = {"version": "3.2.43", "date": "2026-11-27",

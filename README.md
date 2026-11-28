@@ -10,7 +10,7 @@
 
 **中文** | [English](README.en.md)
 
-**V3.2.50** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
+**V3.2.51** · 虚拟哨兵 U 盘 · 6 路同步回放 · SEI 行车遥测 · 硬解硬编 · 远程单流合成 · 作品库 · 水印导出 —— 仅适配 Radxa ROCK 3A（RK3568）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -73,6 +73,15 @@
 | 🔄 在线升级 | 多源并发竞速 + GitHub API 实时兜底；`version.json` 使用 Ed25519 签名 + 发布文件 SHA-256 校验，下载后校验 → 备份 → 原子替换 → 自动重启，出问题一键回滚。设置 → 更新里可切换**稳定版 `main` / 测试版 `beta`**；自动更新默认开启，但车机正在写 U 盘、live-sync 正在搬录像、网络回滚未确认或播放/合成任务运行时一律推迟。 |
 | 🎨 个性化 | 标题图标与名称可自定义（默认「TSL哨兵云盘」）、深 / 浅 / 自动主题，4 套界面风格（默认 / Apple / Claude / 像素），10 种界面语言、网页背景换肤、锁车音（`LockChime.wav`）、涂装 `Wraps/`。 |
 | 🛡 稳定性 | 归档区 ext4 日志式、开机自检、服务自动拉起、**USB 自愈狗 1 秒级监控，车机 U 盘被弹出或异常断开时立即热挂回，失败再完整恢复；你主动点「连接」管理时自动暂停让路，并显示本次开机累计触发次数**、断电自愈。仓库另带可选的 `scripts/tsf-watch.sh`：每 10 秒心跳、异常写本地 `/opt/tesla-sentry/watch.log`；默认**不推 CmaFree 低水位飞书告警**（该值在 RK3568 上长期 0–1MB 属正常波动），需要恢复时在服务里设 `TSF_WATCH_ALERT_CMA=1`。 |
+
+---
+
+## v3.2.51 更新（2026-11-28）
+
+- 个性化新增「APP 设置」：独立 APP 通知开关、随机访问令牌、轮询地址、测试通知；不替代飞书，可同时开启。
+- 新增 APP 待取通知接口：`GET /api/app/notifications?token=...&after=...` 增量拉取，`POST /api/app/notifications/ack` 已读回执；支持 Tailscale 内网访问。
+- 哨兵 / 手动保存 / 巡检事件可写入 APP 队列，通知深链直接打开对应事件；WebToApp 用 URL 轮询即可。
+- 82 项自动化测试通过。
 
 ---
 

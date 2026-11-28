@@ -25,6 +25,7 @@ import select
 import signal
 import http.client
 import ssl
+import secrets
 import zipfile
 import tempfile
 import sys
@@ -206,7 +207,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.50"
+APP_VERSION = "3.2.51"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -2636,6 +2637,7 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
   <div class="stabs">
     <button class="stab active" id="st-auth" onclick="stab('auth')"><svg class="ic"><use href="#i-key"/></svg>个人信息</button>
     <button class="stab" id="st-notify" onclick="stab('notify')"><svg class="ic"><use href="#i-bell"/></svg>推送</button>
+    <button class="stab" id="st-app" onclick="stab('app')"><svg class="ic"><use href="#i-bell"/></svg>APP 设置</button>
     <button class="stab" id="st-car" onclick="stab('car')"><svg class="ic"><use href="#i-brush"/></svg>车辆个性化</button>
     <button class="stab" id="st-files" onclick="stab('files')"><svg class="ic"><use href="#i-usb"/></svg>虚拟磁盘</button>
     <button class="stab" id="st-net" onclick="stab('net')"><svg class="ic"><use href="#i-globe"/></svg>网络设置</button>
@@ -2959,6 +2961,32 @@ html[data-style="pixel"] .stylepick .sw i { border:1px solid var(--line); }
     <label class="nrow"><span>解码异常（MPP buffer NULL）</span><input type="checkbox" id="watch-mpp" onchange="watchSave('watch_mpp',this.checked)"></label>
     <label class="nrow"><span>U盘被弹空（LUN EMPTY）</span><input type="checkbox" id="watch-lun" onchange="watchSave('watch_lun',this.checked)"></label>
     <label class="nrow"><span>内核 OOM / panic</span><input type="checkbox" id="watch-oom" onchange="watchSave('watch_oom',this.checked)"></label>
+  </div>
+  <div id="tab-app" style="display:none">
+    <div class="hint">给 WebToApp / PWA 的独立通知通道。飞书推送可同时保留；这里只负责把哨兵事件写入 APP 待取队列。</div>
+    <label class="nrow"><span>启用 APP 通知</span><input type="checkbox" id="app-en"></label>
+    <div class="nrow"><span>APP 访问令牌</span><input class="ninput" id="app-token" readonly autocomplete="off"></div>
+    <div class="brandrow">
+      <button class="mini" onclick="appToggleEye()">显示 / 隐藏</button>
+      <button class="mini" onclick="appCopyToken()">复制令牌</button>
+      <button class="mini" onclick="appRotate()">重新生成</button>
+    </div>
+    <div class="nrow"><span>轮询地址</span><input class="ninput" id="app-url" readonly autocomplete="off"></div>
+    <div class="brandrow">
+      <button class="mini" onclick="appCopyUrl()">复制轮询地址</button>
+      <button class="mini primary" onclick="appTest()">发送测试通知</button>
+    </div>
+    <div class="hint" id="app-msg"></div>
+    <div class="hint" id="app-stat">--</div>
+    <div class="updbtns">
+      <button class="mini primary" onclick="appSave()">保存 APP 设置</button>
+    </div>
+    <div class="stabsec sep">WebToApp 配置</div>
+    <div class="hint">
+      目标 URL 用 Tailscale 的 HTTPS 地址，不要用 192.168 内网 IP。<br>
+      WebToApp → 通知：开启通知权限，URL 轮询填上面的地址，间隔 15–30 秒；通知点击跳到对应事件。<br>
+      手机上的 Tailscale 要保持连接，否则 App 打不开页面，也轮询不到通知。
+    </div>
   </div>
   <div id="tab-doctor" style="display:none">
     <div class="stabsec">系统体检</div>
@@ -8169,7 +8197,7 @@ let storageTimer = null;
 function stab(which) {
   /* 一个页签可以带多块内容: 车辆个性化=锁车语音+涂装, 设置=风扇+杂项 */
   const GROUPS = { car: ['audio', 'wraps'], settings: ['fan', 'debug', 'skin', 'lang', 'update'], doctor: ['doctor'] };
-  const ALL = ['net', 'files', 'audio', 'wraps', 'notify', 'auth', 'doctor', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'];
+  const ALL = ['net', 'files', 'audio', 'wraps', 'notify', 'app', 'auth', 'doctor', 'lang', 'skin', 'fan', 'brand', 'debug', 'update'];
   const show = GROUPS[which] || [which];
   ALL.forEach(k => {
     const t = document.getElementById('tab-' + k);
@@ -8191,6 +8219,7 @@ function stab(which) {
   if (which === 'doctor') { if (!doctorLoaded) doctorHistoryLoad(); }
   if (which === 'net') { netLoad(); netTimer = setInterval(netTick, 5000); }
   if (which === 'notify') ntLoad();
+  if (which === 'app') appLoad();
   if (which === 'auth') { pwLoad(); refreshBrand(); }
   if (which === 'files') {           /* 进虚拟磁盘默认展开存储信息, 10 秒自动刷新 */
     refreshStorage(); loadDriveLock();
@@ -8776,6 +8805,100 @@ async function ntTest() {
     m.textContent = (j.ok ? '✅ ' : '❌ ') + j.msg;
     m.style.color = j.ok ? '#4cc38a' : 'var(--accent)';
   } catch (e) { m.textContent = t('发送失败') + ': ' + e; m.style.color = 'var(--accent)'; }
+}
+
+/* ---------- APP 设置: WebToApp / PWA 轮询通道 ---------- */
+let appReal = '', appHidden = true, appBase = '';
+function appSetToken(v) {
+  appReal = String(v || '');
+  const el = document.getElementById('app-token');
+  if (el) el.value = appReal ? (appHidden ? '••••••••••••' : appReal) : '';
+  const url = document.getElementById('app-url');
+  if (url) url.value = appReal
+    ? appBase + (appHidden ? '?token=••••••••' : '?token=' + encodeURIComponent(appReal))
+    : appBase;
+}
+function appToggleEye() {
+  appHidden = !appHidden;
+  appSetToken(appReal);
+}
+function appUrlFull() {
+  return appBase + (appReal ? '?token=' + encodeURIComponent(appReal) : '');
+}
+function appCopyToken() {
+  if (!appReal) { toast('请先保存并启用 APP 通知'); return; }
+  copyText(appReal, 'APP 令牌已复制');
+}
+function appCopyUrl() {
+  if (!appReal) { toast('请先保存并启用 APP 通知'); return; }
+  copyText(appUrlFull(), '轮询地址已复制');
+}
+async function appLoad() {
+  appBase = location.origin + '/api/app/notifications';
+  const m = document.getElementById('app-msg');
+  try {
+    const j = await (await fetch('/api/notify', { cache: 'no-store' })).json();
+    document.getElementById('app-en').checked = !!j.app_enabled;
+    appSetToken(j.app_token || '');
+    const st = document.getElementById('app-stat');
+    if (st) {
+      const pending = Number(j.app_pending || 0);
+      const last = j.app_last || {};
+      st.textContent = '待取 ' + pending + ' 条' + (last.title ? ' · 最近: ' + last.title : '');
+    }
+    if (m) {
+      m.textContent = j.app_enabled
+        ? '已启用；手机端用上面的轮询地址。'
+        : '未启用；勾选后保存会生成随机令牌。';
+      m.style.color = j.app_enabled ? '#4cc38a' : '';
+    }
+  } catch (e) {
+    if (m) { m.textContent = '读取 APP 设置失败: ' + e; m.style.color = 'var(--accent)'; }
+  }
+}
+async function appSave() {
+  const on = document.getElementById('app-en').checked;
+  const m = document.getElementById('app-msg');
+  if (m) { m.textContent = '保存中…'; m.style.color = ''; }
+  try {
+    const j = await (await fetch('/api/notify/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_enabled: on })
+    })).json();
+    if (m) {
+      m.textContent = (j.ok ? '✅ 已保存' : '❌ ' + (j.msg || '保存失败'));
+      m.style.color = j.ok ? '#4cc38a' : 'var(--accent)';
+    }
+    if (j.ok) appLoad();
+  } catch (e) {
+    if (m) { m.textContent = '保存失败: ' + e; m.style.color = 'var(--accent)'; }
+  }
+}
+async function appRotate() {
+  if (!confirm('重新生成令牌后，旧 APP 轮询地址会立即失效。继续？')) return;
+  const m = document.getElementById('app-msg');
+  try {
+    const j = await (await fetch('/api/app/token/rotate', { method: 'POST' })).json();
+    if (!j.ok) throw j.msg || '生成失败';
+    if (m) { m.textContent = '✅ 已生成新令牌'; m.style.color = '#4cc38a'; }
+    await appLoad();
+  } catch (e) {
+    if (m) { m.textContent = '生成失败: ' + e; m.style.color = 'var(--accent)'; }
+  }
+}
+async function appTest() {
+  const m = document.getElementById('app-msg');
+  if (m) { m.textContent = '正在写入测试通知…'; m.style.color = ''; }
+  try {
+    const j = await (await fetch('/api/app/test', { method: 'POST' })).json();
+    if (m) {
+      m.textContent = (j.ok ? '✅ ' : '❌ ') + (j.msg || '');
+      m.style.color = j.ok ? '#4cc38a' : 'var(--accent)';
+    }
+    if (j.ok) appLoad();
+  } catch (e) {
+    if (m) { m.textContent = '发送失败: ' + e; m.style.color = 'var(--accent)'; }
+  }
 }
 
 function ntMediaUI() {
@@ -15596,6 +15719,11 @@ def disk_guard():
 # (应用需开机器人能力 + im:message/im:resource 权限), 由本程序换取 token 上传图片拿 img_key。
 NOTIFY_CONF = os.environ.get("TSF_NOTIFY_CONF", os.path.join(RUNTIME_DIR, "notify.json"))
 NOTIFY_STATE = os.environ.get("TSF_NOTIFY_STATE", os.path.join(RUNTIME_DIR, "notify-state.json"))
+APP_QUEUE_FILE = os.environ.get("TSF_APP_QUEUE", os.path.join(RUNTIME_DIR, "app-notifications.json"))
+APP_STATE_FILE = os.environ.get("TSF_APP_STATE", os.path.join(RUNTIME_DIR, "app-notify-state.json"))
+APP_QUEUE_MAX = 200
+APP_QUEUE_TTL = 7 * 86400
+_APPQ_LOCK = threading.Lock()
 FEISHU_API = "https://open.feishu.cn/open-apis"
 _NC_DEFAULT = {
     "enabled": False, "mode": "dm", "webhook": "", "app_id": "", "app_secret": "",
@@ -15603,6 +15731,8 @@ _NC_DEFAULT = {
     "media": "thumb", "quality": "480p", "vdur": 30,
     # 巡检告警开关 (网页「推送」页里勾选; 不勾只写 watch.log, 不推飞书)
     "watch_svc": False, "watch_mem": True, "watch_mpp": True, "watch_lun": True, "watch_oom": True,
+    # APP 通知: 独立于飞书的待取队列, 给 WebToApp/PWA 轮询
+    "app_enabled": False, "app_token": "",
 }
 # 给 tsf-watch.sh 用的极简开关文件: 纯 KEY=0/1, shell 直接 source, 零解析开销
 WATCH_FLAGS_FILE = os.environ.get("TSF_WATCH_FLAGS", os.path.join(RUNTIME_DIR, "watch-flags.conf"))
@@ -15649,6 +15779,9 @@ def notify_save(patch):
     for k, v in (patch or {}).items():
         if k in _NC_DEFAULT:
             c[k] = v
+    # 首次启用 APP 通知时自动生成随机令牌; 令牌只存在 notify.json (0600)
+    if c.get("app_enabled") and not str(c.get("app_token") or "").strip():
+        c["app_token"] = secrets.token_urlsafe(24)
     try:
         os.makedirs(os.path.dirname(NOTIFY_CONF) or ".", exist_ok=True)
         tmp = NOTIFY_CONF + ".tmp"
@@ -16706,6 +16839,147 @@ def _feishu_send_dm(conf, card):
     return True
 
 
+# ---------- APP 通知: 独立待取队列 (WebToApp/PWA 轮询) ----------
+def _appq_load():
+    """读 APP 待取队列; 文件损坏时退回空队列, 不让推送循环崩掉。"""
+    try:
+        with open(APP_QUEUE_FILE, encoding="utf-8") as f:
+            q = json.load(f)
+        if not isinstance(q, dict):
+            raise ValueError("bad queue")
+        ev = q.get("events")
+        if not isinstance(ev, list):
+            ev = []
+        q["events"] = [e for e in ev if isinstance(e, dict) and isinstance(e.get("id"), int)]
+        q["next_id"] = max(1, int(q.get("next_id") or 1))
+        return q
+    except Exception:
+        return {"next_id": 1, "events": []}
+
+
+def _appq_save(q):
+    """原子写队列; 0600 因为里面可能有位置/事件信息。"""
+    try:
+        os.makedirs(os.path.dirname(APP_QUEUE_FILE) or ".", exist_ok=True)
+        tmp = APP_QUEUE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(q, f, ensure_ascii=False, indent=1)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, APP_QUEUE_FILE)
+        return True
+    except OSError:
+        return False
+
+
+def _appq_prune(q, now=None):
+    now = now or time.time()
+    ev = [e for e in (q.get("events") or [])
+          if now - float(e.get("ts") or 0) <= APP_QUEUE_TTL]
+    q["events"] = ev[-APP_QUEUE_MAX:]
+    return q
+
+
+def _appq_stats():
+    with _APPQ_LOCK:
+        q = _appq_prune(_appq_load())
+        _appq_save(q)
+    ev = q.get("events") or []
+    return {"pending": len(ev), "latest": int(q.get("next_id") or 1) - 1,
+            "last": ev[-1] if ev else {}}
+
+
+def _appq_append(kind, title, body, url="", key=""):
+    """写一条待取通知; 同一 key 只入队一次, 防止扫描/重试重复。"""
+    conf = notify_conf()
+    if not conf.get("app_enabled") or not str(conf.get("app_token") or "").strip():
+        return False
+    with _APPQ_LOCK:
+        q = _appq_prune(_appq_load())
+        if key and any(str(e.get("key") or "") == key for e in (q.get("events") or [])):
+            return True
+        qid = int(q.get("next_id") or 1)
+        q["next_id"] = qid + 1
+        q.setdefault("events", []).append({
+            "id": qid, "ts": int(time.time()), "kind": str(kind or "event"),
+            "title": str(title or "TSL哨兵云")[:120],
+            "body": str(body or "")[:500],
+            "url": str(url or "")[:500], "key": str(key or "")[:200],
+        })
+        if not _appq_save(q):
+            return False
+    return True
+
+
+def _app_event_payload(cat, name):
+    """从 event.json 拼 APP 通知标题/正文/深链; 不依赖飞书是否启用。"""
+    meta = {}
+    try:
+        with open(os.path.join(ARCHIVE, cat, name, "event.json"), encoding="utf-8", errors="ignore") as f:
+            meta = json.load(f) or {}
+    except Exception:
+        meta = {}
+    cat_name, _color, detail = _reason_info(meta.get("reason"))
+    if cat == "SavedClips" and not str(meta.get("reason", "")).startswith("sentry_"):
+        cat_name, detail = "手动保存", "手动保存"
+    cam = CAM_NUM.get(int(meta["camera"])) if str(meta.get("camera", "")).strip().isdigit() else None
+    when = str(meta.get("timestamp") or name)[:19].replace("T", " ").replace("_", " ")
+    try:
+        dt = datetime.datetime.strptime(when, "%Y-%m-%d %H:%M:%S")
+        when = "%d月%d日 %02d:%02d:%02d" % (dt.month, dt.day, dt.hour, dt.minute, dt.second)
+    except Exception:
+        pass
+    loc = " ".join(x for x in (meta.get("city") or "", meta.get("street") or "") if x).strip() or "位置未知"
+    title = "🚨 " + cat_name + ((" · " + cam) if cam else "")
+    body = "%s · %s · %s" % (when, loc, detail)
+    link = str(notify_conf().get("public_url") or "").rstrip("/")
+    url = (link + "/?ev=%s/%s" % (urllib.parse.quote(cat), urllib.parse.quote(name))) if link else ""
+    return title, body, url
+
+
+def app_enqueue_event(cat, name, key=""):
+    title, body, url = _app_event_payload(cat, name)
+    return _appq_append("sentry" if cat == "SentryClips" else "saved", title, body, url, key or (cat + "/" + name))
+
+
+def app_enqueue_test():
+    link = str(notify_conf().get("public_url") or "").rstrip("/")
+    return _appq_append("test", "🧪 TSL哨兵云测试通知",
+                        "这是来自 TSL哨兵云 APP 通知通道的测试消息。",
+                        (link + "/") if link else "", "test/%d" % int(time.time()))
+
+
+def app_enqueue_watch(msg):
+    link = str(notify_conf().get("public_url") or "").rstrip("/")
+    key = "watch/%s/%d" % (hashlib.md5(str(msg or "").encode()).hexdigest()[:10], int(time.time() // 600))
+    return _appq_append("watch", "⚠️ TSL哨兵云巡检告警", str(msg or "")[:500],
+                        (link + "/") if link else "", key)
+
+
+def app_notifications(after=0, limit=50):
+    with _APPQ_LOCK:
+        q = _appq_prune(_appq_load())
+        _appq_save(q)
+    ev = [e for e in (q.get("events") or []) if int(e.get("id") or 0) > int(after or 0)]
+    return {"ok": True, "events": ev[:max(1, min(int(limit or 50), 100))],
+            "latest": int(q.get("next_id") or 1) - 1, "pending": len(q.get("events") or []),
+            "server_time": int(time.time())}
+
+
+def app_ack(ids):
+    want = {int(x) for x in (ids or []) if str(x).isdigit()}
+    if not want:
+        return 0
+    with _APPQ_LOCK:
+        q = _appq_load()
+        before = len(q.get("events") or [])
+        q["events"] = [e for e in (q.get("events") or []) if int(e.get("id") or 0) not in want]
+        _appq_save(q)
+    return before - len(q.get("events") or [])
+
+
 def notify_push(cat, name, test=False, force_thumb=None):
     """推一条到飞书; 返回 (成功?, 提示)
     force_thumb=None 时哨兵事件自动强制解封面; 其它事件保持车机写入让路策略。"""
@@ -16778,7 +17052,12 @@ def watch_alert_push(msg):
     if msg == _WATCH_ALERT_LAST["msg"] and now - _WATCH_ALERT_LAST["ts"] < 600:
         return True, "dedup"
     conf = notify_conf()
+    app_ok = app_enqueue_watch(msg)
     if not conf.get("enabled"):
+        if app_ok:
+            _WATCH_ALERT_LAST["ts"] = now
+            _WATCH_ALERT_LAST["msg"] = msg
+            return True, "已写入 APP 队列"
         return False, "推送未启用"
     text = "⚠️ TeslaBox 巡检告警\n" + msg + "\n" + time.strftime("%Y-%m-%d %H:%M:%S")
     hook = str(conf.get("webhook") or "").strip()
@@ -16915,6 +17194,75 @@ def notify_scan():
     return sent
 
 
+def app_scan():
+    """独立扫描新事件写入 APP 队列; 不依赖飞书开关, 也不复用飞书 seen 状态。"""
+    conf = notify_conf()
+    if not conf.get("app_enabled") or not str(conf.get("app_token") or "").strip():
+        return 0
+    try:
+        with open(APP_STATE_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+        if not isinstance(st, dict):
+            st = {}
+    except Exception:
+        st = {}
+    seen = st.setdefault("seen", {})
+    first = not st.get("init")
+    delay = max(5, int(conf.get("delay") or 20))
+    now = time.time()
+    cats = ["SentryClips"] + (["SavedClips"] if conf.get("saved") else [])
+    sent = 0
+    for cat in cats:
+        if sent >= 3:
+            break
+        base = os.path.join(ARCHIVE, cat)
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            if not re.match(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$", name):
+                continue
+            key = cat + "/" + name
+            if key in seen:
+                continue
+            if _archive_event_pending(cat, name):
+                continue
+            d = os.path.join(base, name)
+            newest = 0.0
+            try:
+                for f in os.listdir(d):
+                    newest = max(newest, os.path.getmtime(os.path.join(d, f)))
+            except OSError:
+                continue
+            if now - newest < delay:
+                continue
+            ev_ts = _ev_ts(name)
+            if ev_ts and now - ev_ts > 24 * 3600:
+                seen[key] = int(now)
+                continue
+            if first or now - newest > 6 * 3600:
+                seen[key] = int(now)
+                continue
+            if app_enqueue_event(cat, name, key=key):
+                seen[key] = int(now)
+                sent += 1
+            if sent >= 3:
+                break
+    if first:
+        st["init"] = 1
+    if len(seen) > 3000:
+        for k in sorted(seen, key=lambda x: seen.get(x) or 0)[:len(seen) - 2000]:
+            seen.pop(k, None)
+    try:
+        os.makedirs(os.path.dirname(APP_STATE_FILE) or ".", exist_ok=True)
+        tmp = APP_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(st, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, APP_STATE_FILE)
+    except OSError:
+        pass
+    return sent
+
+
 def notify_loop():
     time.sleep(25)
     while True:
@@ -16925,6 +17273,10 @@ def notify_loop():
             notify_scan()
         except Exception as ex:
             print("[NOTIFY] 扫描异常: %s" % str(ex)[:200], flush=True)
+        try:
+            app_scan()
+        except Exception as ex:
+            print("[APP-NOTIFY] 扫描异常: %s" % str(ex)[:200], flush=True)
         time.sleep(30)
 
 
@@ -16949,6 +17301,7 @@ def notify_status():
     conf = notify_conf()
     st = _nstate_load()
     rid, rtype = _dm_target(conf)
+    app_stats = _appq_stats()
     return {
         "enabled": bool(conf.get("enabled")),
         "mode": conf.get("mode") or "dm",
@@ -16969,6 +17322,11 @@ def notify_status():
         "watch_svc": bool(conf.get("watch_svc")), "watch_mem": bool(conf.get("watch_mem")),
         "watch_mpp": bool(conf.get("watch_mpp")), "watch_lun": bool(conf.get("watch_lun")),
         "watch_oom": bool(conf.get("watch_oom")),
+        "app_enabled": bool(conf.get("app_enabled")),
+        "app_token": str(conf.get("app_token") or ""),
+        "app_pending": app_stats.get("pending", 0),
+        "app_latest": app_stats.get("latest", 0),
+        "app_last": app_stats.get("last", {}),
     }
 
 
@@ -19961,6 +20319,14 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(0.4)          # 轻微延迟, 拖慢暴力破解
         self._login_page("用户名或密码不对", nxt, 401)
 
+    def _app_token_ok(self, token):
+        """APP 轮询令牌校验: 只比对 notify.json 里的随机令牌, 不依赖登录 cookie。"""
+        conf = notify_conf()
+        expected = str(conf.get("app_token") or "")
+        got = str(token or "")
+        return bool(conf.get("app_enabled") and expected and got
+                    and hmac.compare_digest(got.encode(), expected.encode()))
+
     def _gate(self):
         """未登录: 页面跳登录页, 媒体/接口直接 401。返回 True 表示可继续"""
         if not AUTH_ON:
@@ -20435,6 +20801,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
             self.end_headers()
             self.wfile.write(body)
+            return
+        if path == "/api/app/notifications":
+            # APP 轮询: 用 notify.json 里的独立令牌鉴权, 不要求登录 cookie。
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if not self._app_token_ok(q.get("token", [""])[0]):
+                self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+                return
+            try:
+                after = max(0, int(q.get("after", ["0"])[0] or 0))
+            except (TypeError, ValueError):
+                after = 0
+            try:
+                limit = max(1, min(100, int(q.get("limit", ["50"])[0] or 50)))
+            except (TypeError, ValueError):
+                limit = 50
+            self._json(app_notifications(after, limit))
             return
         if not self._gate():
             return
@@ -21397,6 +21779,18 @@ class Handler(BaseHTTPRequestHandler):
             ok, info = watch_alert_push(msg)
             self._json({"ok": ok, "info": info})
             return
+        if p == "/api/app/notifications/ack":
+            # APP 已读回执: 也只用 APP 令牌, 不走浏览器登录。
+            body = self._read_json()
+            if not isinstance(body, dict):
+                self._json({"ok": False, "msg": "参数错误"}, 400)
+                return
+            if not self._app_token_ok(body.get("token") or self.headers.get("X-TSF-App-Token")):
+                self._json({"ok": False, "msg": "APP 通知令牌无效"}, 401)
+                return
+            n = app_ack(body.get("ids") or [])
+            self._json({"ok": True, "acked": n, "pending": _appq_stats().get("pending", 0)})
+            return
         if not self._gate():
             return
         if p == "/api/doctor/history/clear":
@@ -21674,7 +22068,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             patch = {}
             for k in ("enabled", "saved", "watch_svc", "watch_mem", "watch_mpp",
-                      "watch_lun", "watch_oom"):
+                      "watch_lun", "watch_oom", "app_enabled"):
                 if k in body:
                     patch[k] = bool(body.get(k))
             for k in ("mode", "media", "quality", "webhook", "app_id", "receive_id",
@@ -21706,6 +22100,17 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 warn = "还没配接收人: 私聊需要 App ID/Secret + 接收人, 或填群机器人 webhook"
             self._json({"ok": True, "msg": "已保存", "status": notify_status(), "warn": warn})
+            return
+        if p == "/api/app/test":
+            if not app_enqueue_test():
+                self._json({"ok": False, "msg": "请先启用 APP 通知并保存令牌"}, 400)
+                return
+            self._json({"ok": True, "msg": "测试通知已写入 APP 队列"})
+            return
+        if p == "/api/app/token/rotate":
+            tok = secrets.token_urlsafe(24)
+            notify_save({"app_token": tok})
+            self._json({"ok": True, "token": tok})
             return
         if path == "/api/notify/test":
             cat, name = "SentryClips", ""
