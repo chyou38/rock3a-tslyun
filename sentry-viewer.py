@@ -206,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.45"
+APP_VERSION = "3.2.46"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -539,9 +539,16 @@ def ota_check(force=False):
     except Exception as ex:
         out["error"] = str(ex)
         return out
-    latest = str(j.get("version"))
-    out.update({"latest": latest, "date": j.get("date") or "", "notes": j.get("notes") or [],
-                "has_update": _vtuple(latest) > _vtuple(cur),
+    remote_latest = str(j.get("version"))
+    has_update = _vtuple(remote_latest) > _vtuple(cur)
+    # 镜像 CDN 可能缓存旧清单 (例如本机已是 3.2.45, 镜像仍返回 3.2.43)。
+    # 不能把比本机旧的版本显示成"最新"; 保留 remote_latest 供诊断,
+    # 对外 latest 至少等于本机版本, 避免页面误导。
+    latest = remote_latest if (has_update or _vtuple(remote_latest) == _vtuple(cur)) else cur
+    out.update({"latest": latest, "remote_latest": remote_latest,
+                "date": (j.get("date") or "") if latest == remote_latest else "",
+                "notes": (j.get("notes") or []) if latest == remote_latest else [],
+                "has_update": has_update,
                 "source": urllib.parse.urlsplit(j["_base"]).netloc})
     return out
 

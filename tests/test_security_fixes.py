@@ -237,5 +237,20 @@ class UploadCapTests(unittest.TestCase):
         self.assertEqual(h._read_upload(3 * 1024 * 1024)[0], "TOOBIG")
 
 
+class OtaCheckStaleTests(unittest.TestCase):
+    def test_older_mirror_version_is_not_shown_as_latest(self):
+        remote = {"version": "3.2.43", "date": "2026-11-27",
+                  "notes": ["old mirror"], "_base": "https://gcore.jsdelivr.net"}
+        with patch.object(viewer, "APP_VERSION", "3.2.46"), \
+                patch.object(viewer, "ota_latest", return_value=remote), \
+                patch.object(viewer, "load_settings", return_value={"auto_update": True}), \
+                patch.object(viewer, "_ota_channel", return_value="beta"):
+            out = viewer.ota_check(True)
+        self.assertEqual(out["latest"] == "3.2.46", True)
+        self.assertEqual(out["remote_latest"] == "3.2.43", True)
+        self.assertEqual(out["has_update"], False)
+        self.assertEqual(out["notes"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
