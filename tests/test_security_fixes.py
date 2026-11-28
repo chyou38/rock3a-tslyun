@@ -362,6 +362,13 @@ class PwaManifestTests(unittest.TestCase):
 
 
 class AppWebSocketTests(unittest.TestCase):
+    def test_tokenless_private_client_accepts_tailscale_cgnat(self):
+        self.assertTrue(viewer._app_ws_private_client("100.118.214.88"))
+        self.assertTrue(viewer._app_ws_private_client("100.105.113.40"))
+        self.assertTrue(viewer._app_ws_private_client("192.168.100.24"))
+        self.assertTrue(viewer._app_ws_private_client("127.0.0.1"))
+        self.assertFalse(viewer._app_ws_private_client("8.8.8.8"))
+
     def test_server_frame_and_masked_client_roundtrip(self):
         payload = b"hello"
         frame = viewer._ws_frame(0x1, payload)

@@ -1,14 +1,13 @@
 {
-  "version": "3.2.55",
+  "version": "3.2.56",
   "date": "2026-11-28",
   "notes": [
-    "新增 [APP-WS] 服务端诊断日志：记录握手来源、鉴权方式、是否带 token、拒绝码、连接/断开，不打印 token",
-    "APP 设置页显示 WebSocket 是否已连接；新增「内网免令牌 WebSocket」开关（默认关闭，仅内网/Tailscale 来源生效，公网直连仍拒绝）",
-    "新增 /api/notify 的 app_ws_open / app_ws_active 字段，便于确认手机端是否真的连上来",
-    "补充内网免令牌与连接状态相关测试；全量 89 项测试通过"
+    "内网免令牌 WebSocket 放行 Tailscale 的 100.64.0.0/10 网段，手机直连 tailnet IP 时无需令牌",
+    "补充 Tailscale CGNAT 私有来源测试；全量 90 项测试通过",
+    "配合直连 ws://100.105.113.40/api/app/ws 可绕开 Tailscale Serve 的 TLS/DNS 路径"
   ],
   "sha256": {
-    "sentry-viewer.py": "b3c78100d586fe7cb1cbb59e56abc453b60c153bbe2893c2350f7d9782c37fa5",
+    "sentry-viewer.py": "2717240a873e3850eefa81752f7d7e4e368b7963fce44714b42822e8f8a18b93",
     "scripts/tesla-gadget.sh": "e297115b1fb2aa266e3d7b4c2441bc8ae3c3728ae27870eb8f9170312032cb56",
     "scripts/tesla-sync.sh": "5eb6149021828b611da2fbc5ca845910e644b117c6217a66b9f1bd56ada7a4ce",
     "scripts/usb-selfheal.sh": "8d7e643f01256bffa72fb5da429eb56d2923879302893c66c303ffa5d6fe7942",
@@ -16,5 +15,5 @@
     "scripts/tsf-check.sh": "9068ca9ab74103a7f5f5e3f0dae9945243911cef7bb4200da9d3d744372f87c4",
     "tesla-live-sync.py": "d75f72c3315368099953715dcddcc4b371719a735bd11d7cd1e80ecf322b8c91"
   },
-  "sig": "wN75JB1g4UpukFUR47mKjBgrC1mfwtlarZgAkLYPldOOSYhDYV7r8PbSuBxDhiEjU4nztOpuRwstmuooYmwDAA=="
+  "sig": "e69Ydiv05PolsnGCjfsrThQ5skOmyr7Qr0THcAy4+hckPvQoZ60Q/rNZgPTS79vhdGcgsYEi1xfu9mxdcyi3Cg=="
 }

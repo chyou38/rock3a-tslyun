@@ -208,7 +208,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 常被 RST/TLS 干扰; 下面几个镜像逐个实测,
 # 全部并发竞速, 任一可用即可; fastly 在 gcore 缓存旧清单时仍能取到新版本。
-APP_VERSION = "3.2.55"
+APP_VERSION = "3.2.56"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -15947,6 +15947,10 @@ def _app_ws_private_client(ip):
         addr = ipaddress.ip_address(raw)
     except ValueError:
         return False
+    # Tailscale IPv4 使用 100.64.0.0/10 (CGNAT 段), ipaddress.is_private 默认不认;
+    # 手机经 tailnet 直连盒子时来源就是 100.x, 这里显式放行。
+    if addr.version == 4 and int(addr) >= 0x64400000 and int(addr) <= 0x647FFFFF:
+        return True
     return bool(addr.is_loopback or addr.is_private)
 
 
