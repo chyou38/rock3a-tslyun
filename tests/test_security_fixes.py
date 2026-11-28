@@ -163,6 +163,12 @@ class LoginFailureMapTests(unittest.TestCase):
         self.assertTrue(viewer.fail_check(ip, False))
         self.assertEqual(len(viewer.FAILS), 1)
 
+    def test_many_ips_do_not_grow_table_past_cap(self):
+        with patch.object(viewer, "FAIL_MAX", 8):
+            for i in range(40):
+                viewer.fail_check("10.0.0.%d" % i, True)
+        self.assertLessEqual(len(viewer.FAILS), 8)
+
 
 class ReclaimJournalTests(unittest.TestCase):
     def test_recover_restores_original_bytes(self):
@@ -191,6 +197,23 @@ class ReclaimJournalTests(unittest.TestCase):
                     patch.object(viewer, "RECLAIM_JOURNAL", str(journal)):
                 self.assertFalse(viewer._reclaim_recover())
             self.assertEqual(img.read_bytes(), b"NEW0")
+
+
+class UpdateWindowGateTests(unittest.TestCase):
+    def test_usb_sync_blocks_auto_update(self):
+        with patch.object(viewer, "MEDIA_ACTIVE", [0]), \
+                patch.object(viewer, "car_active_for_background", return_value=False), \
+                patch.object(viewer, "usb_sync_busy", return_value=True), \
+                patch.object(viewer, "STITCH_JOBS", {}):
+            self.assertFalse(viewer._update_window_ok())
+
+    def test_pending_network_rollback_blocks_auto_update(self):
+        with patch.object(viewer, "MEDIA_ACTIVE", [0]), \
+                patch.object(viewer, "car_active_for_background", return_value=False), \
+                patch.object(viewer, "usb_sync_busy", return_value=False), \
+                patch.object(viewer, "_net_roll_read", return_value={"config": "network: {}\n"}), \
+                patch.object(viewer, "STITCH_JOBS", {}):
+            self.assertFalse(viewer._update_window_ok())
 
 
 class NetRollStateTests(unittest.TestCase):

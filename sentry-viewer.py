@@ -206,7 +206,7 @@ SOCK_TIMEOUT = 30               # 单连接读写超时秒数, 防慢连接长�
 # 升级方式: 从 GitHub 仓库拉 version.json (清单) 比对版本号, 再下 sentry-viewer.py 覆盖本机文件并重启。
 # 国内直连 raw.githubusercontent 与 fastly/testingcf.jsdelivr 会被 RST 或 TLS 干扰 (实测 1 秒内断开),
 # 下面这几个是逐个实测能通的 (数字为实测耗时); 全部并发竞速, 任一可用即可, 抖动时互相补位。
-APP_VERSION = "3.2.44"
+APP_VERSION = "3.2.45"
 OTA_REPO = os.environ.get("TSF_OTA_REPO", "chyou38/rock3a-tslyun")
 # 发布渠道: stable=main (稳定版), beta=beta 分支 (测试版)。网页可在「自动更新」下切换。
 OTA_CHANNELS = {"stable": "main", "beta": "beta"}
@@ -613,6 +613,12 @@ def _ota_sidecars(base, manifest, latest):
     if not os.path.isdir(d):
         return [], len(OTA_SIDECARS)
     hashes = (manifest.get("sha256") or {}) if isinstance(manifest, dict) else {}
+    # manifest 可能来自 api.github.com(只提供 JSON), 不能拿它当 raw 文件源;
+    # 非 API 的镜像源优先, 其余镜像仍参与竞速补位。
+    branch = str((manifest or {}).get("_branch") or _ota_branch())
+    sources = _ota_sources_for(branch)
+    if base and "api.github.com" not in str(base):
+        sources = [str(base)] + [s for s in sources if s != str(base)]
     bkdir = _ota_sidecar_backup_dir(latest)
     updated, failed, backed = [], 0, []
     for rel, name, sig, minsz in OTA_SIDECARS:
@@ -624,10 +630,11 @@ def _ota_sidecars(base, manifest, latest):
             want = str(hashes.get(rel) or "").strip().lower()
             if not re.fullmatch(r"[0-9a-f]{64}", want):
                 raise ValueError("清单缺少有效 SHA-256")
-            data = _http_get("%s/%s?ts=%d" % (base, rel, int(time.time())),
-                             timeout=8, limit=512 << 10)
-            if len(data) < minsz or sig not in data:
-                raise ValueError("内容校验未通过")
+            data, _src = _race_get(
+                "/%s?ts=%d" % (rel, int(time.time())), timeout=8, limit=512 << 10,
+                validate=lambda d, w=want, m=minsz, g=sig:
+                    len(d) >= m and g in d and hashlib.sha256(d).hexdigest() == w,
+                sources=sources)
             if hashlib.sha256(data).hexdigest() != want:
                 raise ValueError("SHA-256 不匹配")
             with open(dest, "rb") as f:
@@ -737,10 +744,11 @@ def _ota_restart():
 
 def ota_apply():
     """下载并安装最新版; 返回 (成功?, 提示/错误)"""
-    # 升级会重启 viewer/live-sync, 车机正在写U盘时一律不打断; 自动/手动都适用。
+    # 升级会重启 viewer/live-sync, 车机正在写U盘或 live-sync 正在搬录像时一律不打断;
+    # 自动/手动都适用。
     try:
-        if car_active_for_background():
-            return False, "车机正在写入U盘, 升级已推迟; 请等写入结束后再试"
+        if not _update_window_ok():
+            return False, "车机正在写入/同步或后台任务进行中, 升级已推迟; 请等空闲后再试"
     except Exception:
         pass
     try:
@@ -793,6 +801,12 @@ def ota_apply():
         except OSError:
             pass
         return False, "校验异常: %s" % ex
+    # 下载和校验期间车机可能已经开始写盘; 替换/重启前必须再检查一次。
+    try:
+        if not _update_window_ok():
+            return False, "升级暂停: 车机已开始写入/同步, 本次未替换程序; 请等空闲后重试"
+    except Exception:
+        pass
     # 3) 备份旧版 (回滚用) 后逐份原子替换
     here = os.path.realpath(__file__)
     try:
@@ -1159,6 +1173,18 @@ def _update_window_ok():
         pass
     try:
         if car_active_for_background():
+            return False
+    except Exception:
+        pass
+    # 升级会重启 viewer/live-sync, 必须避开 live-sync 正在搬录像的窗口;
+    # 网络回滚计时器未确认时也不能重启, 否则可能把错误配置永久留下。
+    try:
+        if usb_sync_busy():
+            return False
+    except Exception:
+        pass
+    try:
+        if _net_roll_timer is not None or _net_roll_read() is not None:
             return False
     except Exception:
         pass
@@ -19467,6 +19493,7 @@ if (AUTH_CONF_ERR is None and os.path.exists(AUTH_FILE) and not AUTH_ON
     AUTH_CONF_ERR = "auth.conf 存在但没有 pass= / sha256=, 内容可能已损坏"
 FAILS = {}                       # ip -> [失败次数, 首次失败时间]
 FAIL_LOCK = threading.Lock()
+FAIL_MAX = 4096                  # 单进程失败 IP 表硬上限; 满了淘汰最早失败项
 
 
 def pw_ok(pw):
@@ -19590,17 +19617,24 @@ def sess_ok(tok):
 
 def fail_check(ip, inc):
     """同一 IP 10 分钟内连错 8 次就锁 5 分钟, 防爆破。
-    只读检查绝不写入新键; 过期条目顺手清掉, 避免被 Basic 认证/每次请求把表撑大。"""
+    只读检查绝不写入新键; 过期条目顺手清掉, 并在达到硬上限时淘汰最早失败项,
+    避免攻击者轮换 IP 把表撑爆。"""
     now = time.time()
     with FAIL_LOCK:
         ent = FAILS.get(ip)
         if ent and now - ent[1] > 600:
             FAILS.pop(ip, None)
             ent = None
-        if len(FAILS) > 512:
+        # 半满时清过期项; 真正满了再淘汰一个最早失败项, 保证表长度有界。
+        if len(FAILS) >= max(16, FAIL_MAX // 2):
             for k, v in list(FAILS.items()):
                 if now - v[1] > 600:
                     FAILS.pop(k, None)
+        if len(FAILS) >= FAIL_MAX:
+            for k in list(FAILS):
+                if k not in (ip,):
+                    FAILS.pop(k)
+                    break
         if not inc:
             return bool(ent) and ent[0] >= 8
         if ent:
