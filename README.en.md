@@ -10,7 +10,7 @@
 
 [中文](README.md) | **English**
 
-**V3.0.2** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
+**V3.2.50** · A virtual Sentry USB drive · 6-camera synchronized playback · SEI driving telemetry · hardware decode/encode · remote single-stream composite · library · watermarked export — for Radxa ROCK 3A (RK3568) only.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7%2B-3776AB.svg)](https://www.python.org/)
@@ -70,9 +70,18 @@ The single “front” view is normal. When you tap “6-camera / 4-camera panor
 | 🔔 Feishu push | Direct message (self only) or group bot webhook: a library push sends a **detail card first** (cover from the composite's first frame, time / location / camera (N-up) / duration·size, plus a **“View recording” button** that deep-links to the 6-up split player), followed by the video message with the cover. Live alerts send a trigger-frame cover card or a clip starting 5 s before the trigger, optionally with the driving watermark burned in. Deduplicated, 20-second delay, 3 retries. |
 | 🔐 Login protection | `install.sh` generates a random 10-character password (user `admin`) by default. HMAC-signed cookie valid for 30 days plus HTTP Basic. 8 wrong attempts from one IP within 10 minutes returns 429. Settings → Account lets you change the password or sign out. |
 | 🌐 Fixed LAN address | The installer tries to install and enable Avahi mDNS and advertises `http://tsl.local` on the LAN (default host name `tsl`; change with `--mdns NAME`), so IP changes do not change the address. LAN only; standard mDNS supports only the `.local` suffix. |
-| 🔄 Online update | Multiple sources raced in parallel with a GitHub API fallback; after download it verifies → backs up → swaps atomically → restarts, with one-click rollback. Settings → Update has an **auto-update** toggle (on by default: upgrades when a new version appears and nobody is watching). |
+| 🔄 Online update | Multiple sources raced in parallel with a GitHub API fallback; `version.json` uses an Ed25519 signature plus per-file SHA-256 checks, then verifies → backs up → swaps atomically → restarts, with one-click rollback. Settings → Update can switch between **stable `main` / beta `beta`**. Auto-update is on by default, but is deferred while the car is writing the USB drive, live-sync is moving recordings, a network rollback is unconfirmed, or playback / composition is running. |
 | 🎨 Personalization | Custom title icon and name (defaults to 「TSL哨兵云盘」), dark / light / auto theme, 4 UI styles (Default / Apple / Claude / Pixel), 10 UI languages, background skins, lock chime (`LockChime.wav`), wraps `Wraps/`. |
 | 🛡 Robustness | Journaled ext4 archive, boot-time self-check, service auto-restart, automatic LUN re-attach via `*/2` cron after eject, recovery from power loss. The repo also ships an optional `scripts/tsf-watch.sh`: a 10-second heartbeat with local `/opt/tesla-sentry/watch.log`. It **does not push the CmaFree low-watermark alert to Feishu by default** (0–1 MB is normal on RK3568); set `TSF_WATCH_ALERT_CMA=1` in the service environment to restore it. |
+
+---
+
+## What's new in v3.2.50 (2026-11-28)
+
+- Completed 12 security / runtime audit fixes: signed OTA manifest plus SHA-256 for every published file, unified `--dir` state paths, export/share job-id traversal protection, login `next` injection guard, persisted network rollback, ghost-cluster reclaim journal, pre-body upload caps, Feishu token binding and a bounded login-failure table.
+- Auto-update now waits for the car to stop writing the USB drive, live-sync to stop moving recordings, no unconfirmed network rollback and no active playback / composition job; the viewer and live service are not restarted during those windows.
+- OTA supports stable `main` / beta `beta` channels. Both are currently v3.2.50; the update page shows the installed manifest notes and no longer presents a stale mirror version as “latest”.
+- The box is deployed at v3.2.50 with 78 automated tests passing; the previous build is kept for one-click rollback.
 
 ---
 
@@ -260,11 +269,11 @@ systemctl restart tesla-gadget
 
 ### Update check fails (cannot reach GitHub)
 
-On some networks `raw.githubusercontent.com` and `fastly/testingcf.jsdelivr.net` are reset or TLS-interfered, and third-party mirrors come and go, so "Check for updates" occasionally reports **all sources unavailable**. Since 2.8.13:
+On some networks `raw.githubusercontent.com` and some mirrors are reset or TLS-interfered, and third-party mirrors come and go, so "Check for updates" occasionally reports **all sources unavailable**. Since 2.8.13:
 
-- Seven sources (`ghfast.top`, `gcore.jsdelivr.net`, `ghproxy.net`, `gh-proxy.org`, `gh-proxy.com`, raw, jsDelivr) are **raced in parallel**; any one working is enough, instead of waiting for each in order.
+- Multiple sources (`ghfast.top`, `fastly.jsdelivr.net`, `testingcf.jsdelivr.net`, `gcore.jsdelivr.net`, `ghproxy.net`, `gh-proxy.org`, `gh-proxy.com`, raw, jsDelivr) are **raced in parallel**; any one working is enough, instead of waiting for each in order.
 - The error lists every failed source and its reason (timeout / connection blocked / certificate hijack / DNS failure), so you can tell whether it is the firewall or a dead mirror.
-- Auto-update is on by default and retries every 5 minutes after the network recovers, so you do not have to tap repeatedly.
+- Auto-update is on by default and retries every 5 minutes after the network recovers; it will not upgrade while the car is writing the USB drive, live-sync is moving recordings, a network rollback is unconfirmed, or playback / composition is running.
 
 To add your own source, write the usable mirrors into the config (comma-separated, `https://domain/<repo-path>/main`):
 
